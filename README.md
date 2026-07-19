@@ -1,3 +1,3 @@
 # dcw-engage
 
-DCW Engage is a unique engagement portal aspired to personalise several functions within the DCW Community.
+DCW Engage is a unique engagement portal aspired to personalise several functions within the DCW Community, led by the Communications and Outreach Team.
