@@ -1,0 +1,51 @@
+name: Deploy to Hostinger
+
+on:
+  push:
+    branches:
+      - main # This will trigger the deployment every time you merge code into the main branch
+  workflow_dispatch: # Allows you to manually trigger the deployment from the GitHub Actions tab
+
+jobs:
+  web-deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    steps:
+    - name: Get latest code
+      uses: actions/checkout@v4
+      
+    - name: Setup PHP
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: '8.2'
+        
+    - name: Cache Composer dependencies
+      uses: actions/cache@v3
+      with:
+        path: vendor
+        key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-composer-
+          
+    - name: Install Composer Dependencies
+      run: composer install --no-dev --optimize-autoloader --prefer-dist --no-progress
+    
+    - name: Sync files via FTP
+      uses: SamKirkland/FTP-Deploy-Action@v4.3.4
+      with:
+        server: ${{ secrets.FTP_SERVER }}
+        username: ${{ secrets.FTP_USERNAME }}
+        password: ${{ secrets.FTP_PASSWORD }}
+        protocol: ftps       # Enforce secure TLS encryption
+        timeout: 300000      # Increased to 5 minutes to prevent Hostinger timeout errors
+        local-dir: ./
+        server-dir: public_html/engage/ # <-- Crucial! Tells it to land in your /engage folder
+        
+        # Protect production files from being overwritten or deleted!
+        exclude: |
+          **/.git*
+          **/.git*/**
+          .github/**
+          config.php
+          uploads/**
+          README.md
