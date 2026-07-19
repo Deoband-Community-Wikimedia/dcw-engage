@@ -39,7 +39,7 @@ jobs:
         protocol: ftps       # Enforce secure TLS encryption
         timeout: 300000      # Increased to 5 minutes to prevent Hostinger timeout errors
         local-dir: ./
-        server-dir: public_html/engage/ # <-- Crucial! Tells it to land in your /engage folder
+        server-dir: ./ # <-- Crucial! Tells it to land in your /engage folder
         
         # Protect production files from being overwritten or deleted!
         exclude: |
