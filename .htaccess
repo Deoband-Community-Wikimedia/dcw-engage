@@ -1,0 +1,22 @@
+# 1. Disable Directory Browsing
+Options -Indexes
+
+# 2. Hide Server Signature
+ServerSignature Off
+
+# 3. Protect Configuration & Hidden Files
+<FilesMatch "^(config\.php|\.env|\.git|database\.sql)">
+    Require all denied
+</FilesMatch>
+
+# 4. HTTP Security Headers
+<IfModule mod_headers.c>
+    Header set X-Frame-Options "SAMEORIGIN"
+    Header set X-Content-Type-Options "nosniff"
+    Header set X-XSS-Protection "1; mode=block"
+    Header set Referrer-Policy "strict-origin-when-cross-origin"
+</IfModule>
+
+# 5. Clean URLs for Magic Links / Resume
+RewriteEngine On
+RewriteRule ^resume/([a-zA-Z0-9_-]+)$ resume.php?token=$1 [L,QSA]
