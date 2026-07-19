@@ -64,7 +64,7 @@ header('Retry-After: 3600'); // Suggests checking back in 1 hour
         <div class="logo">engage.dcwwki.org</div>
         <div class="gear-icon">⚙️</div>
         <h1>Under Construction</h1>
-        <p>We are currently building something exciting. Please check back soon!</p>
+        <p>DCW volunteers are currently building something exciting. Please check back soon!</p>
     </div>
 
 </body>
