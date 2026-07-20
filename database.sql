@@ -12,6 +12,7 @@ CREATE TABLE `admin_users` (
 CREATE TABLE `forms` (
     `id` INT AUTO_INCREMENT PRIMARY KEY,
     `form_type` VARCHAR(100) NOT NULL UNIQUE, -- e.g., 'scholarship', 'fellowship'
+    `schema_json` JSON NOT NULL, -- Defines the fields, types, and validation rules
     `is_active` TINYINT(1) DEFAULT 1,
     `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

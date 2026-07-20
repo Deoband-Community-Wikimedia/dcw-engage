@@ -13,10 +13,8 @@ session_start([
     'use_strict_mode' => true,
 ]);
 
-// Include necessary bootstraps (to be implemented)
-// require_once __DIR__ . '/includes/config.php';
-// require_once __DIR__ . '/includes/db.php';
-// require_once __DIR__ . '/includes/csrf.php';
+// Initialize application (DB, Sessions, CSRF, Configuration)
+require_once __DIR__ . '/includes/init.php';
 
 $requestPath = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
 $basePath = '/'; // Update this depending on subdirectory hosting
