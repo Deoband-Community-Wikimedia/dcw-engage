@@ -23,40 +23,27 @@ $route = str_replace($basePath, '/', $requestPath);
 $route = rtrim($route, '/');
 if ($route === '') $route = '/';
 
-// Basic Routing Engine
-switch ($route) {
-    case '/':
-    case '/index.php':
-        require __DIR__ . '/views/home.php';
-        break;
-        
-    case '/scholarship':
-        // require __DIR__ . '/models/ScholarshipModel.php';
-        echo "<h1>Scholarship Application</h1>";
-        break;
-
-    case '/fellowship':
-        // require __DIR__ . '/models/FellowshipModel.php';
-        echo "<h1>Heritage Lens Fellowship</h1>";
-        break;
-
-    case '/internship':
-        echo "<h1>Internship Opportunities</h1>";
-        break;
-        
-    case '/volunteer':
-        echo "<h1>Volunteering Opportunities</h1>";
-        break;
-
-    default:
-        // Handle Magic Links routing (e.g. /resume/TOKEN)
-        if (preg_match('/^\/resume\/([a-zA-Z0-9_-]+)$/', $route, $matches)) {
-            $token = $matches[1];
-            // require __DIR__ . '/models/ResumeModel.php';
-            echo "<h1>Resuming Application...</h1><p>Token: " . htmlspecialchars($token) . "</p>";
-        } else {
-            http_response_code(404);
-            echo "<h1>404 - Page Not Found</h1>";
-        }
-        break;
+// Modern Dynamic Routing Engine
+if ($route === '/' || $route === '/index.php') {
+    require __DIR__ . '/views/home.php';
+} elseif ($route === '/admin/dashboard') {
+    require __DIR__ . '/views/admin/dashboard.php';
+} elseif ($route === '/admin/form_manager') {
+    require __DIR__ . '/views/admin/form_manager.php';
+} elseif ($route === '/admin/builder') {
+    require __DIR__ . '/views/admin/builder.php';
+} elseif (preg_match('/^\/resume\/([a-zA-Z0-9_-]+)$/', $route, $matches)) {
+    $token = $matches[1];
+    global $resumeToken;
+    $resumeToken = $token;
+    require __DIR__ . '/views/forms/resume.php';
+} else {
+    // Dynamic form routing
+    // Extract the form type from the route (e.g., '/scholarship' -> 'scholarship')
+    global $formType;
+    $formType = trim($route, '/');
+    
+    // Pass control to the public form renderer
+    // The renderer will handle checking the database for the schema and rendering it.
+    require __DIR__ . '/views/forms/renderer.php';
 }
