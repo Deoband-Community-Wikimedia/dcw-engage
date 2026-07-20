@@ -79,4 +79,77 @@ class ApplicationModel {
 
         return $token;
     }
+
+    /**
+     * Get Application by Magic Link Token
+     */
+    public function getApplicationByToken($token) {
+        $stmt = $this->db->prepare("
+            SELECT a.*, f.schema_json, f.form_type, f.is_active, m.expires_at 
+            FROM magic_links m
+            JOIN applications a ON m.application_id = a.id
+            JOIN forms f ON a.form_id = f.id
+            WHERE m.token = :token
+        ");
+        $stmt->execute(['token' => $token]);
+        $row = $stmt->fetch();
+        
+        if ($row && strtotime($row['expires_at']) > time()) {
+            return $row;
+        }
+        return false;
+    }
+
+    /**
+     * Get all applications with form details
+     */
+    public function getAllApplications() {
+        $stmt = $this->db->query("
+            SELECT a.*, JSON_UNQUOTE(JSON_EXTRACT(f.schema_json, '$.title')) as form_title, f.form_type 
+            FROM applications a 
+            JOIN forms f ON a.form_id = f.id 
+            ORDER BY a.created_at DESC
+        ");
+        return $stmt->fetchAll();
+    }
+
+    /**
+     * Get a single application by ID
+     */
+    public function getApplicationById($id) {
+        $stmt = $this->db->prepare("
+            SELECT a.*, JSON_UNQUOTE(JSON_EXTRACT(f.schema_json, '$.title')) as form_title, f.form_type 
+            FROM applications a 
+            JOIN forms f ON a.form_id = f.id 
+            WHERE a.id = :id
+        ");
+        $stmt->execute(['id' => $id]);
+        return $stmt->fetch();
+    }
+
+    /**
+     * Update application status
+     */
+    public function updateStatus($id, $status) {
+        $validStatuses = ['Draft', 'New', 'Submitted', 'Under Review', 'Accepted', 'Rejected'];
+        if (!in_array($status, $validStatuses)) {
+            throw new Exception("Invalid status.");
+        }
+        $stmt = $this->db->prepare("UPDATE applications SET status = :status WHERE id = :id");
+        return $stmt->execute(['status' => $status, 'id' => $id]);
+    }
+    
+    /**
+     * Get applications for a specific form
+     */
+    public function getApplicationsByFormId($formId) {
+        $stmt = $this->db->prepare("
+            SELECT * 
+            FROM applications 
+            WHERE form_id = :form_id 
+            ORDER BY created_at DESC
+        ");
+        $stmt->execute(['form_id' => $formId]);
+        return $stmt->fetchAll();
+    }
 }
