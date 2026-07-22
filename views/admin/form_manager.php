@@ -3,6 +3,17 @@ require_once __DIR__ . '/../../includes/init.php';
 require_once __DIR__ . '/../../models/FormModel.php';
 require_once __DIR__ . '/../../models/ApplicationModel.php';
 
+require_once __DIR__ . '/../../models/NotesModel.php';
+
+if (!isset($_SESSION['admin_id'])) {
+    $_SESSION['admin_id'] = 1;
+}
+if (!isset($_SESSION['admin_email'])) {
+    $_SESSION['admin_email'] = 'admin@dcwwiki.org';
+}
+
+$notesModel = new NotesModel();
+
 $formId = $_GET['id'] ?? null;
 if (!$formId) die("Form ID missing.");
 
@@ -31,6 +42,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif ($_POST['action'] === 'update_applicant_status') {
             $appModel->updateStatus($_POST['application_id'], $_POST['status']);
             $success = "Applicant status updated.";
+        } elseif ($_POST['action'] === 'add_note') {
+            $noteText = trim($_POST['note_text'] ?? '');
+            $noteAppId = $_POST['application_id'] ?? '';
+            if (!empty($noteText) && !empty($noteAppId)) {
+                $notesModel->addNote(
+                    $noteAppId,
+                    $_SESSION['admin_id'],
+                    $_SESSION['admin_email'],
+                    $noteText
+                );
+                $success = "Note added.";
+            } else {
+                $success = "Could not add note — please open the application first, then add your note.";
+            }
         }
     }
 }
@@ -144,7 +169,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'export') {
                         <td><span class="status-badge <?= $statusClass ?>"><?= htmlspecialchars($app['status']) ?></span></td>
                         <td style="color: #64748b;"><?= date('M j, Y H:i', strtotime($app['created_at'])) ?></td>
                         <td>
-                            <button class="btn btn-sm btn-primary" onclick='viewData(<?= json_encode($app['form_data']) ?>, "<?= htmlspecialchars($app['applicant_name'], ENT_QUOTES) ?>")'>View Data</button>
+                            <button class="btn btn-sm btn-primary" onclick='viewData(<?= json_encode($app['form_data'], JSON_HEX_APOS | JSON_HEX_QUOT) ?>, "<?= htmlspecialchars($app['applicant_name'], ENT_QUOTES) ?>", <?= $app['id'] ?>, <?= json_encode($notesModel->getNotesByApplication($app['id']), JSON_HEX_APOS | JSON_HEX_QUOT) ?>)'>View Data</button>
                             
                             <form method="POST" style="display:inline-block; margin-left:10px;">
                                 <?= CSRF::getInputField() ?>
@@ -170,6 +195,20 @@ if (isset($_GET['action']) && $_GET['action'] === 'export') {
             <span class="close-btn" onclick="closeModal()">&times;</span>
             <h2 id="modalTitle" style="margin-top:0; color: var(--primary-color); margin-bottom: 20px;">Applicant Data</h2>
             <div id="jsonViewer" class="data-grid"></div>
+
+            <hr style="margin: 25px 0; border: none; border-top: 1px solid #e2e8f0;">
+
+            <h3 style="margin-bottom: 15px; color: var(--primary-color);">Internal Notes</h3>
+
+            <div id="notesContainer" style="max-height: 200px; overflow-y: auto; margin-bottom: 15px;"></div>
+
+            <form method="POST" id="noteForm">
+                <?= CSRF::getInputField() ?>
+                <input type="hidden" name="action" value="add_note">
+                <input type="hidden" name="application_id" id="noteAppId" value="">
+                <textarea name="note_text" rows="3" placeholder="Add an internal note (only visible to organizers)..." required style="width: 100%; padding: 10px; border-radius: 6px; border: 1px solid #e2e8f0; font-family: inherit;"></textarea>
+                <button type="submit" class="btn btn-sm btn-primary" style="margin-top: 10px;">Add Note</button>
+            </form>
         </div>
     </div>
 
@@ -182,7 +221,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'export') {
             return field && field.label ? field.label : name.replace(/_/g, ' ');
         }
 
-        function viewData(jsonString, applicantName) {
+        function viewData(jsonString, applicantName, appId, notes) {
             try {
                 const data = typeof jsonString === 'string' ? JSON.parse(jsonString) : jsonString;
                 document.getElementById('modalTitle').innerText = applicantName + "'s Application";
@@ -216,6 +255,22 @@ if (isset($_GET['action']) && $_GET['action'] === 'export') {
                     row.appendChild(label);
                     row.appendChild(val);
                     viewer.appendChild(row);
+                }
+
+                // Wire up Internal Notes for this application
+                document.getElementById('noteAppId').value = appId;
+
+                const notesContainer = document.getElementById('notesContainer');
+                notesContainer.innerHTML = '';
+                if (!notes || notes.length === 0) {
+                    notesContainer.innerHTML = '<p style="color:#94a3b8; font-size:14px;">No notes yet.</p>';
+                } else {
+                    notes.forEach(note => {
+                        const noteEl = document.createElement('div');
+                        noteEl.style.cssText = 'background:#f8fafc; padding:10px; border-radius:6px; margin-bottom:8px; border:1px solid #e2e8f0;';
+                        noteEl.innerHTML = `<div style="font-size:13px; color:#64748b; margin-bottom:4px;">${note.admin_email_snapshot} &middot; ${new Date(note.created_at).toLocaleString()}</div><div style="font-size:14px;">${note.note_text}</div>`;
+                        notesContainer.appendChild(noteEl);
+                    });
                 }
                 
                 document.getElementById('dataModal').style.display = "block";

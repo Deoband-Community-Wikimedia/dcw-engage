@@ -93,6 +93,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     require_once __DIR__ . '/../../includes/mailer.php';
                     Mailer::sendMagicLink($email, 'Applicant', $token);
 
+                    // Notify the organizer(s) in charge of this form
+                    Mailer::sendOrganizerAlert($form, $email, 'Applicant', $appId);
+
                     $success = "Application submitted successfully! Your tracking ID is: DCW-" . str_pad($appId, 5, '0', STR_PAD_LEFT);
                 } catch (Exception $e) {
                     $errors['system'] = "An error occurred saving your application.";
