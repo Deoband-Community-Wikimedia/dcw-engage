@@ -6,14 +6,10 @@
  * Ensures clean architecture, separating routing from business logic.
  */
 
-// Start session securely
-session_start([
-    'cookie_httponly' => true,
-    'cookie_secure' => isset($_SERVER['HTTPS']),
-    'use_strict_mode' => true,
-]);
-
-// Initialize application (DB, Sessions, CSRF, Configuration)
+// Initialize application (Session, DB, CSRF, Configuration).
+// The session is started inside init.php so that every entry point gets the
+// same hardened cookie flags. Starting one here first would win and quietly
+// drop SameSite=Strict, which the admin login depends on.
 require_once __DIR__ . '/includes/init.php';
 
 $requestPath = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
@@ -26,6 +22,10 @@ if ($route === '') $route = '/';
 // Modern Dynamic Routing Engine
 if ($route === '/' || $route === '/index.php') {
     require __DIR__ . '/views/home.php';
+} elseif ($route === '/admin/login') {
+    require __DIR__ . '/views/admin/login.php';
+} elseif ($route === '/admin/logout') {
+    require __DIR__ . '/views/admin/logout.php';
 } elseif ($route === '/admin/dashboard') {
     require __DIR__ . '/views/admin/dashboard.php';
 } elseif ($route === '/admin/form_manager') {

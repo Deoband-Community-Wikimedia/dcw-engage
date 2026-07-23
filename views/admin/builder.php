@@ -1,5 +1,8 @@
 <?php
 require_once __DIR__ . '/../../includes/init.php';
+require_once __DIR__ . '/../../includes/auth.php';
+
+Auth::requireLogin();
 
 $success = '';
 $error = '';
