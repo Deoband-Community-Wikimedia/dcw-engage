@@ -17,6 +17,8 @@ ServerSignature Off
     Header set Referrer-Policy "strict-origin-when-cross-origin"
 </IfModule>
 
-# 5. Clean URLs for Magic Links / Resume
+# 5. Route everything through index.php (except real files/folders)
 RewriteEngine On
-RewriteRule ^resume/([a-zA-Z0-9_-]+)$ resume.php?token=$1 [L,QSA]
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ index.php [QSA,L]
