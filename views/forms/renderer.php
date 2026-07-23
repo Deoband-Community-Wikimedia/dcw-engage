@@ -6,12 +6,38 @@ require_once __DIR__ . '/../../models/FormModel.php';
 global $formType;
 if (!$formType) $formType = $_GET['type'] ?? '';
 
+/**
+ * Delete files that were moved into /uploads during a submission that then
+ * failed, so a rejected or errored submission never leaves an orphan behind.
+ * Paths are the 'uploads/...' strings returned by FileUploader.
+ */
+function cleanupUploads(array $paths) {
+    foreach ($paths as $p) {
+        if (is_string($p) && strpos($p, 'uploads/') === 0) {
+            $full = __DIR__ . '/../../' . $p;
+            if (is_file($full)) {
+                @unlink($full);
+            }
+        }
+    }
+}
+
 $formModel = new FormModel();
 $form = $formModel->getFormByType($formType);
 
 if (!$form) {
-    http_response_code(404);
-    echo "<div style='font-family:sans-serif; text-align:center; padding: 50px;'><h2>404 - Form Not Found</h2><p>The form '<strong>" . htmlspecialchars($formType) . "</strong>' does not exist or is currently inactive.</p></div>";
+    // Tell "closed" apart from "never existed" so a form that was live and is
+    // now closed shows a proper message instead of a bare 404.
+    $inactiveForm = $formModel->getAnyFormByType($formType);
+
+    if ($inactiveForm) {
+        http_response_code(403);
+        $closedTitle = $inactiveForm['schema']['title'] ?? 'This form';
+        require __DIR__ . '/closed.php';
+    } else {
+        http_response_code(404);
+        require __DIR__ . '/not_found.php';
+    }
     die();
 }
 
@@ -51,13 +77,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $errors['email'] = "Please enter a valid email address.";
         }
         
-        // Process File Uploads before saving
-        require_once __DIR__ . '/../../models/FileUploader.php';
-        $fileUploader = new FileUploader();
+        require_once __DIR__ . '/../../models/ApplicationModel.php';
+        $appModel = new ApplicationModel();
+
         $postData = $_POST;
         unset($postData['csrf_token']);
-        
+
+        // Reject duplicates BEFORE touching any files. Uploading first and
+        // checking second leaves an orphaned file on disk with no application
+        // row pointing at it, which the PII scrubber can never reach.
         if (empty($errors)) {
+            $existing = $appModel->getApplicationByEmail($form['id'], $email);
+            if ($existing) {
+                $errors['email'] = "You have already applied for this program. Check your email for a magic link to edit your application.";
+                $errors['show_resend'] = true;
+            }
+        }
+
+        // Only now, on an otherwise valid and non-duplicate submission, move
+        // the uploaded files into place. Track what we wrote so we can undo it
+        // if the save below fails for any reason.
+        $uploadedPaths = [];
+        if (empty($errors)) {
+            require_once __DIR__ . '/../../models/FileUploader.php';
+            $fileUploader = new FileUploader();
+
             foreach ($schema['fields'] as $field) {
                 $name = $field['name'];
                 if (($field['type'] ?? '') === 'file' && !empty($_FILES[$name]['name'])) {
@@ -65,41 +109,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $path = $fileUploader->handleUpload($_FILES[$name], $name, $postData['full_name'] ?? 'Applicant', $formType);
                         if ($path) {
                             $postData[$name] = $path;
+                            $uploadedPaths[] = $path;
                         }
                     } catch (Exception $e) {
                         $errors[$name] = $e->getMessage();
                     }
                 }
             }
+
+            // A file failed validation after others already landed — remove
+            // the ones that succeeded so nothing is left orphaned.
+            if (!empty($errors)) {
+                cleanupUploads($uploadedPaths);
+            }
         }
-        
+
         if (empty($errors)) {
-            require_once __DIR__ . '/../../models/ApplicationModel.php';
-            $appModel = new ApplicationModel();
-            
-            // Check if email already applied
-            $existing = $appModel->getApplicationByEmail($form['id'], $email);
-            if ($existing) {
-                $errors['email'] = "You have already applied for this program. Check your email for a magic link to edit your application.";
-                $errors['show_resend'] = true;
-            } else {
-                try {
-                    $appId = $appModel->saveApplication($form['id'], $email, 'Applicant', 'New', json_encode($postData));
-                    
-                    // Generate Magic Link
-                    $token = $appModel->generateMagicLink($appId, false);
-                    
-                    // Dispatch Email Notification
-                    require_once __DIR__ . '/../../includes/mailer.php';
-                    Mailer::sendMagicLink($email, 'Applicant', $token);
+            try {
+                $appId = $appModel->saveApplication($form['id'], $email, 'Applicant', 'New', json_encode($postData));
 
-                    // Notify the organizer(s) in charge of this form
-                    Mailer::sendOrganizerAlert($form, $email, 'Applicant', $appId);
+                // Generate Magic Link
+                $token = $appModel->generateMagicLink($appId, false);
 
-                    $success = "Application submitted successfully! Your tracking ID is: DCW-" . str_pad($appId, 5, '0', STR_PAD_LEFT);
-                } catch (Exception $e) {
-                    $errors['system'] = "An error occurred saving your application.";
-                }
+                // Dispatch Email Notification
+                require_once __DIR__ . '/../../includes/mailer.php';
+                Mailer::sendMagicLink($email, 'Applicant', $token);
+
+                // Notify the organizer(s) in charge of this form
+                Mailer::sendOrganizerAlert($form, $email, 'Applicant', $appId);
+
+                $success = "Application submitted successfully! Your tracking ID is: DCW-" . str_pad($appId, 5, '0', STR_PAD_LEFT);
+            } catch (Exception $e) {
+                // The save failed (including the UNIQUE(form_id, email) guard
+                // catching a duplicate that slipped past the check above).
+                // Delete any files we moved so they are not left orphaned.
+                cleanupUploads($uploadedPaths);
+                $errors['system'] = "An error occurred saving your application.";
             }
         }
     }

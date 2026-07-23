@@ -27,6 +27,23 @@ class FormModel {
         return $form;
     }
 
+    /**
+     * Fetch a form by type regardless of its active state.
+     * Used to tell a closed form apart from one that never existed, so the
+     * public renderer can show the right message instead of a blanket 404.
+     */
+    public function getAnyFormByType($formType) {
+        $stmt = $this->db->prepare("SELECT * FROM forms WHERE form_type = :type");
+        $stmt->execute(['type' => $formType]);
+        $form = $stmt->fetch();
+
+        if ($form) {
+            $form['schema'] = json_decode($form['schema_json'], true);
+        }
+
+        return $form;
+    }
+
     public function validateSubmission($schema, $postData) {
         $errors = [];
         

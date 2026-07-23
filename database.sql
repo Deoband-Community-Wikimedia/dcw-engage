@@ -33,6 +33,10 @@ CREATE TABLE `applications` (
     `form_data` JSON, -- Store dynamic answers securely
     `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    -- One application per email per form. The application layer checks for a
+    -- duplicate before inserting, but that check-then-insert has a race under
+    -- a double submit; this constraint is the actual guarantee.
+    UNIQUE KEY `uniq_form_email` (`form_id`, `email`),
     FOREIGN KEY (`form_id`) REFERENCES `forms`(`id`) ON DELETE CASCADE
 );
 
@@ -70,5 +74,24 @@ CREATE TABLE `application_notes` (
     FOREIGN KEY (`application_id`) REFERENCES `applications`(`id`) ON DELETE CASCADE,
     FOREIGN KEY (`admin_id`) REFERENCES `admin_users`(`id`) ON DELETE SET NULL
 );
+
+-- ============================================================
+-- Duplicate lock for EXISTING installs (fresh installs get this
+-- from the CREATE TABLE above). Enforces one application per email
+-- per form at the database level.
+--
+-- If this ALTER errors with "Duplicate entry", the table already
+-- has duplicate (form_id, email) rows from before the fix. Clear
+-- them first, keeping the earliest of each pair:
+--
+--   DELETE a1 FROM applications a1
+--   JOIN applications a2
+--     ON a1.form_id = a2.form_id AND a1.email = a2.email
+--    AND a1.id > a2.id;
+--
+-- then re-run the ALTER.
+-- ============================================================
+ALTER TABLE `applications`
+    ADD UNIQUE KEY `uniq_form_email` (`form_id`, `email`);
 
 -- Note: Data retention cron should periodically delete applications with status 'Rejected' or stale 'Draft' records.
