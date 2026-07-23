@@ -74,9 +74,12 @@ Legend: ✅ done · 🟡 partial · ⬜ not started
 ## Remaining work, grouped
 
 **Phase A — make what exists actually usable in production**
-- Configure SMTP so magic links, confirmations, and alerts actually send
 - Build the `notify_emails` field in the builder so alerts have recipients
 - A distinct confirmation email separate from the magic-link email
+- SMTP config is **deliberately deferred to final-launch prep**. Until it is
+  set, all email is a silent no-op — so magic-link resume, the confirmation,
+  and organizer alerts cannot be tested end to end yet. Don't file those as
+  bugs before launch.
 
 **Phase B — the form engine's missing capabilities** (the big one)
 - New field types: rating scale, checkbox/consent (T&C), radio
@@ -119,8 +122,9 @@ These were raised and never closed. They block design, not just code.
 
 ## Suggested next step
 
-Phase A is small and unblocks real testing — nothing can be validated
-end to end until email actually sends. I'd knock that out first, in parallel
-with settling the four decisions above, then scope Phase B properly since it's
-the largest and depends on decision #3. Timeline to be set once we agree who
-picks up what.
+Settle the four decisions above first — they're cheap to answer and block
+design. In parallel, the `notify_emails` builder field is a quick win. Then
+scope Phase B properly, since it's the largest chunk and decision #3 (the
+Club→Call data model) shapes it. SMTP stays off until final-launch prep by
+choice, so email-dependent flows are validated then, not now. Timeline to be
+set once we agree who picks up what.
