@@ -1,6 +1,13 @@
 -- DCW Engage Portal - Database Schema
 -- Architecture for vanilla PHP + PDO
 
+-- Organizer accounts for the /admin workspace.
+-- No rows are seeded here on purpose, a committed password hash is a
+-- password everyone has. After importing this file, create the first
+-- account from the terminal:
+--
+--     php bin/create_admin.php
+--
 CREATE TABLE `admin_users` (
     `id` INT AUTO_INCREMENT PRIMARY KEY,
     `email` VARCHAR(255) NOT NULL UNIQUE,

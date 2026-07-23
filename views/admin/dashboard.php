@@ -1,6 +1,9 @@
 <?php
 require_once __DIR__ . '/../../includes/init.php';
+require_once __DIR__ . '/../../includes/auth.php';
 require_once __DIR__ . '/../../models/FormModel.php';
+
+Auth::requireLogin();
 
 $formModel = new FormModel();
 $forms = $formModel->getAllForms();
@@ -63,8 +66,16 @@ $forms = $formModel->getAllForms();
 </head>
 <body>
     <div class="container">
-        <div class="header">
+        <div class="header" style="display: flex; align-items: center; justify-content: space-between; gap: 16px;">
             <h1>Workspace</h1>
+
+            <div style="display: flex; align-items: center; gap: 12px; font-size: 14px; color: #64748b;">
+                <span><?= htmlspecialchars(Auth::email()) ?></span>
+                <form method="POST" action="/admin/logout" style="margin: 0;">
+                    <?= CSRF::getInputField() ?>
+                    <button type="submit" style="background: none; border: 1px solid #e2e8f0; color: #64748b; padding: 6px 12px; border-radius: 6px; font-family: inherit; font-size: 13px; cursor: pointer;">Sign Out</button>
+                </form>
+            </div>
         </div>
 
         <div class="grid">

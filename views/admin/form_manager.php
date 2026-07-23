@@ -1,7 +1,10 @@
 <?php
 require_once __DIR__ . '/../../includes/init.php';
+require_once __DIR__ . '/../../includes/auth.php';
 require_once __DIR__ . '/../../models/FormModel.php';
 require_once __DIR__ . '/../../models/ApplicationModel.php';
+
+Auth::requireLogin();
 
 $formId = $_GET['id'] ?? null;
 if (!$formId) die("Form ID missing.");
