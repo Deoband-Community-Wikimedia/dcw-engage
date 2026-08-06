@@ -24,6 +24,7 @@ $activeForms = $formModel->getActiveForms();
             --border: #e2e8f0;
         }
         * { box-sizing: border-box; }
+        html { color-scheme: light; }
         body {
             margin: 0; background: var(--page); color: var(--ink);
             font-family: 'Inter', -apple-system, sans-serif; line-height: 1.6;
@@ -84,11 +85,6 @@ $activeForms = $formModel->getActiveForms();
         footer a { color: var(--primary); text-decoration: none; }
         footer .org { display: inline-flex; align-items: center; gap: 9px; margin-bottom: 6px; }
         footer .org img { width: 26px; height: auto; }
-
-        @media (prefers-color-scheme: dark) {
-            :root { --page:#0f1418; --card:#171c22; --ink:#e7edf2; --muted:#93a1ad; --border:#28313a; --primary:#3fa7d6; --primary-hover:#63b9e0; }
-            .prog .tick { background: color-mix(in srgb, var(--primary) 18%, #171c22); }
-        }
     </style>
 </head>
 <body>
