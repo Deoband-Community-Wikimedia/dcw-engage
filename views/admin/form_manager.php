@@ -19,6 +19,29 @@ $form = $formModel->getFormById($formId);
 if (!$form)
     die("Form not found.");
 
+// Determine select-type fields in the schema (used to build filter dropdowns).
+// Defined early so it's available both to buildFilterQueryString() below
+// and to the POST handler's redirects further down.
+$selectFields = array_filter($form['schema']['fields'] ?? [], fn($f) => ($f['type'] ?? '') === 'select');
+
+/**
+ * Rebuilds the current filter query string (status + any dynamic field filters)
+ * so filters can be preserved across redirects after actions like bulk update.
+ */
+function buildFilterQueryString()
+{
+    global $selectFields;
+    $params = [];
+    if (!empty($_GET['status']))
+        $params['status'] = $_GET['status'];
+    foreach ($selectFields as $sf) {
+        $paramName = 'filter_' . $sf['name'];
+        if (!empty($_GET[$paramName]))
+            $params[$paramName] = $_GET[$paramName];
+    }
+    return $params ? '&' . http_build_query($params) : '';
+}
+
 $success = '';
 
 // Handle POST actions
@@ -40,6 +63,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $appModel->updateStatus($_POST['application_id'], $_POST['status']);
 
             header("Location: /admin/form_manager?id=" . $formId);
+            exit;
+        } elseif ($_POST['action'] === 'bulk_update_status') {
+            $selectedIds = $_POST['application_ids'] ?? [];
+            $newBulkStatus = $_POST['bulk_status'] ?? '';
+            if (!empty($selectedIds) && !empty($newBulkStatus)) {
+                $appModel->updateStatusBulk($selectedIds, $newBulkStatus);
+            }
+            header("Location: /admin/form_manager?id=" . $formId . buildFilterQueryString());
             exit;
         } elseif ($_POST['action'] === 'add_note') {
             $noteText = trim($_POST['note_text'] ?? '');
@@ -94,6 +125,34 @@ if (isset($_GET['action']) && $_GET['action'] === 'export') {
 
     fclose($output);
     exit;
+}
+
+// Read filters from query string
+$filterStatus = $_GET['status'] ?? '';
+$activeFieldFilters = [];
+foreach ($selectFields as $sf) {
+    $paramName = 'filter_' . $sf['name'];
+    if (!empty($_GET[$paramName])) {
+        $activeFieldFilters[$sf['name']] = $_GET[$paramName];
+    }
+}
+
+// Apply status filter
+if (!empty($filterStatus)) {
+    $applications = array_filter($applications, fn($app) => $app['status'] === $filterStatus);
+}
+
+// Apply dynamic field filters (e.g. club/role), reading from form_data JSON
+if (!empty($activeFieldFilters)) {
+    $applications = array_filter($applications, function ($app) use ($activeFieldFilters) {
+        $data = json_decode($app['form_data'], true);
+        foreach ($activeFieldFilters as $fieldName => $expectedValue) {
+            if (!isset($data[$fieldName]) || $data[$fieldName] !== $expectedValue) {
+                return false;
+            }
+        }
+        return true;
+    });
 }
 ?>
 <!DOCTYPE html>
@@ -161,57 +220,112 @@ if (isset($_GET['action']) && $_GET['action'] === 'export') {
             </div>
         </div>
 
-        <table>
-            <thead>
-                <tr>
-                    <th>Tracking ID</th>
-                    <th>Applicant Name</th>
-                    <th>Status</th>
-                    <th>Date Submitted</th>
-                    <th>Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                <?php if (empty($applications)): ?>
-                    <tr>
-                        <td colspan="5" style="text-align:center; padding: 30px; color: #64748b;">No responses yet.</td>
-                    </tr>
-                <?php endif; ?>
+        <form method="GET" class="filter-bar"
+            style="display:flex; gap:10px; align-items:center; margin-bottom:15px; flex-wrap:wrap;">
+            <input type="hidden" name="id" value="<?= $formId ?>">
 
-                <?php foreach ($applications as $app):
-                    $statusClass = 'status-' . str_replace(' ', '-', $app['status']);
-                    ?>
-                    <tr>
-                        <td style="font-family: monospace; font-weight: 600;">
-                            DCW-<?= str_pad($app['id'], 5, '0', STR_PAD_LEFT) ?></td>
-                        <td style="font-weight: 500;"><?= htmlspecialchars($app['applicant_name']) ?></td>
-                        <td><span class="status-badge <?= $statusClass ?>"><?= htmlspecialchars($app['status']) ?></span>
-                        </td>
-                        <td style="color: #64748b;"><?= date('M j, Y H:i', strtotime($app['created_at'])) ?></td>
-                        <td>
-                            <button class="btn btn-sm btn-primary"
-                                onclick='viewData(<?= json_encode($app['form_data'], JSON_HEX_APOS | JSON_HEX_QUOT) ?>, "<?= htmlspecialchars($app['applicant_name'], ENT_QUOTES) ?>", <?= $app['id'] ?>, <?= json_encode($notesModel->getNotesByApplication($app['id']), JSON_HEX_APOS | JSON_HEX_QUOT) ?>)'>View
-                                Data</button>
+            <select name="status" onchange="this.form.submit()">
+                <option value="">All Statuses</option>
+                <option value="New" <?= $filterStatus === 'New' ? 'selected' : '' ?>>New</option>
+                <option value="Under Review" <?= $filterStatus === 'Under Review' ? 'selected' : '' ?>>Under Review
+                </option>
+                <option value="Accepted" <?= $filterStatus === 'Accepted' ? 'selected' : '' ?>>Accepted</option>
+                <option value="Rejected" <?= $filterStatus === 'Rejected' ? 'selected' : '' ?>>Rejected</option>
+            </select>
 
-                            <form method="POST" style="display:inline-block; margin-left:10px;">
-                                <?= CSRF::getInputField() ?>
-                                <input type="hidden" name="action" value="update_applicant_status">
-                                <input type="hidden" name="application_id" value="<?= $app['id'] ?>">
-                                <select name="status" onchange="this.form.submit()">
-                                    <option value="New" <?= $app['status'] == 'New' ? 'selected' : '' ?>>New</option>
-                                    <option value="Under Review" <?= $app['status'] == 'Under Review' ? 'selected' : '' ?>>
-                                        Under Review (Lock)</option>
-                                    <option value="Accepted" <?= $app['status'] == 'Accepted' ? 'selected' : '' ?>>Accepted
-                                    </option>
-                                    <option value="Rejected" <?= $app['status'] == 'Rejected' ? 'selected' : '' ?>>Rejected
-                                    </option>
-                                </select>
-                            </form>
-                        </td>
+            <?php foreach ($selectFields as $sf):
+                $paramName = 'filter_' . $sf['name'];
+                $currentVal = $_GET[$paramName] ?? '';
+                ?>
+                <select name="<?= htmlspecialchars($paramName) ?>" onchange="this.form.submit()">
+                    <option value="">All <?= htmlspecialchars($sf['label'] ?? $sf['name']) ?></option>
+                    <?php foreach ($sf['options'] ?? [] as $opt): ?>
+                        <option value="<?= htmlspecialchars($opt) ?>" <?= $currentVal === $opt ? 'selected' : '' ?>>
+                            <?= htmlspecialchars($opt) ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+            <?php endforeach; ?>
+
+            <?php if (!empty($filterStatus) || !empty($activeFieldFilters)): ?>
+                <a href="?id=<?= $formId ?>" class="btn btn-sm btn-outline">Clear Filters</a>
+            <?php endif; ?>
+        </form>
+
+
+        <form method="POST" id="bulkForm" class="bulk-bar" onsubmit="return prepareBulkSubmit()"
+            style="display:none; gap:10px; align-items:center; margin-bottom:15px;">
+            <?= CSRF::getInputField() ?>
+            <input type="hidden" name="action" value="bulk_update_status">
+            <div id="bulkIdsContainer"></div>
+            <span id="bulkCount" style="font-weight:600; color:#1e293b;"></span>
+            <select name="bulk_status" required>
+                <option value="">Set status to...</option>
+                <option value="New">New</option>
+                <option value="Under Review">Under Review</option>
+                <option value="Accepted">Accepted</option>
+                <option value="Rejected">Rejected</option>
+            </select>
+            <button type="submit" class="btn btn-sm btn-primary">Apply to Selected</button>
+        </form>
+        <div class="table-wrapper">
+            <table>
+                <thead>
+                    <tr>
+                        <th><input type="checkbox" id="selectAll" onchange="toggleSelectAll(this)"></th>
+                        <th>Tracking ID</th>
+                        <th>Applicant Name</th>
+                        <th>Status</th>
+                        <th>Date Submitted</th>
+                        <th>Actions</th>
                     </tr>
-                <?php endforeach; ?>
-            </tbody>
-        </table>
+                </thead>
+                <tbody>
+                    <?php if (empty($applications)): ?>
+                        <tr>
+                            <td colspan="6" style="text-align:center; padding: 30px; color: #64748b;">No responses match the
+                                current filters.</td>
+                        </tr>
+                    <?php endif; ?>
+
+                    <?php foreach ($applications as $app):
+                        $statusClass = 'status-' . str_replace(' ', '-', $app['status']);
+                        ?>
+                        <tr>
+                            <td><input type="checkbox" class="row-checkbox" value="<?= $app['id'] ?>"
+                                    onchange="updateBulkBar()"></td>
+                            <td style="font-family: monospace; font-weight: 600;">
+                                DCW-<?= str_pad($app['id'], 5, '0', STR_PAD_LEFT) ?></td>
+                            <td style="font-weight: 500;"><?= htmlspecialchars($app['applicant_name']) ?></td>
+                            <td><span
+                                    class="status-badge <?= $statusClass ?>"><?= htmlspecialchars($app['status']) ?></span>
+                            </td>
+                            <td style="color: #64748b;"><?= date('M j, Y H:i', strtotime($app['created_at'])) ?></td>
+                            <td>
+                                <button class="btn btn-sm btn-primary"
+                                    onclick='viewData(<?= json_encode($app['form_data'], JSON_HEX_APOS | JSON_HEX_QUOT) ?>, "<?= htmlspecialchars($app['applicant_name'], ENT_QUOTES) ?>", <?= $app['id'] ?>, <?= json_encode($notesModel->getNotesByApplication($app['id']), JSON_HEX_APOS | JSON_HEX_QUOT) ?>)'>View
+                                    Data</button>
+
+                                <form method="POST" style="display:inline-block; margin-left:10px;">
+                                    <?= CSRF::getInputField() ?>
+                                    <input type="hidden" name="action" value="update_applicant_status">
+                                    <input type="hidden" name="application_id" value="<?= $app['id'] ?>">
+                                    <select name="status" onchange="this.form.submit()">
+                                        <option value="New" <?= $app['status'] == 'New' ? 'selected' : '' ?>>New</option>
+                                        <option value="Under Review" <?= $app['status'] == 'Under Review' ? 'selected' : '' ?>>
+                                            Under Review (Lock)</option>
+                                        <option value="Accepted" <?= $app['status'] == 'Accepted' ? 'selected' : '' ?>>Accepted
+                                        </option>
+                                        <option value="Rejected" <?= $app['status'] == 'Rejected' ? 'selected' : '' ?>>Rejected
+                                        </option>
+                                    </select>
+                                </form>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
     </div>
 
     <!-- Data Viewer Modal -->
@@ -350,6 +464,43 @@ if (isset($_GET['action']) && $_GET['action'] === 'export') {
             }).catch(err => {
                 alert("Failed to copy link.");
             });
+        }
+
+        // --- Bulk selection logic ---
+        function toggleSelectAll(source) {
+            document.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = source.checked);
+            updateBulkBar();
+        }
+
+        function updateBulkBar() {
+            const checked = document.querySelectorAll('.row-checkbox:checked');
+            const bulkForm = document.getElementById('bulkForm');
+            const bulkCount = document.getElementById('bulkCount');
+            if (checked.length > 0) {
+                bulkForm.style.display = 'flex';
+                bulkCount.innerText = checked.length + ' selected';
+            } else {
+                bulkForm.style.display = 'none';
+            }
+
+            // Keep "select all" checkbox in sync if some/none/all rows are checked
+            const all = document.querySelectorAll('.row-checkbox');
+            const selectAll = document.getElementById('selectAll');
+            selectAll.checked = all.length > 0 && checked.length === all.length;
+        }
+
+        function prepareBulkSubmit() {
+            const checked = document.querySelectorAll('.row-checkbox:checked');
+            const container = document.getElementById('bulkIdsContainer');
+            container.innerHTML = '';
+            checked.forEach(cb => {
+                const input = document.createElement('input');
+                input.type = 'hidden';
+                input.name = 'application_ids[]';
+                input.value = cb.value;
+                container.appendChild(input);
+            });
+            return checked.length > 0;
         }
     </script>
 </body>

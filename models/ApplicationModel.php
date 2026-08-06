@@ -139,6 +139,15 @@ class ApplicationModel {
         return $stmt->execute(['status' => $status, 'id' => $id]);
     }
     
+    public function updateStatusBulk($applicationIds, $status) {
+    $stmt = $this->db->prepare("UPDATE applications SET status = :status WHERE id = :id");
+    foreach ($applicationIds as $id) {
+        $stmt->execute([
+            'status' => $status,
+            'id' => $id
+        ]);
+    }
+}
     /**
      * Get applications for a specific form
      */
