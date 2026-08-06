@@ -139,15 +139,27 @@ class ApplicationModel {
         return $stmt->execute(['status' => $status, 'id' => $id]);
     }
     
-    public function updateStatusBulk($applicationIds, $status) {
-    $stmt = $this->db->prepare("UPDATE applications SET status = :status WHERE id = :id");
-    foreach ($applicationIds as $id) {
-        $stmt->execute([
-            'status' => $status,
-            'id' => $id
-        ]);
+    /**
+     * Bulk-update status for many applications at once.
+     * Validates the status against the same whitelist as updateStatus(), and
+     * scopes every update to $formId so a request can only touch rows that
+     * belong to the form being managed.
+     */
+    public function updateStatusBulk($applicationIds, $status, $formId) {
+        $validStatuses = ['Draft', 'New', 'Submitted', 'Under Review', 'Accepted', 'Rejected'];
+        if (!in_array($status, $validStatuses)) {
+            throw new Exception("Invalid status.");
+        }
+        $stmt = $this->db->prepare("UPDATE applications SET status = :status WHERE id = :id AND form_id = :form_id");
+        foreach ($applicationIds as $id) {
+            $stmt->execute([
+                'status' => $status,
+                'id' => $id,
+                'form_id' => $formId
+            ]);
+        }
     }
-}
+
     /**
      * Get applications for a specific form
      */

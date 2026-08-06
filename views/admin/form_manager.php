@@ -68,7 +68,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $selectedIds = $_POST['application_ids'] ?? [];
             $newBulkStatus = $_POST['bulk_status'] ?? '';
             if (!empty($selectedIds) && !empty($newBulkStatus)) {
-                $appModel->updateStatusBulk($selectedIds, $newBulkStatus);
+                $appModel->updateStatusBulk($selectedIds, $newBulkStatus, $formId);
             }
             header("Location: /admin/form_manager?id=" . $formId . buildFilterQueryString());
             exit;
