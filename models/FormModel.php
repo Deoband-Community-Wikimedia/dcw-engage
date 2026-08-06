@@ -75,11 +75,27 @@ class FormModel {
      */
     public function getAllForms() {
         $stmt = $this->db->query("
-            SELECT f.*, 
+            SELECT f.*,
                    JSON_UNQUOTE(JSON_EXTRACT(f.schema_json, '$.title')) as title,
                    (SELECT COUNT(*) FROM applications a WHERE a.form_id = f.id) as applicant_count
-            FROM forms f 
+            FROM forms f
             ORDER BY f.created_at DESC
+        ");
+        return $stmt->fetchAll();
+    }
+
+    /**
+     * Active forms only, with title and description pulled from the schema.
+     * Powers the public homepage listing at engage.dcwwiki.org.
+     */
+    public function getActiveForms() {
+        $stmt = $this->db->query("
+            SELECT form_type,
+                   JSON_UNQUOTE(JSON_EXTRACT(schema_json, '$.title')) as title,
+                   JSON_UNQUOTE(JSON_EXTRACT(schema_json, '$.description')) as description
+            FROM forms
+            WHERE is_active = 1
+            ORDER BY created_at DESC
         ");
         return $stmt->fetchAll();
     }
