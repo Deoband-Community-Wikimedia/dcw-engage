@@ -29,8 +29,13 @@ class Mailer {
             $mail->Username   = $mailConfig['user'];
             $mail->Password   = $mailConfig['pass'];
             $mail->Port       = $mailConfig['port'];
-            // $mail->SMTPSecure = PHPMailer\PHPMailer\PHPMailer::ENCRYPTION_STARTTLS;
-            
+            // Encryption: port 465 uses implicit SSL, otherwise STARTTLS (e.g. 587).
+            // Set 'secure' in the mail config to override.
+            $secure = $mailConfig['secure'] ?? ((int)$mailConfig['port'] === 465 ? 'ssl' : 'tls');
+            if (!empty($secure)) {
+                $mail->SMTPSecure = $secure;
+            }
+
             $mail->setFrom($mailConfig['user'], 'DCW Engage');
             $mail->addAddress($email, $applicantName);
             
@@ -130,6 +135,12 @@ class Mailer {
             $mail->Username   = $mailConfig['user'];
             $mail->Password   = $mailConfig['pass'];
             $mail->Port       = $mailConfig['port'];
+            // Encryption: port 465 uses implicit SSL, otherwise STARTTLS (e.g. 587).
+            // Set 'secure' in the mail config to override.
+            $secure = $mailConfig['secure'] ?? ((int)$mailConfig['port'] === 465 ? 'ssl' : 'tls');
+            if (!empty($secure)) {
+                $mail->SMTPSecure = $secure;
+            }
 
             $mail->setFrom($mailConfig['user'], 'DCW Engage');
             foreach ($recipients as $recipientEmail) {
