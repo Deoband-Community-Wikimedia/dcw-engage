@@ -69,8 +69,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
     } else {
-        $errors = $formModel->validateSubmission($schema, $_POST);
-        
+        // Two distinct actions live behind the same "Submit Application"
+        // form: saving an incomplete draft (gets a magic link to come back
+        // to) vs a final submission (gets a plain received confirmation).
+        // Default to 'submit' so a stray/legacy POST without the field never
+        // silently becomes a draft.
+        $intent = ($_POST['intent'] ?? 'submit') === 'draft' ? 'draft' : 'submit';
+        $isDraft = $intent === 'draft';
+
+        // A draft is allowed to be incomplete by definition, so required
+        // fields aren't enforced for it.
+        $errors = $formModel->validateSubmission($schema, $_POST, $isDraft);
+
         if (empty($email)) {
             $errors['email'] = "Email Address is required.";
         } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
@@ -131,19 +141,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // views/forms/resume.php). Fall back to a generic placeholder
                 // only if a form genuinely has no such field.
                 $applicantName = $postData['full_name'] ?? 'Applicant';
-                $appId = $appModel->saveApplication($form['id'], $email, $applicantName, 'New', json_encode($postData));
+                $status = $isDraft ? 'Draft' : 'New';
+                $appId = $appModel->saveApplication($form['id'], $email, $applicantName, $status, json_encode($postData));
+                $trackingId = 'DCW-' . str_pad($appId, 5, '0', STR_PAD_LEFT);
 
-                // Generate Magic Link
-                $token = $appModel->generateMagicLink($appId, false);
-
-                // Dispatch Email Notification
                 require_once __DIR__ . '/../../includes/mailer.php';
-                Mailer::sendMagicLink($email, $applicantName, $token);
 
-                // Notify the organizer(s) in charge of this form
-                Mailer::sendOrganizerAlert($form, $email, $applicantName, $appId);
+                if ($isDraft) {
+                    // Drafts get the resume-by-email magic link, with the
+                    // longer draft expiry window.
+                    $token = $appModel->generateMagicLink($appId, true);
+                    Mailer::sendMagicLink($email, $applicantName, $token);
+                    $success = "Draft saved! Your tracking ID is: $trackingId";
+                } else {
+                    // A real submission gets a plain confirmation instead —
+                    // no edit token. Returning applicants who need to make a
+                    // correction can still use "Resend Magic Link" above.
+                    $formTitle = $schema['title'] ?? $formType;
+                    Mailer::sendApplicationReceived($email, $applicantName, $trackingId, $formTitle);
+                    $success = "Application submitted successfully! Your tracking ID is: $trackingId";
+                }
 
-                $success = "Application submitted successfully! Your tracking ID is: DCW-" . str_pad($appId, 5, '0', STR_PAD_LEFT);
+                // Notify the organizer(s) in charge of this form — only for
+                // a real submission, not every incomplete draft save.
+                if (!$isDraft) {
+                    Mailer::sendOrganizerAlert($form, $email, $applicantName, $appId);
+                }
             } catch (Exception $e) {
                 // The save failed (including the UNIQUE(form_id, email) guard
                 // catching a duplicate that slipped past the check above).
@@ -180,9 +203,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         
         <?php if ($success): ?>
             <div class="alert-success">
-                <h3 style="margin-top:0">Application Received!</h3>
+                <h3 style="margin-top:0"><?= ($_POST['intent'] ?? '') === 'draft' ? 'Draft Saved!' : 'Application Received!' ?></h3>
                 <?= htmlspecialchars($success) ?>
-                <p style="margin-bottom:0; margin-top:10px; font-size: 14px;">We have sent a confirmation email (with a magic link to edit your application if needed) to your registered address.</p>
+                <p style="margin-bottom:0; margin-top:10px; font-size: 14px;">
+                    <?= ($_POST['intent'] ?? '') === 'draft'
+                        ? 'We have emailed you a secure link to come back and finish this application anytime.'
+                        : 'We have emailed you a confirmation. No further action is needed right now.' ?>
+                </p>
             </div>
         <?php else: ?>
             
@@ -248,7 +275,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     </div>
                 <?php endforeach; ?>
 
-                <button type="submit">Submit Application</button>
+                <div style="display:flex; gap:10px;">
+                    <button type="submit" name="intent" value="draft" class="btn-outline" style="background:#fff; color:#106b9a; border:1px solid #106b9a;">Save as Draft</button>
+                    <button type="submit" name="intent" value="submit">Submit Application</button>
+                </div>
             </form>
         <?php endif; ?>
     </div>

@@ -44,16 +44,17 @@ class FormModel {
         return $form;
     }
 
-    public function validateSubmission($schema, $postData) {
+    public function validateSubmission($schema, $postData, $skipRequired = false) {
         $errors = [];
-        
+
         foreach ($schema['fields'] as $field) {
             $name = $field['name'];
             $isRequired = $field['required'] ?? false;
             $type = $field['type'] ?? 'text';
-            
-            // Check required
-            if ($isRequired) {
+
+            // Check required — skipped entirely for a draft save, which is
+            // allowed to be incomplete by definition.
+            if ($isRequired && !$skipRequired) {
                 if ($type === 'file') {
                     // Check if file was uploaded or if existing path is provided (for resume portal)
                     if (empty($_FILES[$name]['name']) && empty($postData[$name])) {

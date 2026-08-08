@@ -17,6 +17,7 @@ $schema = json_decode($application['schema_json'], true);
 $formData = json_decode($application['form_data'], true);
 $status = $application['status'];
 $isLocked = in_array($status, ['Under Review', 'Accepted', 'Rejected']);
+$wasDraft = $status === 'Draft';
 
 $errors = [];
 $success = '';
@@ -25,50 +26,84 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked) {
     if (!CSRF::validate($_POST['csrf_token'])) {
         die("Invalid CSRF token.");
     }
-    
+
+    // Only a Draft offers a real choice here — once an application is a real
+    // submission, every edit just re-saves it as a submission (no more
+    // draft state to go back to).
+    $intent = ($_POST['intent'] ?? 'submit') === 'draft' ? 'draft' : 'submit';
+    $staysDraft = $wasDraft && $intent === 'draft';
+
     require_once __DIR__ . '/../../models/FormModel.php';
     $formModel = new FormModel();
-    $errors = $formModel->validateSubmission($schema, $_POST);
-    
+    $errors = $formModel->validateSubmission($schema, $_POST, $staysDraft);
+
     if (empty($errors)) {
         $email = $_POST['email'] ?? $application['email'];
         $name = $_POST['full_name'] ?? $application['applicant_name'];
-        
+
         $postData = $_POST;
         unset($postData['csrf_token']);
-        
+
         // Process File Uploads
         require_once __DIR__ . '/../../models/FileUploader.php';
         $fileUploader = new FileUploader();
-        
+
+        // NOTE: loop variable is deliberately $fieldName, not $name — reusing
+        // $name here used to silently overwrite the applicant's name (set
+        // above) with the last field's internal name, so it got saved wrong
+        // on every edit made through the resume portal.
         foreach ($schema['fields'] as $field) {
-            $name = $field['name'];
+            $fieldName = $field['name'];
             if (($field['type'] ?? '') === 'file') {
-                if (!empty($_FILES[$name]['name'])) {
+                if (!empty($_FILES[$fieldName]['name'])) {
                     // New file uploaded
                     try {
-                        $path = $fileUploader->handleUpload($_FILES[$name], $name, $name, $application['form_type']);
+                        $path = $fileUploader->handleUpload($_FILES[$fieldName], $fieldName, $name, $application['form_type']);
                         if ($path) {
-                            $postData[$name] = $path;
+                            $postData[$fieldName] = $path;
                         }
                     } catch (Exception $e) {
-                        $errors[$name] = $e->getMessage();
+                        $errors[$fieldName] = $e->getMessage();
                         $errors['system'] = "File upload failed.";
                     }
                 } else {
                     // Keep existing file if no new file is uploaded
-                    $postData[$name] = $formData[$name] ?? '';
+                    $postData[$fieldName] = $formData[$fieldName] ?? '';
                 }
             }
         }
-        
+
         if (empty($errors)) {
             try {
-            // Update the existing application
-            $appModel->saveApplication($application['form_id'], $email, $name, 'Submitted', json_encode($postData), $application['id']);
-            $success = "Application updated successfully!";
-            // Update local formData so the view reflects the newest data
+                // Draft stays Draft; anything else (including a Draft being
+                // finalized right now) becomes a real submission. 'Submitted'
+                // was never a valid value in the applications.status ENUM —
+                // this call used to fail outright.
+                $newStatus = $staysDraft ? 'Draft' : 'New';
+                $appModel->saveApplication($application['form_id'], $email, $name, $newStatus, json_encode($postData), $application['id']);
+
+                // A Draft becoming a real submission is the moment it earns
+                // the same emails a brand-new submission gets. Just editing
+                // an already-real submission, or re-saving a Draft as a
+                // Draft again, stays silent like it does today.
+                if ($wasDraft && !$staysDraft) {
+                    require_once __DIR__ . '/../../includes/mailer.php';
+                    $trackingId = 'DCW-' . str_pad($application['id'], 5, '0', STR_PAD_LEFT);
+                    $formTitle = $schema['title'] ?? $application['form_type'];
+                    Mailer::sendApplicationReceived($email, $name, $trackingId, $formTitle);
+                    Mailer::sendOrganizerAlert(
+                        ['id' => $application['form_id'], 'form_type' => $application['form_type'], 'title' => $formTitle, 'notify_emails' => $application['notify_emails'] ?? ''],
+                        $email,
+                        $name,
+                        $application['id']
+                    );
+                }
+
+                $success = $staysDraft ? "Draft updated successfully!" : "Application updated successfully!";
+                // Update local formData so the view reflects the newest data
                 $formData = $postData;
+                $status = $newStatus;
+                $wasDraft = $staysDraft;
             } catch (Exception $e) {
                 $errors['system'] = $e->getMessage();
             }
@@ -165,8 +200,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked) {
                 </div>
             <?php endforeach; ?>
 
-            <?php if (!$isLocked): ?>
-                <button type="submit">Update Application</button>
+            <?php if (!$isLocked && $wasDraft): ?>
+                <div style="display:flex; gap:10px;">
+                    <button type="submit" name="intent" value="draft" class="btn-outline" style="background:#fff; color:#106b9a; border:1px solid #106b9a;">Save as Draft</button>
+                    <button type="submit" name="intent" value="submit">Submit Application</button>
+                </div>
+            <?php elseif (!$isLocked): ?>
+                <button type="submit" name="intent" value="submit">Update Application</button>
             <?php endif; ?>
         </form>
     </div>

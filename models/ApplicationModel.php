@@ -85,7 +85,7 @@ class ApplicationModel {
      */
     public function getApplicationByToken($token) {
         $stmt = $this->db->prepare("
-            SELECT a.*, f.schema_json, f.form_type, f.is_active, m.expires_at 
+            SELECT a.*, f.schema_json, f.form_type, f.is_active, f.notify_emails, m.expires_at
             FROM magic_links m
             JOIN applications a ON m.application_id = a.id
             JOIN forms f ON a.form_id = f.id
