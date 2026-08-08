@@ -76,22 +76,25 @@ CREATE TABLE `application_notes` (
 );
 
 -- ============================================================
--- Duplicate lock for EXISTING installs (fresh installs get this
--- from the CREATE TABLE above). Enforces one application per email
--- per form at the database level.
+-- Note for installs that predate `uniq_form_email`: a fresh import of
+-- this file already has the constraint, inline, on `applications` above
+-- — do NOT run the ALTER below against a fresh install, it will fail
+-- with "Duplicate key name 'uniq_form_email'" (see #22).
 --
--- If this ALTER errors with "Duplicate entry", the table already
--- has duplicate (form_id, email) rows from before the fix. Clear
--- them first, keeping the earliest of each pair:
+-- Only run this by hand, once, against an existing database that was
+-- created before the UNIQUE KEY was added to the CREATE TABLE:
+--
+--   ALTER TABLE `applications`
+--       ADD UNIQUE KEY `uniq_form_email` (`form_id`, `email`);
+--
+-- If that errors with "Duplicate entry", the table already has
+-- duplicate (form_id, email) rows from before the fix. Clear them
+-- first, keeping the earliest of each pair, then re-run the ALTER:
 --
 --   DELETE a1 FROM applications a1
 --   JOIN applications a2
 --     ON a1.form_id = a2.form_id AND a1.email = a2.email
 --    AND a1.id > a2.id;
---
--- then re-run the ALTER.
 -- ============================================================
-ALTER TABLE `applications`
-    ADD UNIQUE KEY `uniq_form_email` (`form_id`, `email`);
 
 -- Note: Data retention cron should periodically delete applications with status 'Rejected' or stale 'Draft' records.
