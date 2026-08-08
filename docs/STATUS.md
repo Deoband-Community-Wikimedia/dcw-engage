@@ -38,7 +38,7 @@ Legend: ✅ done · 🟡 partial · ⬜ not started
 | Admin authentication | ✅ | Session login, guards all `/admin/*` (#7) |
 | Routing / clean URLs | ✅ | Front-controller rewrite (#8) |
 | Internal organizer notes | ✅ | Append-only thread (#6) |
-| Route alert to specific organizer | 🟡 | Delivery built (#6); **no builder UI to set recipients**, and SMTP not configured |
+| Route alert to specific organizer | 🟡 | Delivery built (#6); **no builder UI to set recipients**, and SMTP partially configured |
 | Confirmation email on submit | 🟡 | Magic-link email sends on submit; no distinct confirmation template; **SMTP not live** |
 | Malware scan on upload | ⬜ | Only MIME + extension + double-extension checks today |
 
