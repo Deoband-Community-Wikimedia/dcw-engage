@@ -126,17 +126,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if (empty($errors)) {
             try {
-                $appId = $appModel->saveApplication($form['id'], $email, 'Applicant', 'New', json_encode($postData));
+                // 'full_name' is the conventional field name for the applicant's
+                // name across form schemas (see FileUploader call above and
+                // views/forms/resume.php). Fall back to a generic placeholder
+                // only if a form genuinely has no such field.
+                $applicantName = $postData['full_name'] ?? 'Applicant';
+                $appId = $appModel->saveApplication($form['id'], $email, $applicantName, 'New', json_encode($postData));
 
                 // Generate Magic Link
                 $token = $appModel->generateMagicLink($appId, false);
 
                 // Dispatch Email Notification
                 require_once __DIR__ . '/../../includes/mailer.php';
-                Mailer::sendMagicLink($email, 'Applicant', $token);
+                Mailer::sendMagicLink($email, $applicantName, $token);
 
                 // Notify the organizer(s) in charge of this form
-                Mailer::sendOrganizerAlert($form, $email, 'Applicant', $appId);
+                Mailer::sendOrganizerAlert($form, $email, $applicantName, $appId);
 
                 $success = "Application submitted successfully! Your tracking ID is: DCW-" . str_pad($appId, 5, '0', STR_PAD_LEFT);
             } catch (Exception $e) {
