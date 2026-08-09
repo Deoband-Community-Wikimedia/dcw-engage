@@ -62,7 +62,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($existing) {
                 $token = $appModel->generateMagicLink($existing['id'], false);
                 require_once __DIR__ . '/../../includes/mailer.php';
-                Mailer::sendMagicLink($email, $existing['applicant_name'] ?? '$applicantName', $token);
+                Mailer::sendMagicLink($email, $existing['applicant_name'] ?? 'Applicant', $token);
                 $success = "We have resent the magic link to $email. Please check your inbox.";
             } else {
                 $errors['email'] = "No existing application found with that email address.";
@@ -82,6 +82,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $postData = $_POST;
         unset($postData['csrf_token']);
+
+        // Real applicant name, sourced from the submitted full_name field.
+        // Falls back to 'Applicant' only if the form has no such field or it
+        // was left blank — this is a variable, not the literal text
+        // '$applicantName' that a single-quoted string would have produced.
+        $applicantName = trim($postData['full_name'] ?? '') ?: 'Applicant';
 
         // Reject duplicates BEFORE touching any files. Uploading first and
         // checking second leaves an orphaned file on disk with no application
@@ -106,7 +112,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $name = $field['name'];
                 if (($field['type'] ?? '') === 'file' && !empty($_FILES[$name]['name'])) {
                     try {
-                        $path = $fileUploader->handleUpload($_FILES[$name], $name, $postData['full_name'] ?? '$applicantName', $formType);
+                        $path = $fileUploader->handleUpload($_FILES[$name], $name, $applicantName, $formType);
                         if ($path) {
                             $postData[$name] = $path;
                             $uploadedPaths[] = $path;
@@ -126,17 +132,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if (empty($errors)) {
             try {
-                $appId = $appModel->saveApplication($form['id'], $email, '$applicantName', 'New', json_encode($postData));
+                $appId = $appModel->saveApplication($form['id'], $email, $applicantName, 'New', json_encode($postData));
 
                 // Generate Magic Link
                 $token = $appModel->generateMagicLink($appId, false);
 
                 // Dispatch Email Notification
                 require_once __DIR__ . '/../../includes/mailer.php';
-                Mailer::sendMagicLink($email, '$applicantName', $token);
+                Mailer::sendMagicLink($email, $applicantName, $token);
 
                 // Notify the organizer(s) in charge of this form
-                Mailer::sendOrganizerAlert($form, $email, '$applicantName', $appId);
+                Mailer::sendOrganizerAlert($form, $email, $applicantName, $appId);
 
                 $success = "Application submitted successfully! Your tracking ID is: DCW-" . str_pad($appId, 5, '0', STR_PAD_LEFT);
             } catch (Exception $e) {
