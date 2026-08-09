@@ -62,7 +62,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($existing) {
                 $token = $appModel->generateMagicLink($existing['id'], false);
                 require_once __DIR__ . '/../../includes/mailer.php';
-                Mailer::sendMagicLink($email, $existing['applicant_name'] ?? 'Applicant', $token);
+                Mailer::sendMagicLink($email, $existing['applicant_name'] ?? '$applicantName', $token);
                 $success = "We have resent the magic link to $email. Please check your inbox.";
             } else {
                 $errors['email'] = "No existing application found with that email address.";
@@ -106,7 +106,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $name = $field['name'];
                 if (($field['type'] ?? '') === 'file' && !empty($_FILES[$name]['name'])) {
                     try {
-                        $path = $fileUploader->handleUpload($_FILES[$name], $name, $postData['full_name'] ?? 'Applicant', $formType);
+                        $path = $fileUploader->handleUpload($_FILES[$name], $name, $postData['full_name'] ?? '$applicantName', $formType);
                         if ($path) {
                             $postData[$name] = $path;
                             $uploadedPaths[] = $path;
@@ -126,17 +126,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if (empty($errors)) {
             try {
-                $appId = $appModel->saveApplication($form['id'], $email, 'Applicant', 'New', json_encode($postData));
+                $appId = $appModel->saveApplication($form['id'], $email, '$applicantName', 'New', json_encode($postData));
 
                 // Generate Magic Link
                 $token = $appModel->generateMagicLink($appId, false);
 
                 // Dispatch Email Notification
                 require_once __DIR__ . '/../../includes/mailer.php';
-                Mailer::sendMagicLink($email, 'Applicant', $token);
+                Mailer::sendMagicLink($email, '$applicantName', $token);
 
                 // Notify the organizer(s) in charge of this form
-                Mailer::sendOrganizerAlert($form, $email, 'Applicant', $appId);
+                Mailer::sendOrganizerAlert($form, $email, '$applicantName', $appId);
 
                 $success = "Application submitted successfully! Your tracking ID is: DCW-" . str_pad($appId, 5, '0', STR_PAD_LEFT);
             } catch (Exception $e) {
