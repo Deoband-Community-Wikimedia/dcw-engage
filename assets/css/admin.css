@@ -200,6 +200,27 @@ input[type="text"]:focus, select:focus, input[type="url"]:focus, input[type="ema
 }
 
 /* Form Manager specific styles */
+.copy-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--primary-color);
+    background: #f0f7fb;
+    border: 1px solid #bae6fd;
+    border-radius: 50px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    line-height: 1;
+}
+
+.copy-btn:hover {
+    background: #e0f2fe;
+    border-color: var(--primary-color);
+}
+
 .btn-sm {
     padding: 0 16px;
     height: var(--control-height);
