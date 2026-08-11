@@ -237,9 +237,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             <textarea name="<?= htmlspecialchars($name) ?>" rows="4" <?= $required ?>><?= $value ?></textarea>
                             
                         <?php elseif ($type === 'file'):
-                            $fieldId = 'file_' . htmlspecialchars($name, ENT_QUOTES);
+                            $fieldId = 'file_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $name);
                         ?>
-                            <div class="dropzone" id="dropzone_<?= $fieldId ?>">
+                            <div class="dropzone <?= $fieldError ? 'dropzone-has-error' : '' ?>" id="dropzone_<?= $fieldId ?>">
                                 <input type="file" name="<?= htmlspecialchars($name) ?>" id="<?= $fieldId ?>"
                                     class="dropzone-input" accept=".pdf,.jpg,.jpeg,.png,.docx,.doc" <?= $required ?>>
 
@@ -261,7 +261,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                         <span class="dropzone-filename"></span>
                                         <span class="dropzone-filesize"></span>
                                     </div>
-                                    <button type="button" class="dropzone-remove" onclick="removeDropzoneFile('<?= $fieldId ?>')">&times;</button>
+                                    <button type="button" class="dropzone-remove" aria-label="Remove file" onclick="removeDropzoneFile('<?= $fieldId ?>')">&times;</button>
                                 </div>
                             </div>
 
