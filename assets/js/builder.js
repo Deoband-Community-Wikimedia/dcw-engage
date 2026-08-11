@@ -40,10 +40,14 @@ function createFieldCard(fieldData = null) {
                 <input type="checkbox" class="field-required" id="req_${fieldCounter}" ${requiredStr}>
                 <label for="req_${fieldCounter}" style="margin:0; cursor:pointer;">Required Question</label>
             </div>
-            <button type="button" class="btn-danger" onclick="removeField(${fieldCounter})">Trash</button>
+            <div style="display:flex; gap:8px;">
+                <button type="button" class="btn-outline btn-sm" title="Move up" onclick="moveField(${fieldCounter}, -1)">&uarr;</button>
+                <button type="button" class="btn-outline btn-sm" title="Move down" onclick="moveField(${fieldCounter}, 1)">&darr;</button>
+                <button type="button" class="btn-danger" onclick="removeField(${fieldCounter})">Trash</button>
+            </div>
         </div>
     `;
-    
+
     fieldsContainer.appendChild(card);
 }
 
@@ -56,6 +60,23 @@ window.toggleOptions = function(selectElement, id) {
 // Remove a field block
 window.removeField = function(id) {
     document.getElementById(`field_${id}`).remove();
+};
+
+// Move a field card up (-1) or down (+1). Field order on submit is read
+// straight off the DOM (see the submit handler below), so swapping the
+// cards' position in fields_container is the whole fix — no separate
+// "order" value to track or persist.
+window.moveField = function(id, direction) {
+    const card = document.getElementById(`field_${id}`);
+    if (!card) return;
+
+    if (direction === -1) {
+        const prev = card.previousElementSibling;
+        if (prev) fieldsContainer.insertBefore(card, prev);
+    } else {
+        const next = card.nextElementSibling;
+        if (next) fieldsContainer.insertBefore(next, card);
+    }
 };
 
 let slugEdited = false;
