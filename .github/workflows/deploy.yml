@@ -37,6 +37,7 @@ jobs:
         username: ${{ secrets.FTP_USERNAME }}
         password: ${{ secrets.FTP_PASSWORD }}
         protocol: ftps       # Enforce secure TLS encryption
+        security: loose      # Prevents FTPS handshake timeouts on Hostinger shared hosting
         timeout: 300000      # Increased to 5 minutes to prevent Hostinger timeout errors
         local-dir: ./
         server-dir: ./ # <-- Crucial! Tells it to land in your /engage folder
