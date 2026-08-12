@@ -93,6 +93,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $postData = $_POST;
         unset($postData['csrf_token']);
 
+        // Real applicant name, sourced from the submitted full_name field.
+        // Falls back to 'Applicant' only if the form has no such field or it
+        // was left blank — this is a variable, not the literal text
+        // '$applicantName' that a single-quoted string would have produced.
+        $applicantName = trim($postData['full_name'] ?? '') ?: 'Applicant';
+
         // Reject duplicates BEFORE touching any files. Uploading first and
         // checking second leaves an orphaned file on disk with no application
         // row pointing at it, which the PII scrubber can never reach.
@@ -116,7 +122,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $name = $field['name'];
                 if (($field['type'] ?? '') === 'file' && !empty($_FILES[$name]['name'])) {
                     try {
-                        $path = $fileUploader->handleUpload($_FILES[$name], $name, $postData['full_name'] ?? 'Applicant', $formType);
+                        $path = $fileUploader->handleUpload($_FILES[$name], $name, $applicantName, $formType);
                         if ($path) {
                             $postData[$name] = $path;
                             $uploadedPaths[] = $path;
@@ -136,11 +142,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if (empty($errors)) {
             try {
-                // 'full_name' is the conventional field name for the applicant's
-                // name across form schemas (see FileUploader call above and
-                // views/forms/resume.php). Fall back to a generic placeholder
-                // only if a form genuinely has no such field.
-                $applicantName = $postData['full_name'] ?? 'Applicant';
+                // $applicantName was already resolved (trimmed, with fallback)
+                // above, before the FileUploader loop — don't recompute it
+                // here without the trim, or a name that's whitespace-only
+                // would slip back in unfiltered.
                 $status = $isDraft ? 'Draft' : 'New';
                 $appId = $appModel->saveApplication($form['id'], $email, $applicantName, $status, json_encode($postData));
                 $trackingId = 'DCW-' . str_pad($appId, 5, '0', STR_PAD_LEFT);
@@ -185,7 +190,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title><?= htmlspecialchars($schema['title']) ?> - DCW Engage</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/assets/css/forms.css">
+    <link rel="stylesheet" href="/assets/css/forms.css?v=2">
 </head>
 <body>
     <div class="container">
@@ -262,9 +267,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         <?php elseif ($type === 'textarea'): ?>
                             <textarea name="<?= htmlspecialchars($name) ?>" rows="4" <?= $required ?>><?= $value ?></textarea>
                             
-                        <?php elseif ($type === 'file'): ?>
-                            <input type="file" name="<?= htmlspecialchars($name) ?>" <?= $required ?>>
-                            
+                        <?php elseif ($type === 'file'):
+                            $fieldId = 'file_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $name);
+                        ?>
+                            <div class="dropzone <?= $fieldError ? 'dropzone-has-error' : '' ?>" id="dropzone_<?= $fieldId ?>">
+                                <input type="file" name="<?= htmlspecialchars($name) ?>" id="<?= $fieldId ?>"
+                                    class="dropzone-input" accept=".pdf,.jpg,.jpeg,.png,.docx,.doc" <?= $required ?>>
+
+                                <div class="dropzone-content" id="<?= $fieldId ?>_content">
+                                    <svg class="dropzone-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                        <path d="M12 16V4M12 4L7 9M12 4l5 5" stroke-linecap="round" stroke-linejoin="round"/>
+                                        <path d="M4 16v3a2 2 0 002 2h12a2 2 0 002-2v-3" stroke-linecap="round" stroke-linejoin="round"/>
+                                    </svg>
+                                    <p class="dropzone-text">Drag &amp; drop your file here, or <span class="dropzone-browse">click to browse</span></p>
+                                    <p class="dropzone-hint">PDF, JPG, PNG, DOC, DOCX — up to 10MB</p>
+                                </div>
+
+                                <div class="dropzone-preview" id="<?= $fieldId ?>_preview" style="display:none;">
+                                    <svg class="dropzone-file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                        <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" stroke-linejoin="round"/>
+                                        <path d="M14 2v6h6" stroke-linejoin="round"/>
+                                    </svg>
+                                    <div class="dropzone-file-info">
+                                        <span class="dropzone-filename"></span>
+                                        <span class="dropzone-filesize"></span>
+                                    </div>
+                                    <button type="button" class="dropzone-remove" aria-label="Remove file" onclick="removeDropzoneFile('<?= $fieldId ?>')">&times;</button>
+                                </div>
+                            </div>
+
                         <?php else: ?>
                             <input type="<?= htmlspecialchars($type) ?>" name="<?= htmlspecialchars($name) ?>" value="<?= $value ?>" <?= $required ?>>
                         <?php endif; ?>
@@ -282,5 +313,60 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             </form>
         <?php endif; ?>
     </div>
+
+    <script>
+        // Drag-and-drop wiring for every file field on the page.
+        document.querySelectorAll('.dropzone-input').forEach(input => {
+            const fieldId = input.id;
+            const dropzone = document.getElementById('dropzone_' + fieldId);
+            const content = document.getElementById(fieldId + '_content');
+            const preview = document.getElementById(fieldId + '_preview');
+
+            function showPreview(file) {
+                content.style.display = 'none';
+                preview.style.display = 'flex';
+                preview.querySelector('.dropzone-filename').textContent = file.name;
+                preview.querySelector('.dropzone-filesize').textContent = formatFileSize(file.size);
+                dropzone.classList.remove('dropzone-dragover');
+            }
+
+            input.addEventListener('change', () => {
+                if (input.files.length > 0) {
+                    showPreview(input.files[0]);
+                }
+            });
+
+            dropzone.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                dropzone.classList.add('dropzone-dragover');
+            });
+
+            dropzone.addEventListener('dragleave', () => {
+                dropzone.classList.remove('dropzone-dragover');
+            });
+
+            dropzone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                dropzone.classList.remove('dropzone-dragover');
+                if (e.dataTransfer.files.length > 0) {
+                    input.files = e.dataTransfer.files;
+                    showPreview(input.files[0]);
+                }
+            });
+        });
+
+        function formatFileSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+        }
+
+        function removeDropzoneFile(fieldId) {
+            const input = document.getElementById(fieldId);
+            input.value = '';
+            document.getElementById(fieldId + '_content').style.display = 'block';
+            document.getElementById(fieldId + '_preview').style.display = 'none';
+        }
+    </script>
 </body>
 </html>

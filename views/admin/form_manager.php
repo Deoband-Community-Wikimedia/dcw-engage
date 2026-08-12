@@ -190,7 +190,7 @@ if (!empty($activeFieldFilters)) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title><?= htmlspecialchars($form['title']) ?> - Form Manager</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/assets/css/admin.css">
+    <link rel="stylesheet" href="/assets/css/admin.css?v=<?= filemtime(__DIR__ . '/../../assets/css/admin.css') ?>">
 </head>
 
 <body>
@@ -212,9 +212,14 @@ if (!empty($activeFieldFilters)) {
                 <h1><?= htmlspecialchars($form['title']) ?></h1>
                 <p class="meta" style="display: flex; align-items: center; gap: 10px;">
                     URL Endpoint: <strong>/<?= htmlspecialchars($form['form_type']) ?></strong>
-                    <button class="btn btn-sm btn-outline" style="padding: 4px 8px; font-size: 11px;"
-                        onclick="copyToClipboard('<?= 'http://' . $_SERVER['HTTP_HOST'] . '/' . $form['form_type'] ?>', this)">Copy
-                        Link</button>
+                    <button type="button" class="copy-btn"
+                        onclick="copyToClipboard('<?= 'http://' . $_SERVER['HTTP_HOST'] . '/' . $form['form_type'] ?>', this)">
+                        <svg style="width:13px; height:13px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                        </svg>
+                        <span>Copy Link</span>
+                    </button>
                     &bull; Total Responses: <strong><?= count($applications) ?></strong>
                 </p>
             </div>

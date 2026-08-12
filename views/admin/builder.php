@@ -73,7 +73,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Admin - Visual Form Builder</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/assets/css/admin.css">
+    <link rel="stylesheet" href="/assets/css/admin.css?v=<?= filemtime(__DIR__ . '/../../assets/css/admin.css') ?>">
 </head>
 <body>
     <div class="container">
@@ -126,6 +126,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         const existingSchema = <?= isset($existingSchema) && $existingSchema ? json_encode($existingSchema) : 'null' ?>;
         const existingFormType = <?= isset($existingFormType) ? json_encode($existingFormType) : 'null' ?>;
     </script>
-    <script src="/assets/js/builder.js"></script>
+    <script src="/assets/js/builder.js?v=<?= filemtime(__DIR__ . '/../../assets/js/builder.js') ?>"></script>
 </body>
 </html>

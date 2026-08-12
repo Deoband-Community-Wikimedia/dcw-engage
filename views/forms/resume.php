@@ -118,7 +118,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Edit Application - <?= htmlspecialchars($schema['title']) ?></title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/assets/css/forms.css">
+    <link rel="stylesheet" href="/assets/css/forms.css?v=2">
 </head>
 <body>
     <div class="container">
@@ -181,14 +181,51 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked) {
                     <?php elseif ($type === 'textarea'): ?>
                         <textarea name="<?= htmlspecialchars($name) ?>" rows="4" <?= $required ?> <?= $disabledAttr ?>><?= htmlspecialchars($value) ?></textarea>
                         
-                    <?php elseif ($type === 'file'): ?>
+                    <?php elseif ($type === 'file'):
+                        $fieldId = 'file_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $name);
+                    ?>
                         <?php if (!empty($value)): ?>
                             <div style="margin-bottom: 10px; font-size: 14px;">
                                 Currently uploaded: <a href="/<?= htmlspecialchars($value) ?>" target="_blank" style="color: var(--primary-color);">View File</a>
                             </div>
                         <?php endif; ?>
-                        <!-- Only require if there is no existing value -->
-                        <input type="file" name="<?= htmlspecialchars($name) ?>" <?= ($required && empty($value)) ? 'required' : '' ?> <?= $disabledAttr ?>>
+
+                        <?php if ($isLocked): ?>
+                            <!-- Locked applications cannot re-upload; keep this a plain disabled input
+                                 rather than an interactive dropzone. -->
+                            <input type="file" name="<?= htmlspecialchars($name) ?>" disabled>
+                        <?php else: ?>
+                            <div class="dropzone <?= $fieldError ? 'dropzone-has-error' : '' ?>" id="dropzone_<?= $fieldId ?>">
+                                <input type="file" name="<?= htmlspecialchars($name) ?>" id="<?= $fieldId ?>"
+                                    class="dropzone-input" accept=".pdf,.jpg,.jpeg,.png,.docx,.doc"
+                                    <?= ($required && empty($value)) ? 'required' : '' ?>>
+
+                                <div class="dropzone-content" id="<?= $fieldId ?>_content">
+                                    <svg class="dropzone-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                        <path d="M12 16V4M12 4L7 9M12 4l5 5" stroke-linecap="round" stroke-linejoin="round"/>
+                                        <path d="M4 16v3a2 2 0 002 2h12a2 2 0 002-2v-3" stroke-linecap="round" stroke-linejoin="round"/>
+                                    </svg>
+                                    <p class="dropzone-text">
+                                        <?= !empty($value)
+                                            ? 'Drag &amp; drop a new file to replace it, or <span class="dropzone-browse">click to browse</span>'
+                                            : 'Drag &amp; drop your file here, or <span class="dropzone-browse">click to browse</span>' ?>
+                                    </p>
+                                    <p class="dropzone-hint">PDF, JPG, PNG, DOC, DOCX — up to 10MB</p>
+                                </div>
+
+                                <div class="dropzone-preview" id="<?= $fieldId ?>_preview" style="display:none;">
+                                    <svg class="dropzone-file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                        <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" stroke-linejoin="round"/>
+                                        <path d="M14 2v6h6" stroke-linejoin="round"/>
+                                    </svg>
+                                    <div class="dropzone-file-info">
+                                        <span class="dropzone-filename"></span>
+                                        <span class="dropzone-filesize"></span>
+                                    </div>
+                                    <button type="button" class="dropzone-remove" aria-label="Remove file" onclick="removeDropzoneFile('<?= $fieldId ?>')">&times;</button>
+                                </div>
+                            </div>
+                        <?php endif; ?>
                         
                     <?php else: ?>
                         <input type="<?= htmlspecialchars($type) ?>" name="<?= htmlspecialchars($name) ?>" value="<?= htmlspecialchars($value) ?>" <?= $required ?> <?= $disabledAttr ?>>
@@ -210,5 +247,62 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked) {
             <?php endif; ?>
         </form>
     </div>
+
+    <?php if (!$isLocked): ?>
+    <script>
+        // Drag-and-drop wiring for every file field on the page.
+        document.querySelectorAll('.dropzone-input').forEach(input => {
+            const fieldId = input.id;
+            const dropzone = document.getElementById('dropzone_' + fieldId);
+            const content = document.getElementById(fieldId + '_content');
+            const preview = document.getElementById(fieldId + '_preview');
+
+            function showPreview(file) {
+                content.style.display = 'none';
+                preview.style.display = 'flex';
+                preview.querySelector('.dropzone-filename').textContent = file.name;
+                preview.querySelector('.dropzone-filesize').textContent = formatFileSize(file.size);
+                dropzone.classList.remove('dropzone-dragover');
+            }
+
+            input.addEventListener('change', () => {
+                if (input.files.length > 0) {
+                    showPreview(input.files[0]);
+                }
+            });
+
+            dropzone.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                dropzone.classList.add('dropzone-dragover');
+            });
+
+            dropzone.addEventListener('dragleave', () => {
+                dropzone.classList.remove('dropzone-dragover');
+            });
+
+            dropzone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                dropzone.classList.remove('dropzone-dragover');
+                if (e.dataTransfer.files.length > 0) {
+                    input.files = e.dataTransfer.files;
+                    showPreview(input.files[0]);
+                }
+            });
+        });
+
+        function formatFileSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+        }
+
+        function removeDropzoneFile(fieldId) {
+            const input = document.getElementById(fieldId);
+            input.value = '';
+            document.getElementById(fieldId + '_content').style.display = 'block';
+            document.getElementById(fieldId + '_preview').style.display = 'none';
+        }
+    </script>
+    <?php endif; ?>
 </body>
 </html>
