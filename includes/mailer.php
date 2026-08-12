@@ -202,4 +202,171 @@ class Mailer {
             return false;
         }
     }
+
+    /**
+     * Sends a plain confirmation to the applicant once they finish an
+     * application (as opposed to saving a draft, which gets the magic-link
+     * email instead). No edit token here — returning applicants use the
+     * "Resend Magic Link" flow on the form page if they need one.
+     */
+    public static function sendApplicationReceived($email, $applicantName, $trackingId, $formTitle) {
+        $config = require __DIR__ . '/config.php';
+        $mailConfig = $config['mail'];
+
+        // If PHPMailer is not installed (dev environment), just log and return true
+        if (!class_exists('PHPMailer\PHPMailer\PHPMailer')) {
+            error_log("DEV MODE: Confirmation email for $email ($trackingId, $formTitle)");
+            return true;
+        }
+
+        $mail = new PHPMailer\PHPMailer\PHPMailer(true);
+        try {
+            $mail->isSMTP();
+            $mail->Host       = $mailConfig['host'];
+            $mail->SMTPAuth   = true;
+            $mail->Username   = $mailConfig['user'];
+            $mail->Password   = $mailConfig['pass'];
+            $mail->Port       = $mailConfig['port'];
+            $secure = $mailConfig['secure'] ?? ((int)$mailConfig['port'] === 465 ? 'ssl' : 'tls');
+            if (!empty($secure)) {
+                $mail->SMTPSecure = $secure;
+            }
+
+            $mail->setFrom($mailConfig['user'], 'DCW Engage');
+            $mail->addAddress($email, $applicantName);
+
+            $mail->isHTML(true);
+            $mail->Subject = "Application Received - $formTitle";
+
+            $htmlBody = "
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <style>
+                    body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background-color: #f4f6f8; margin: 0; padding: 0; color: #1e293b; }
+                    .email-container { max-width: 600px; margin: 40px auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; }
+                    .header { background-color: #106b9a; padding: 30px 20px; text-align: center; color: #ffffff; }
+                    .header h1 { margin: 0; font-size: 24px; font-weight: 600; letter-spacing: -0.5px; }
+                    .body-content { padding: 40px 30px; }
+                    .body-content p { font-size: 16px; line-height: 1.6; margin-bottom: 20px; }
+                    .footer { background-color: #f8fafc; padding: 20px; text-align: center; font-size: 13px; color: #64748b; border-top: 1px solid #e2e8f0; }
+                </style>
+            </head>
+            <body>
+                <div class='email-container'>
+                    <div class='header'>
+                        <h1>DCW Engage</h1>
+                    </div>
+                    <div class='body-content'>
+                        <p>Hello <strong>" . htmlspecialchars($applicantName) . "</strong>,</p>
+                        <p>Thank you for applying to <strong>" . htmlspecialchars($formTitle) . "</strong>. Your application has been received.</p>
+                        <p><strong>Tracking ID:</strong> $trackingId</p>
+                        <p style='margin-bottom:0;'>We'll be in touch once a decision has been made. No action is needed from you right now.</p>
+                    </div>
+                    <div class='footer'>
+                        &copy; " . date('Y') . " Deoband Community Wikimedia. All rights reserved.<br>
+                        This is an automated message, please do not reply.
+                    </div>
+                </div>
+            </body>
+            </html>
+            ";
+
+            $mail->Body    = $htmlBody;
+            $mail->AltBody = "Hello $applicantName,\n\nThank you for applying to $formTitle. Your application has been received.\nTracking ID: $trackingId\n\nWe'll be in touch once a decision has been made.";
+
+            if ($mailConfig['host'] !== 'smtp.example.com') {
+                $mail->send();
+            }
+            return true;
+        } catch (Exception $e) {
+            error_log("Confirmation email could not be sent. Mailer Error: {$mail->ErrorInfo}");
+            return false;
+        }
+    }
+
+    /**
+     * Notifies an applicant that an organizer changed their application's
+     * status (Under Review / Accepted / Rejected). $note is an optional,
+     * one-off message an admin typed in for this email only — distinct from
+     * the persisted internal organizer notes thread (NotesModel).
+     */
+    public static function sendStatusUpdate($email, $applicantName, $status, $trackingId, $formTitle, $note = '') {
+        $config = require __DIR__ . '/config.php';
+        $mailConfig = $config['mail'];
+
+        // If PHPMailer is not installed (dev environment), just log and return true
+        if (!class_exists('PHPMailer\PHPMailer\PHPMailer')) {
+            error_log("DEV MODE: Status update email for $email — $trackingId ($formTitle) is now '$status'" . ($note ? " | note: $note" : ''));
+            return true;
+        }
+
+        $mail = new PHPMailer\PHPMailer\PHPMailer(true);
+        try {
+            $mail->isSMTP();
+            $mail->Host       = $mailConfig['host'];
+            $mail->SMTPAuth   = true;
+            $mail->Username   = $mailConfig['user'];
+            $mail->Password   = $mailConfig['pass'];
+            $mail->Port       = $mailConfig['port'];
+            $secure = $mailConfig['secure'] ?? ((int)$mailConfig['port'] === 465 ? 'ssl' : 'tls');
+            if (!empty($secure)) {
+                $mail->SMTPSecure = $secure;
+            }
+
+            $mail->setFrom($mailConfig['user'], 'DCW Engage');
+            $mail->addAddress($email, $applicantName);
+
+            $mail->isHTML(true);
+            $mail->Subject = "Update on your $formTitle application - $status";
+
+            $noteHtml = $note !== ''
+                ? "<p><strong>A note from the organizer:</strong><br>" . nl2br(htmlspecialchars($note)) . "</p>"
+                : '';
+
+            $htmlBody = "
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <style>
+                    body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background-color: #f4f6f8; margin: 0; padding: 0; color: #1e293b; }
+                    .email-container { max-width: 600px; margin: 40px auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; }
+                    .header { background-color: #106b9a; padding: 30px 20px; text-align: center; color: #ffffff; }
+                    .header h1 { margin: 0; font-size: 24px; font-weight: 600; letter-spacing: -0.5px; }
+                    .body-content { padding: 40px 30px; }
+                    .body-content p { font-size: 16px; line-height: 1.6; margin-bottom: 20px; }
+                    .footer { background-color: #f8fafc; padding: 20px; text-align: center; font-size: 13px; color: #64748b; border-top: 1px solid #e2e8f0; }
+                </style>
+            </head>
+            <body>
+                <div class='email-container'>
+                    <div class='header'>
+                        <h1>DCW Engage</h1>
+                    </div>
+                    <div class='body-content'>
+                        <p>Hello <strong>" . htmlspecialchars($applicantName) . "</strong>,</p>
+                        <p>Your application to <strong>" . htmlspecialchars($formTitle) . "</strong> (Tracking ID: $trackingId) has been updated to: <strong>" . htmlspecialchars($status) . "</strong>.</p>
+                        $noteHtml
+                    </div>
+                    <div class='footer'>
+                        &copy; " . date('Y') . " Deoband Community Wikimedia. All rights reserved.<br>
+                        This is an automated message, please do not reply.
+                    </div>
+                </div>
+            </body>
+            </html>
+            ";
+
+            $mail->Body    = $htmlBody;
+            $mail->AltBody = "Hello $applicantName,\n\nYour application to $formTitle (Tracking ID: $trackingId) has been updated to: $status." . ($note ? "\n\nA note from the organizer:\n$note" : '');
+
+            if ($mailConfig['host'] !== 'smtp.example.com') {
+                $mail->send();
+            }
+            return true;
+        } catch (Exception $e) {
+            error_log("Status update email could not be sent. Mailer Error: {$mail->ErrorInfo}");
+            return false;
+        }
+    }
 }

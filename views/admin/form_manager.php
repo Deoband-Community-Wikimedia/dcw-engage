@@ -60,15 +60,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             header("Location: /admin/dashboard");
             exit;
         } elseif ($_POST['action'] === 'update_applicant_status') {
-            $appModel->updateStatus($_POST['application_id'], $_POST['status']);
+            $targetAppId = $_POST['application_id'];
+            $newStatus = $_POST['status'];
+            $applicantNote = trim($_POST['applicant_note'] ?? '');
+            $appModel->updateStatus($targetAppId, $newStatus);
+
+            // Let the applicant know the moment a decision is made. Not fired
+            // for 'New' since that's just the default/unreviewed state, not
+            // an outcome.
+            if (in_array($newStatus, ['Under Review', 'Accepted', 'Rejected'])) {
+                $target = $appModel->getApplicationById($targetAppId);
+                if ($target) {
+                    require_once __DIR__ . '/../../includes/mailer.php';
+                    $trackingId = 'DCW-' . str_pad($target['id'], 5, '0', STR_PAD_LEFT);
+                    Mailer::sendStatusUpdate($target['email'], $target['applicant_name'], $newStatus, $trackingId, $target['form_title'] ?? $form['title'], $applicantNote);
+                }
+            }
 
             header("Location: /admin/form_manager?id=" . $formId);
             exit;
         } elseif ($_POST['action'] === 'bulk_update_status') {
             $selectedIds = $_POST['application_ids'] ?? [];
             $newBulkStatus = $_POST['bulk_status'] ?? '';
+            $applicantNote = trim($_POST['bulk_applicant_note'] ?? '');
             if (!empty($selectedIds) && !empty($newBulkStatus)) {
                 $appModel->updateStatusBulk($selectedIds, $newBulkStatus, $formId);
+
+                if (in_array($newBulkStatus, ['Under Review', 'Accepted', 'Rejected'])) {
+                    require_once __DIR__ . '/../../includes/mailer.php';
+                    foreach ($selectedIds as $targetAppId) {
+                        $target = $appModel->getApplicationById($targetAppId);
+                        if ($target) {
+                            $trackingId = 'DCW-' . str_pad($target['id'], 5, '0', STR_PAD_LEFT);
+                            Mailer::sendStatusUpdate($target['email'], $target['applicant_name'], $newBulkStatus, $trackingId, $target['form_title'] ?? $form['title'], $applicantNote);
+                        }
+                    }
+                }
             }
             header("Location: /admin/form_manager?id=" . $formId . buildFilterQueryString());
             exit;
@@ -271,6 +298,7 @@ if (!empty($activeFieldFilters)) {
                 <option value="Accepted">Accepted</option>
                 <option value="Rejected">Rejected</option>
             </select>
+            <input type="text" name="bulk_applicant_note" placeholder="Optional note to include in the applicant email" style="width:260px; padding:6px 10px; font-size:13px;">
             <button type="submit" class="btn btn-sm btn-primary">Apply to Selected</button>
         </form>
         <div class="table-wrapper">
@@ -311,11 +339,11 @@ if (!empty($activeFieldFilters)) {
                                     onclick='viewData(<?= json_encode($app['form_data'], JSON_HEX_APOS | JSON_HEX_QUOT) ?>, "<?= htmlspecialchars($app['applicant_name'], ENT_QUOTES) ?>", <?= $app['id'] ?>, <?= json_encode($notesModel->getNotesByApplication($app['id']), JSON_HEX_APOS | JSON_HEX_QUOT) ?>)'>View
                                     Data</button>
 
-                                <form method="POST" style="display:inline-block; margin-left:10px;">
+                                <form method="POST" style="display:inline-flex; gap:6px; align-items:center; margin-left:10px;">
                                     <?= CSRF::getInputField() ?>
                                     <input type="hidden" name="action" value="update_applicant_status">
                                     <input type="hidden" name="application_id" value="<?= $app['id'] ?>">
-                                    <select name="status" onchange="this.form.submit()">
+                                    <select name="status">
                                         <option value="New" <?= $app['status'] == 'New' ? 'selected' : '' ?>>New</option>
                                         <option value="Under Review" <?= $app['status'] == 'Under Review' ? 'selected' : '' ?>>
                                             Under Review (Lock)</option>
@@ -324,6 +352,10 @@ if (!empty($activeFieldFilters)) {
                                         <option value="Rejected" <?= $app['status'] == 'Rejected' ? 'selected' : '' ?>>Rejected
                                         </option>
                                     </select>
+                                    <!-- Note is a one-off addition to the outcome email only — not the
+                                         persisted internal Notes thread above (that stays admin-only). -->
+                                    <input type="text" name="applicant_note" placeholder="Optional note to applicant" style="width:150px; padding:4px 8px; font-size:13px;">
+                                    <button type="submit" class="btn btn-sm btn-outline">Apply</button>
                                 </form>
                             </td>
                         </tr>
