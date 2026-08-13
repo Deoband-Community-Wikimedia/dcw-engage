@@ -8,6 +8,15 @@
  */
 
 class Auth {
+    /**
+     * Minimum password length, and the single place it is defined.
+     *
+     * It used to be hard-coded in bin/create_admin.php and again in
+     * InviteModel, which is how two account-creation paths end up disagreeing
+     * with each other. Everything now reads this.
+     */
+    public const MIN_PASSWORD_LENGTH = 8;
+
     /** Failed attempts from one session before a cooldown starts. */
     private const MAX_ATTEMPTS = 5;
 
@@ -33,7 +42,7 @@ class Auth {
         }
 
         $db = DB::getInstance()->getConnection();
-        $stmt = $db->prepare("SELECT id, email, password_hash, role FROM admin_users WHERE email = :email");
+        $stmt = $db->prepare("SELECT id, email, password_hash, role, password_changed_at FROM admin_users WHERE email = :email");
         $stmt->execute(['email' => $email]);
         $admin = $stmt->fetch();
 
@@ -53,6 +62,8 @@ class Auth {
         $_SESSION['admin_id']    = (int) $admin['id'];
         $_SESSION['admin_email'] = $admin['email'];
         $_SESSION['admin_role']  = $admin['role'] ?? 'organizer';
+        // Remembered so a later password change can invalidate this session.
+        $_SESSION['admin_pw_stamp'] = $admin['password_changed_at'];
 
         $db->prepare("UPDATE admin_users SET last_login = NOW() WHERE id = :id")
            ->execute(['id' => $admin['id']]);
@@ -62,9 +73,41 @@ class Auth {
 
     /**
      * Is there an authenticated admin on this session?
+     *
+     * Also confirms the account has not changed password since this session
+     * started. PHP has no way to enumerate and delete another user's session
+     * files, so instead each session carries the password_changed_at value it
+     * was issued under, and a mismatch ends it here. That is what makes
+     * "reset my password" actually evict a session somebody else is holding.
      */
     public static function check() {
-        return !empty($_SESSION['admin_id']);
+        if (empty($_SESSION['admin_id'])) {
+            return false;
+        }
+
+        // One indexed lookup per admin request. The workspace has a handful of
+        // accounts, so this is far cheaper than the alternative of leaving a
+        // compromised session alive.
+        $stmt = DB::getInstance()->getConnection()
+            ->prepare("SELECT password_changed_at FROM admin_users WHERE id = :id");
+        $stmt->execute(['id' => $_SESSION['admin_id']]);
+        $row = $stmt->fetch();
+
+        // Account deleted underneath the session.
+        if (!$row) {
+            self::logout();
+            return false;
+        }
+
+        $current = $row['password_changed_at'];
+        $issued  = $_SESSION['admin_pw_stamp'] ?? null;
+
+        if ($current !== $issued) {
+            self::logout();
+            return false;
+        }
+
+        return true;
     }
 
     /**
