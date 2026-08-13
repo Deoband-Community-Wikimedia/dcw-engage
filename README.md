@@ -30,6 +30,63 @@ To provide a secure, scalable, and seamless dynamic form experience for users se
    php -S localhost:8000
    ```
 
+5. **Create the first organizer account:**
+   No accounts are seeded by `database.sql` — a committed password hash is a
+   password everybody has. Create the first one from the terminal:
+   ```bash
+   php bin/create_admin.php
+   ```
+   Accounts made this way are **owners**, because running the script already
+   requires shell access. Everyone after that should be added through the
+   workspace instead (see below).
+
+## Organizer Accounts
+
+There is no public sign-up. The workspace holds applicant data, so access is
+granted deliberately, in one of two ways.
+
+### Roles
+
+| Role | Can do |
+| --- | --- |
+| `owner` | Everything an organizer can, plus invite people and revoke pending invitations |
+| `organizer` | Manage forms and applications |
+
+Existing installs default every account to `organizer` when the migration runs.
+Promote yourself once, by hand:
+
+```sql
+UPDATE admin_users SET role = 'owner' WHERE email = 'you@example.org';
+```
+
+### Inviting someone (the normal path)
+
+Owners get a **Team** link in the workspace header, at `/admin/team`.
+
+1. The owner enters an email address and picks a role.
+2. The system generates a token, stores only its SHA-256, and emails the raw
+   value as a one-time link.
+3. The recipient opens the link, sets a password, and the account is created.
+
+Receiving the email is what proves control of the address, so there is no
+separate verification step. **Nothing exists in `admin_users` until the link is
+opened** — an unaccepted invitation cannot sign in.
+
+Invitations are single use, expire after seven days (`security.invite_expiry`
+in `config.php`), and can be revoked from the same page. Re-inviting an address
+automatically revokes its earlier link, so there are never two live doors for
+one person.
+
+If SMTP is not configured or the send fails, the invitation is still created
+and the link is shown once on screen, so a mail outage cannot strand it.
+
+### Terminal path (bootstrap and recovery)
+
+`php bin/create_admin.php <email>` creates an owner, or resets the password of
+an account that already exists. It deliberately does **not** change the role of
+an existing account, so a password reset can never silently promote someone.
+This remains the only recovery path until password reset exists in the UI.
+
 ## 🔒 Security Paradigms (Strict Enforcement)
 As an open-source project dealing with applicant data, all contributors **MUST** adhere to the following security architectures:
 

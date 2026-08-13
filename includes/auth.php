@@ -33,7 +33,7 @@ class Auth {
         }
 
         $db = DB::getInstance()->getConnection();
-        $stmt = $db->prepare("SELECT id, email, password_hash FROM admin_users WHERE email = :email");
+        $stmt = $db->prepare("SELECT id, email, password_hash, role FROM admin_users WHERE email = :email");
         $stmt->execute(['email' => $email]);
         $admin = $stmt->fetch();
 
@@ -52,6 +52,7 @@ class Auth {
 
         $_SESSION['admin_id']    = (int) $admin['id'];
         $_SESSION['admin_email'] = $admin['email'];
+        $_SESSION['admin_role']  = $admin['role'] ?? 'organizer';
 
         $db->prepare("UPDATE admin_users SET last_login = NOW() WHERE id = :id")
            ->execute(['id' => $admin['id']]);
@@ -86,6 +87,54 @@ class Auth {
 
     public static function email() {
         return $_SESSION['admin_email'] ?? null;
+    }
+
+    /**
+     * The signed-in organizer's role. Anything unrecognised is treated as the
+     * lower privilege level, so a session written before roles existed cannot
+     * accidentally grant team management.
+     */
+    public static function role() {
+        $role = $_SESSION['admin_role'] ?? 'organizer';
+        return $role === 'owner' ? 'owner' : 'organizer';
+    }
+
+    public static function isOwner() {
+        return self::role() === 'owner';
+    }
+
+    /**
+     * Gate for team management. Call at the top of any view that can create
+     * or revoke access, after requireLogin().
+     *
+     * A signed-in organizer who is not an owner gets 403 rather than a
+     * redirect to the login screen — they are authenticated, just not
+     * authorised, and bouncing them to a form they have already passed reads
+     * as a broken page.
+     */
+    public static function requireOwner() {
+        self::requireLogin();
+
+        if (self::isOwner()) {
+            return;
+        }
+
+        http_response_code(403);
+        header('Content-Type: text/html; charset=utf-8');
+        echo '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">'
+           . '<meta name="viewport" content="width=device-width, initial-scale=1.0">'
+           . '<meta name="robots" content="noindex, nofollow">'
+           . '<title>Not allowed - DCW Engage</title></head><body '
+           . 'style="font-family: Inter, -apple-system, sans-serif; background:#f8fafc; color:#1e293b; '
+           . 'display:flex; align-items:center; justify-content:center; min-height:100vh; margin:0; padding:20px;">'
+           . '<div style="max-width:420px; text-align:center;">'
+           . '<h1 style="color:#106b9a; font-size:20px; margin:0 0 8px;">Not allowed</h1>'
+           . '<p style="color:#64748b; font-size:14px; line-height:1.6; margin:0 0 20px;">'
+           . 'Managing the organizer team is limited to workspace owners. '
+           . 'Ask an owner if you need access.</p>'
+           . '<a href="/admin/dashboard" style="color:#106b9a; font-size:14px;">Back to workspace</a>'
+           . '</div></body></html>';
+        exit;
     }
 
     /**

@@ -98,3 +98,52 @@ CREATE TABLE `application_notes` (
 -- ============================================================
 
 -- Note: Data retention cron should periodically delete applications with status 'Rejected' or stale 'Draft' records.
+
+
+-- ============================================================
+-- Organizer roles and invitations
+--
+-- `role` splits the workspace into two levels:
+--   owner     - everything an organizer can do, plus inviting other
+--               organizers and revoking pending invitations
+--   organizer - normal workspace access, no team management
+--
+-- Both statements below are live, and run top-to-bottom on a fresh import
+-- (same pattern as `notify_emails` above). On a database created before
+-- this block existed, run these two by hand, once, then promote yourself:
+--
+--   UPDATE admin_users SET role = 'owner' WHERE email = 'you@example.org';
+--
+-- Without at least one owner, nobody can send invitations and the only way
+-- to add an account stays `php bin/create_admin.php`.
+-- ============================================================
+ALTER TABLE `admin_users`
+    ADD COLUMN `role` ENUM('owner','organizer') NOT NULL DEFAULT 'organizer' AFTER `password_hash`;
+
+-- Pending invitations to join the organizer workspace.
+--
+-- Only the SHA-256 of the token is stored, never the token itself. The raw
+-- value exists in exactly one place: the email we send. A leaked database
+-- backup therefore cannot be replayed into a new organizer account.
+-- (`magic_links` above still stores raw tokens; those are applicant-scoped
+-- and short lived, but this table is the pattern to follow for anything new.)
+CREATE TABLE `admin_invites` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `email` VARCHAR(255) NOT NULL,
+    `token_hash` CHAR(64) NOT NULL UNIQUE,
+    `role` ENUM('owner','organizer') NOT NULL DEFAULT 'organizer',
+    -- Snapshot kept for the audit trail even if the inviting account is
+    -- later deleted, mirroring application_notes.admin_email_snapshot.
+    `invited_by` INT NULL,
+    `invited_by_email` VARCHAR(255) NOT NULL,
+    -- DATETIME, not TIMESTAMP. MySQL/MariaDB give the first NOT NULL TIMESTAMP
+    -- column an implicit `DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`,
+    -- which would silently reset the expiry every time the row is marked
+    -- accepted or revoked. The value is always computed in PHP anyway.
+    `expires_at` DATETIME NOT NULL,
+    `accepted_at` DATETIME NULL,
+    `revoked_at` DATETIME NULL,
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    KEY `idx_invite_email` (`email`),
+    FOREIGN KEY (`invited_by`) REFERENCES `admin_users`(`id`) ON DELETE SET NULL
+);

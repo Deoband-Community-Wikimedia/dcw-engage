@@ -27,6 +27,8 @@ return [
     ],
     'security' => [
         'magic_link_expiry_draft' => '+7 days',
-        'magic_link_expiry_edit'  => '+2 hours'
+        'magic_link_expiry_edit'  => '+2 hours',
+        // How long an emailed organizer invitation stays usable.
+        'invite_expiry'           => '+7 days'
     ]
 ];

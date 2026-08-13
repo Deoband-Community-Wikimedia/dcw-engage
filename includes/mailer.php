@@ -369,4 +369,104 @@ class Mailer {
             return false;
         }
     }
+
+    /**
+     * Sends an organizer an invitation to join the workspace.
+     *
+     * Returns true only when the message actually went out. The caller shows
+     * the invite link on screen when this returns false, so a mail
+     * misconfiguration cannot strand an invitation that already exists in the
+     * database with no way to deliver it.
+     */
+    public static function sendOrganizerInvite($email, $token, $invitedByEmail, $expiresAt) {
+        $config = require __DIR__ . '/config.php';
+        $mailConfig = $config['mail'];
+
+        $inviteUrl = $config['app']['url'] . '/admin/accept-invite?token=' . urlencode($token);
+        $expiresOn = date('j F Y', strtotime($expiresAt));
+
+        // Dev environment without PHPMailer: log it so the link is still
+        // reachable from the error log.
+        if (!class_exists('PHPMailer\PHPMailer\PHPMailer')) {
+            error_log("DEV MODE: Organizer invite for $email: $inviteUrl");
+            return false;
+        }
+
+        $safeInvitedBy = htmlspecialchars($invitedByEmail, ENT_QUOTES, 'UTF-8');
+
+        $mail = new PHPMailer\PHPMailer\PHPMailer(true);
+        try {
+            $mail->isSMTP();
+            $mail->Host       = $mailConfig['host'];
+            $mail->SMTPAuth   = true;
+            $mail->Username   = $mailConfig['user'];
+            $mail->Password   = $mailConfig['pass'];
+            $mail->Port       = $mailConfig['port'];
+            $secure = $mailConfig['secure'] ?? ((int)$mailConfig['port'] === 465 ? 'ssl' : 'tls');
+            if (!empty($secure)) {
+                $mail->SMTPSecure = $secure;
+            }
+
+            $mail->setFrom($mailConfig['user'], 'DCW Engage');
+            $mail->addAddress($email);
+
+            $mail->isHTML(true);
+            $mail->Subject = 'You have been invited to DCW Engage';
+
+            $mail->Body = "
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <style>
+                    body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background-color: #f4f6f8; margin: 0; padding: 0; color: #1e293b; }
+                    .email-container { max-width: 600px; margin: 40px auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; }
+                    .header { background-color: #106b9a; padding: 30px 20px; text-align: center; color: #ffffff; }
+                    .header h1 { margin: 0; font-size: 24px; font-weight: 600; letter-spacing: -0.5px; }
+                    .body-content { padding: 40px 30px; }
+                    .body-content p { font-size: 16px; line-height: 1.6; margin-bottom: 20px; }
+                    .btn-wrapper { text-align: center; margin: 30px 0; }
+                    .btn { display: inline-block; background-color: #106b9a; color: #ffffff !important; text-decoration: none; padding: 14px 28px; border-radius: 6px; font-size: 16px; font-weight: 600; }
+                    .footer { background-color: #f8fafc; padding: 20px; text-align: center; font-size: 13px; color: #64748b; border-top: 1px solid #e2e8f0; }
+                </style>
+            </head>
+            <body>
+                <div class='email-container'>
+                    <div class='header'>
+                        <h1>DCW Engage</h1>
+                    </div>
+                    <div class='body-content'>
+                        <p>Hello,</p>
+                        <p><strong>$safeInvitedBy</strong> has invited you to join the DCW Engage organizer workspace.</p>
+                        <p>Use the button below to choose a password and activate your account. The workspace holds applicant information, so please pick a password you do not use anywhere else.</p>
+                        <div class='btn-wrapper'>
+                            <a href='$inviteUrl' class='btn'>Set My Password</a>
+                        </div>
+                        <p>If the button doesn't work, copy and paste this link into your browser:<br><br><a href='$inviteUrl' style='color: #106b9a; word-break: break-all;'>$inviteUrl</a></p>
+                        <p style='margin-bottom:0;'>This invitation expires on <strong>$expiresOn</strong> and can only be used once. If you were not expecting it, you can ignore this email — no account is created until the link is opened.</p>
+                    </div>
+                    <div class='footer'>
+                        &copy; " . date('Y') . " Deoband Community Wikimedia. All rights reserved.<br>
+                        This is an automated message, please do not reply.
+                    </div>
+                </div>
+            </body>
+            </html>
+            ";
+
+            $mail->AltBody = "Hello,\n\n$invitedByEmail has invited you to join the DCW Engage organizer workspace.\n\nSet your password here:\n$inviteUrl\n\nThis invitation expires on $expiresOn and can only be used once.\n\nDeoband Community Wikimedia";
+
+            // Same guard the other senders use: never dispatch with the
+            // placeholder credentials from config.example.php.
+            if ($mailConfig['host'] === 'smtp.example.com') {
+                error_log("DEV MODE: Organizer invite for $email: $inviteUrl");
+                return false;
+            }
+
+            $mail->send();
+            return true;
+        } catch (Exception $e) {
+            error_log("Invite email could not be sent. Mailer Error: {$mail->ErrorInfo}");
+            return false;
+        }
+    }
 }

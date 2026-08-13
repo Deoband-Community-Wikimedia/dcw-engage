@@ -71,6 +71,9 @@ $forms = $formModel->getAllForms();
 
             <div style="display: flex; align-items: center; gap: 12px; font-size: 14px; color: #64748b;">
                 <span><?= htmlspecialchars(Auth::email()) ?></span>
+                <?php if (Auth::isOwner()): ?>
+                    <a href="/admin/team" style="color: #64748b; text-decoration: none; border: 1px solid #e2e8f0; padding: 6px 12px; border-radius: 6px; font-size: 13px;">Team</a>
+                <?php endif; ?>
                 <form method="POST" action="/admin/logout" style="margin: 0;">
                     <?= CSRF::getInputField() ?>
                     <button type="submit" style="background: none; border: 1px solid #e2e8f0; color: #64748b; padding: 6px 12px; border-radius: 6px; font-family: inherit; font-size: 13px; cursor: pointer;">Sign Out</button>
