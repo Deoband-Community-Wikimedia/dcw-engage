@@ -24,6 +24,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
 
+    // A double click fires two valid requests. The first consumes the token;
+    // the second finds it gone and is dropped here, before anything is created
+    // or emailed. No flash is set, so the result of the first submission is
+    // what the visitor ends up seeing.
+    if (!CSRF::consumeSubmitToken($_POST['submit_token'] ?? '')) {
+        header('Location: /admin/team');
+        exit;
+    }
+
     $action = $_POST['action'] ?? '';
 
     if ($action === 'invite') {
@@ -169,6 +178,7 @@ $organizers = $invites->listOrganizers();
 
             <form method="POST" autocomplete="off">
                 <?= CSRF::getInputField() ?>
+                <?= CSRF::getSubmitField() ?>
                 <input type="hidden" name="action" value="invite">
 
                 <div class="field-row">
@@ -231,6 +241,7 @@ $organizers = $invites->listOrganizers();
                             <td class="right">
                                 <form method="POST" style="margin:0;">
                                     <?= CSRF::getInputField() ?>
+                                    <?= CSRF::getSubmitField() ?>
                                     <input type="hidden" name="action" value="revoke">
                                     <input type="hidden" name="invite_id" value="<?= (int) $invite['id'] ?>">
                                     <button type="submit" class="link">Revoke</button>
@@ -282,5 +293,23 @@ $organizers = $invites->listOrganizers();
             </table>
         </div>
     </div>
+    <script>
+        // Progressive enhancement only. With scripting off, the single-use
+        // submit token on the server still makes a second POST a no-op.
+        document.querySelectorAll('form').forEach(function (form) {
+            form.addEventListener('submit', function () {
+                var button = form.querySelector('button[type=submit]');
+                if (!button || button.disabled) return;
+
+                // Width is pinned before the label changes so the button does
+                // not resize and shift the row underneath it.
+                button.style.minWidth = button.offsetWidth + 'px';
+                button.disabled = true;
+                if (button.classList.contains('primary')) {
+                    button.textContent = 'Sending...';
+                }
+            });
+        });
+    </script>
 </body>
 </html>
