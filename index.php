@@ -26,6 +26,12 @@ if ($route === '/' || $route === '/index.php') {
     require __DIR__ . '/views/admin/login.php';
 } elseif ($route === '/admin/logout') {
     require __DIR__ . '/views/admin/logout.php';
+} elseif ($route === '/admin/accept-invite') {
+    // Public on purpose: the visitor has no account yet. The invite token in
+    // the query string is what authorises this page.
+    require __DIR__ . '/views/admin/accept_invite.php';
+} elseif ($route === '/admin/team') {
+    require __DIR__ . '/views/admin/team.php';
 } elseif ($route === '/admin/dashboard') {
     require __DIR__ . '/views/admin/dashboard.php';
 } elseif ($route === '/admin/form_manager') {
