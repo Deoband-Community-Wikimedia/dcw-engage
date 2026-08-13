@@ -14,12 +14,17 @@
  * step 2 completes — an unaccepted invite cannot sign in.
  */
 
+require_once __DIR__ . '/../includes/auth.php';
+
 class InviteModel {
     /** How long an invitation stays usable, unless config overrides it. */
     private const DEFAULT_EXPIRY = '+7 days';
 
-    /** Minimum password length. Kept in step with bin/create_admin.php. */
-    public const MIN_PASSWORD_LENGTH = 12;
+    /**
+     * Minimum password length. Defined once on Auth; this alias exists so the
+     * views that already reference InviteModel keep working.
+     */
+    public const MIN_PASSWORD_LENGTH = Auth::MIN_PASSWORD_LENGTH;
 
     private $db;
     private $expiry;
@@ -66,20 +71,27 @@ class InviteModel {
                  WHERE email = :email AND accepted_at IS NULL AND revoked_at IS NULL"
             )->execute(['email' => $email]);
 
-            $expiresAt = date('Y-m-d H:i:s', strtotime($this->expiry));
+            // Computed by the database rather than by PHP, so a time zone
+            // difference between the two cannot shorten or void the window.
+            // See the longer note in PasswordResetModel.
+            $seconds = max(3600, strtotime($this->expiry) - time());
 
             $this->db->prepare(
                 "INSERT INTO admin_invites
                     (email, token_hash, role, invited_by, invited_by_email, expires_at)
-                 VALUES (:email, :hash, :role, :by_id, :by_email, :expires)"
+                 VALUES (:email, :hash, :role, :by_id, :by_email, NOW() + INTERVAL :seconds SECOND)"
             )->execute([
                 'email'    => $email,
                 'hash'     => $this->hashToken($token),
                 'role'     => $role,
                 'by_id'    => $invitedById,
                 'by_email' => $invitedByEmail,
-                'expires'  => $expiresAt,
+                'seconds'  => $seconds,
             ]);
+
+            $expiresAt = $this->db->query(
+                "SELECT expires_at FROM admin_invites WHERE id = " . (int) $this->db->lastInsertId()
+            )->fetchColumn();
 
             $this->db->commit();
         } catch (Exception $e) {

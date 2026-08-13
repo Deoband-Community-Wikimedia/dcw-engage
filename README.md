@@ -85,7 +85,37 @@ and the link is shown once on screen, so a mail outage cannot strand it.
 `php bin/create_admin.php <email>` creates an owner, or resets the password of
 an account that already exists. It deliberately does **not** change the role of
 an existing account, so a password reset can never silently promote someone.
-This remains the only recovery path until password reset exists in the UI.
+Use it to bootstrap the first owner, or to recover if every owner is locked out.
+
+### Forgotten passwords
+
+Organizers reset their own password from **Forgot your password?** on the sign
+in page. The address is emailed a one-time link that lasts an hour.
+
+The request form answers identically whether or not the address has an account,
+so it cannot be used to discover which addresses are organizers. Requests are
+limited to three per account per hour, so it cannot be used to flood an inbox
+either. Asking again cancels the previous link.
+
+Completing a reset **signs out every session that account already had open**,
+which is the point when the reason for resetting is that somebody else may be
+in the account. This works by stamping `admin_users.password_changed_at` and
+having `Auth::check()` compare each session against it.
+
+### Password length
+
+The minimum is defined once, as `Auth::MIN_PASSWORD_LENGTH`, and everything
+reads it: the terminal script, the invitation page, and the reset page. Change
+it there and all three follow.
+
+### A note on expiry times
+
+Invitation and reset expiry are computed by the database (`NOW() + INTERVAL n
+SECOND`), not by PHP. Every check of whether a link is still alive runs in SQL,
+so a value computed in PHP would be wrong by whatever the offset is between the
+two clocks — and PHP and MySQL sit in different time zones more often than you
+would expect. At an hour-long lifetime that is enough to hand out links which
+are already dead. If you add another expiring token, follow the same pattern.
 
 ## 🔒 Security Paradigms (Strict Enforcement)
 As an open-source project dealing with applicant data, all contributors **MUST** adhere to the following security architectures:

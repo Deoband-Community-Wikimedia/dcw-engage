@@ -16,6 +16,10 @@ if (Auth::check()) {
 
 $error = '';
 
+// One-shot confirmation handed over by the reset page.
+$notice = $_SESSION['login_notice'] ?? '';
+unset($_SESSION['login_notice']);
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!CSRF::validate($_POST['csrf_token'] ?? '')) {
         $error = "Your session expired. Please try again.";
@@ -86,6 +90,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             cursor: pointer;
         }
         button:hover { background: #0d587f; }
+        .notice {
+            background: #f0fdf4;
+            border: 1px solid #bbf7d0;
+            color: #166534;
+            padding: 12px 14px;
+            border-radius: 6px;
+            font-size: 14px;
+            margin-bottom: 20px;
+        }
+        .forgot { text-align: center; font-size: 13px; margin: 20px 0 0; }
+        .forgot a { color: #64748b; text-decoration: none; }
+        .forgot a:hover { color: var(--primary-color); text-decoration: underline; }
         .error {
             background: #fef2f2;
             border: 1px solid #fecaca;
@@ -101,6 +117,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <div class="card">
         <h1>DCW Engage</h1>
         <p class="sub">Sign in to the organizer workspace.</p>
+
+        <?php if ($notice): ?>
+            <div class="notice"><?= htmlspecialchars($notice) ?></div>
+        <?php endif; ?>
 
         <?php if ($error): ?>
             <div class="error"><?= htmlspecialchars($error) ?></div>
@@ -119,6 +139,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             <button type="submit">Sign In</button>
         </form>
+
+        <p class="forgot"><a href="/admin/forgot-password">Forgot your password?</a></p>
     </div>
 </body>
 </html>

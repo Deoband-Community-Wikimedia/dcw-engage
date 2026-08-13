@@ -22,6 +22,7 @@ if (php_sapi_name() !== 'cli') {
 }
 
 require_once __DIR__ . '/../includes/init.php';
+require_once __DIR__ . '/../includes/auth.php';
 
 /**
  * Read a line from the terminal.
@@ -38,10 +39,11 @@ if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
     die("ERROR: '$email' is not a valid email address.\n");
 }
 
-$password = prompt("Password (min 12 characters): ");
+$minLength = Auth::MIN_PASSWORD_LENGTH;
+$password = prompt("Password (min $minLength characters): ");
 
-if (strlen($password) < 12) {
-    die("ERROR: Password must be at least 12 characters.\n");
+if (strlen($password) < $minLength) {
+    die("ERROR: Password must be at least $minLength characters.\n");
 }
 
 if ($password !== prompt("Confirm password: ")) {

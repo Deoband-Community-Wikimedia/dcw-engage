@@ -469,4 +469,108 @@ class Mailer {
             return false;
         }
     }
+
+    /**
+     * Sends a password reset link.
+     *
+     * Unlike an invitation, the caller must NOT surface whether this
+     * succeeded. The forgot-password page answers identically for every
+     * address, so a failure here is logged and swallowed rather than shown.
+     */
+    public static function sendPasswordReset($email, $token, $expiresAt) {
+        $config = require __DIR__ . '/config.php';
+        $mailConfig = $config['mail'];
+
+        $resetUrl = $config['app']['url'] . '/admin/reset-password?token=' . urlencode($token);
+        $expiresTime = date('j M Y, H:i', strtotime($expiresAt));
+
+        if (!class_exists('PHPMailer\PHPMailer\PHPMailer')) {
+            error_log("DEV MODE: Password reset for $email: $resetUrl");
+            return false;
+        }
+
+        $mail = new PHPMailer\PHPMailer\PHPMailer(true);
+        try {
+            $mail->isSMTP();
+            $mail->Host       = $mailConfig['host'];
+            $mail->SMTPAuth   = true;
+            $mail->Username   = $mailConfig['user'];
+            $mail->Password   = $mailConfig['pass'];
+            $mail->Port       = $mailConfig['port'];
+            $secure = $mailConfig['secure'] ?? ((int)$mailConfig['port'] === 465 ? 'ssl' : 'tls');
+            if (!empty($secure)) {
+                $mail->SMTPSecure = $secure;
+            }
+
+            $mail->setFrom($mailConfig['user'], 'DCW Engage');
+            $mail->addAddress($email);
+
+            $mail->isHTML(true);
+            $mail->Subject = 'Reset your DCW Engage password';
+
+            $mail->Body = "
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <style>
+                    body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background-color: #f4f6f8; margin: 0; padding: 0; color: #1e293b; }
+                    .email-container { max-width: 600px; margin: 40px auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; }
+                    .header { background-color: #106b9a; padding: 30px 20px; text-align: center; color: #ffffff; }
+                    .header h1 { margin: 0; font-size: 24px; font-weight: 600; letter-spacing: -0.5px; }
+                    .body-content { padding: 40px 30px; }
+                    .body-content p { font-size: 16px; line-height: 1.6; margin-bottom: 20px; }
+                    .btn-wrapper { text-align: center; margin: 30px 0; }
+                    .btn { display: inline-block; background-color: #106b9a; color: #ffffff !important; text-decoration: none; padding: 14px 28px; border-radius: 6px; font-size: 16px; font-weight: 600; }
+                    .footer { background-color: #f8fafc; padding: 20px; text-align: center; font-size: 13px; color: #64748b; border-top: 1px solid #e2e8f0; }
+                </style>
+            </head>
+            <body>
+                <div class='email-container'>
+                    <div class='header'>
+                        <h1>DCW Engage</h1>
+                    </div>
+                    <div class='body-content'>
+                        <p>Hello,</p>
+                        <p>Somebody asked to reset the password for the DCW Engage organizer account registered to this address.</p>
+                        <div class='btn-wrapper'>
+                            <a href='$resetUrl' class='btn'>Choose a New Password</a>
+                        </div>
+                        <p>If the button doesn't work, copy and paste this link into your browser:<br><br><a href='$resetUrl' style='color: #106b9a; word-break: break-all;'>$resetUrl</a></p>
+                        <p><strong>This link expires at $expiresTime</strong> and can only be used once.</p>
+                        <p style='margin-bottom:0;'>If this was not you, ignore this email and nothing changes. Your current password keeps working. If it keeps happening, tell a workspace owner.</p>
+                    </div>
+                    <div class='footer'>
+                        &copy; " . date('Y') . " Deoband Community Wikimedia. All rights reserved.<br>
+                        This is an automated message, please do not reply.
+                    </div>
+                </div>
+            </body>
+            </html>
+            ";
+
+            $mail->AltBody = "Hello,
+
+Somebody asked to reset the password for the DCW Engage account registered to this address.
+
+Choose a new password here:
+$resetUrl
+
+This link expires at $expiresTime and can only be used once.
+
+If this was not you, ignore this email and nothing changes.
+
+Deoband Community Wikimedia";
+
+            if ($mailConfig['host'] === 'smtp.example.com') {
+                error_log("DEV MODE: Password reset for $email: $resetUrl");
+                return false;
+            }
+
+            $mail->send();
+            return true;
+        } catch (Exception $e) {
+            error_log("Password reset email could not be sent. Mailer Error: {$mail->ErrorInfo}");
+            return false;
+        }
+    }
 }

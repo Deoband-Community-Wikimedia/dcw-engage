@@ -147,3 +147,35 @@ CREATE TABLE `admin_invites` (
     KEY `idx_invite_email` (`email`),
     FOREIGN KEY (`invited_by`) REFERENCES `admin_users`(`id`) ON DELETE SET NULL
 );
+
+-- ============================================================
+-- Password resets
+--
+-- Both statements are live and run on a fresh import. On a database created
+-- before this block existed, run them by hand, once.
+--
+-- password_changed_at is what lets a reset log out sessions that are already
+-- open elsewhere. Auth stamps the session with this value at login and
+-- rechecks it on each request, so a stolen session dies the moment its
+-- account changes password — which is the main reason people reset one.
+-- ============================================================
+ALTER TABLE `admin_users`
+    ADD COLUMN `password_changed_at` DATETIME NULL AFTER `role`;
+
+-- Same design as admin_invites: only the SHA-256 of the token is stored, the
+-- raw value exists solely in the email. Expiry is deliberately much shorter
+-- than an invitation, because a reset link is a live key to an existing
+-- account rather than an offer to create one.
+CREATE TABLE `password_resets` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `admin_id` INT NOT NULL,
+    `token_hash` CHAR(64) NOT NULL UNIQUE,
+    -- DATETIME, not TIMESTAMP: the first NOT NULL TIMESTAMP column would pick
+    -- up an implicit ON UPDATE CURRENT_TIMESTAMP and reset its own expiry.
+    `expires_at` DATETIME NOT NULL,
+    `used_at` DATETIME NULL,
+    `invalidated_at` DATETIME NULL,
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    KEY `idx_reset_admin` (`admin_id`),
+    FOREIGN KEY (`admin_id`) REFERENCES `admin_users`(`id`) ON DELETE CASCADE
+);

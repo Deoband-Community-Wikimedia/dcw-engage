@@ -26,6 +26,11 @@ if ($route === '/' || $route === '/index.php') {
     require __DIR__ . '/views/admin/login.php';
 } elseif ($route === '/admin/logout') {
     require __DIR__ . '/views/admin/logout.php';
+} elseif ($route === '/admin/forgot-password') {
+    // Public: the whole point is that the visitor cannot sign in.
+    require __DIR__ . '/views/admin/forgot_password.php';
+} elseif ($route === '/admin/reset-password') {
+    require __DIR__ . '/views/admin/reset_password.php';
 } elseif ($route === '/admin/accept-invite') {
     // Public on purpose: the visitor has no account yet. The invite token in
     // the query string is what authorises this page.
