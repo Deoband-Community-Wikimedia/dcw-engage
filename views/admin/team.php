@@ -78,6 +78,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $ok ? 'success' : 'error',
             $ok ? 'Invitation revoked.' : 'That invitation was already used or revoked.'
         );
+    } elseif ($action === 'remove') {
+        $result = $invites->removeOrganizer($_POST['admin_id'] ?? 0, Auth::id());
+
+        if ($result['ok']) {
+            team_flash('success', 'Organizer removed. They can no longer sign in.');
+        } elseif ($result['reason'] === 'self') {
+            team_flash('error', 'You cannot remove your own account.');
+        } elseif ($result['reason'] === 'last_owner') {
+            team_flash('error', 'You cannot remove the last owner. Make someone else an owner first.');
+        } else {
+            team_flash('error', 'That account no longer exists.');
+        }
     }
 
     header('Location: /admin/team');
@@ -264,6 +276,7 @@ $organizers = $invites->listOrganizers();
                         <th>Email</th>
                         <th>Role</th>
                         <th>Last signed in</th>
+                        <th class="right">Action</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -285,6 +298,20 @@ $organizers = $invites->listOrganizers();
                                 <?= htmlspecialchars(date('j M Y', strtotime($person['last_login']))) ?>
                             <?php else: ?>
                                 <span style="color:#94a3b8;">Never</span>
+                            <?php endif; ?>
+                        </td>
+                        <td class="right">
+                            <?php if ((int) $person['id'] === (int) Auth::id()): ?>
+                                <span style="color:#cbd5e1;">&mdash;</span>
+                            <?php else: ?>
+                                <form method="POST" style="margin:0;">
+                                    <?= CSRF::getInputField() ?>
+                                    <?= CSRF::getSubmitField() ?>
+                                    <input type="hidden" name="action" value="remove">
+                                    <input type="hidden" name="admin_id" value="<?= (int) $person['id'] ?>">
+                                    <button type="submit" class="link"
+                                            onclick="return confirm('Remove this organizer? They will lose access immediately.');">Remove</button>
+                                </form>
                             <?php endif; ?>
                         </td>
                     </tr>
