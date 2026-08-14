@@ -207,4 +207,53 @@ class InviteModel {
 
         return $stmt->rowCount() === 1;
     }
+
+    /**
+     * Remove an organizer's account so they can no longer sign in.
+     *
+     * The row is deleted outright rather than flagged: application_notes keep
+     * their author via admin_email_snapshot (admin_id is ON DELETE SET NULL),
+     * any pending reset tokens cascade away, and the person's live session
+     * dies on its next request because Auth::check() re-reads the row and
+     * finds it gone.
+     *
+     * $actingAdminId is the owner performing the removal. Two removals are
+     * refused because they can lock the whole team out:
+     *   - removing your own account
+     *   - removing the last remaining owner
+     *
+     * Returns ['ok' => bool, 'reason' => string] so the caller can explain a
+     * refusal precisely.
+     */
+    public function removeOrganizer($id, $actingAdminId) {
+        $id = (int) $id;
+        $actingAdminId = (int) $actingAdminId;
+
+        if ($id === $actingAdminId) {
+            return ['ok' => false, 'reason' => 'self'];
+        }
+
+        $stmt = $this->db->prepare("SELECT role FROM admin_users WHERE id = :id");
+        $stmt->execute(['id' => $id]);
+        $target = $stmt->fetch();
+
+        if (!$target) {
+            return ['ok' => false, 'reason' => 'missing'];
+        }
+
+        if ($target['role'] === 'owner') {
+            $ownerCount = (int) $this->db->query(
+                "SELECT COUNT(*) FROM admin_users WHERE role = 'owner'"
+            )->fetchColumn();
+
+            if ($ownerCount <= 1) {
+                return ['ok' => false, 'reason' => 'last_owner'];
+            }
+        }
+
+        $del = $this->db->prepare("DELETE FROM admin_users WHERE id = :id");
+        $del->execute(['id' => $id]);
+
+        return ['ok' => $del->rowCount() === 1, 'reason' => 'removed'];
+    }
 }
