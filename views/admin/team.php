@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../../includes/init.php';
 require_once __DIR__ . '/../../includes/auth.php';
 require_once __DIR__ . '/../../includes/mailer.php';
+require_once __DIR__ . '/../../includes/audit.php';
 require_once __DIR__ . '/../../models/InviteModel.php';
 
 // Authenticated *and* an owner. Everything below can grant or remove access.
@@ -47,6 +48,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             team_flash('error', $email . ' already has an account.');
         } else {
             $invite = $invites->create($email, $role, Auth::id(), Auth::email());
+            AuditLog::record('invite.created', Auth::id(), Auth::email(), $email, 'Role: ' . $role);
 
             $config = require __DIR__ . '/../../includes/config.php';
             $link = $config['app']['url'] . '/admin/accept-invite?token=' . urlencode($invite['token']);
@@ -73,7 +75,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
     } elseif ($action === 'revoke') {
-        $ok = $invites->revoke($_POST['invite_id'] ?? 0);
+        $inviteId = (int) ($_POST['invite_id'] ?? 0);
+        $ok = $invites->revoke($inviteId);
+        if ($ok) {
+            AuditLog::record('invite.revoked', Auth::id(), Auth::email(), null, 'Invitation #' . $inviteId);
+        }
         team_flash(
             $ok ? 'success' : 'error',
             $ok ? 'Invitation revoked.' : 'That invitation was already used or revoked.'
@@ -82,6 +88,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $result = $invites->removeOrganizer($_POST['admin_id'] ?? 0, Auth::id());
 
         if ($result['ok']) {
+            AuditLog::record('organizer.removed', Auth::id(), Auth::email(), $result['email'], 'Role: ' . $result['role']);
             team_flash('success', 'Organizer removed. They can no longer sign in.');
         } elseif ($result['reason'] === 'self') {
             team_flash('error', 'You cannot remove your own account.');
@@ -168,7 +175,10 @@ $organizers = $invites->listOrganizers();
     <div class="container">
         <div class="header">
             <h1>Team</h1>
-            <a class="back" href="/admin/dashboard">&larr; Back to workspace</a>
+            <span style="display:flex; gap:18px; align-items:center;">
+                <a class="back" href="/admin/audit">Audit log</a>
+                <a class="back" href="/admin/dashboard">&larr; Back to workspace</a>
+            </span>
         </div>
         <p class="lede">Everyone listed here can read every application. Invite carefully.</p>
 

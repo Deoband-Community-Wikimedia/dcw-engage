@@ -37,6 +37,8 @@ if ($route === '/' || $route === '/index.php') {
     require __DIR__ . '/views/admin/accept_invite.php';
 } elseif ($route === '/admin/team') {
     require __DIR__ . '/views/admin/team.php';
+} elseif ($route === '/admin/audit') {
+    require __DIR__ . '/views/admin/audit.php';
 } elseif ($route === '/admin/dashboard') {
     require __DIR__ . '/views/admin/dashboard.php';
 } elseif ($route === '/admin/form_manager') {
