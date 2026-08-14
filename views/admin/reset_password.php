@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../../includes/init.php';
 require_once __DIR__ . '/../../includes/auth.php';
+require_once __DIR__ . '/../../includes/audit.php';
 require_once __DIR__ . '/../../models/PasswordResetModel.php';
 
 /**
@@ -39,6 +40,9 @@ if ($reset && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $error = 'This link is no longer valid. Please request a new one.';
             $reset = null;
         } else {
+            // Self-serve event: the actor is the account whose password changed.
+            AuditLog::record('password.reset', $account['id'], $account['email'], $account['email'], 'Password reset via emailed link');
+
             // Deliberately not signed in here. Sending them to the login form
             // confirms the new password actually works, and keeps this page
             // from being a way to obtain a session.

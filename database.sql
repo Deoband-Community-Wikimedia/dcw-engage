@@ -179,3 +179,33 @@ CREATE TABLE `password_resets` (
     KEY `idx_reset_admin` (`admin_id`),
     FOREIGN KEY (`admin_id`) REFERENCES `admin_users`(`id`) ON DELETE CASCADE
 );
+
+-- ============================================================
+-- Audit log
+--
+-- Append-only history of sensitive workspace actions: who invited or removed
+-- whom, who accepted an invitation, who reset a password. The application only
+-- ever inserts and reads here — nothing edits or deletes a row — so the record
+-- stays trustworthy months later when someone asks "who did this".
+--
+-- actor_email is a snapshot (same reasoning as application_notes and
+-- admin_invites): the log must still name the person after their account is
+-- removed, which is exactly the moment it matters most. actor_id is kept as a
+-- soft link and set NULL if that account is later deleted.
+--
+-- Live on a fresh import. On a database created before this block existed, run
+-- the CREATE TABLE below by hand, once.
+-- ============================================================
+CREATE TABLE `audit_log` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `actor_id` INT NULL,
+    `actor_email` VARCHAR(255) NOT NULL,
+    `action` VARCHAR(64) NOT NULL,
+    `target` VARCHAR(255) NULL,
+    `detail` VARCHAR(500) NULL,
+    `ip_address` VARCHAR(45) NULL,
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    KEY `idx_audit_created` (`created_at`),
+    KEY `idx_audit_action` (`action`),
+    FOREIGN KEY (`actor_id`) REFERENCES `admin_users`(`id`) ON DELETE SET NULL
+);

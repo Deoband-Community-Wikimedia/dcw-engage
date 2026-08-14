@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../../includes/init.php';
 require_once __DIR__ . '/../../includes/auth.php';
+require_once __DIR__ . '/../../includes/audit.php';
 require_once __DIR__ . '/../../models/InviteModel.php';
 
 /**
@@ -46,6 +47,10 @@ if ($invite && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $error = 'This invitation is no longer valid. Ask an owner to send a new one.';
             $invite = null;
         } else {
+            // The actor is the new account itself — a self-serve event, not an
+            // owner action — so it is logged under their own identity.
+            AuditLog::record('invite.accepted', $account['id'], $account['email'], $account['email'], 'Account created from invitation');
+
             // Sign them straight in. They have just proved control of the
             // inbox and chosen the password, so a login form here would only
             // ask for what they typed thirty seconds ago.

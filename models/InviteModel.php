@@ -233,7 +233,7 @@ class InviteModel {
             return ['ok' => false, 'reason' => 'self'];
         }
 
-        $stmt = $this->db->prepare("SELECT role FROM admin_users WHERE id = :id");
+        $stmt = $this->db->prepare("SELECT email, role FROM admin_users WHERE id = :id");
         $stmt->execute(['id' => $id]);
         $target = $stmt->fetch();
 
@@ -254,6 +254,11 @@ class InviteModel {
         $del = $this->db->prepare("DELETE FROM admin_users WHERE id = :id");
         $del->execute(['id' => $id]);
 
-        return ['ok' => $del->rowCount() === 1, 'reason' => 'removed'];
+        return [
+            'ok'     => $del->rowCount() === 1,
+            'reason' => 'removed',
+            'email'  => $target['email'],
+            'role'   => $target['role'],
+        ];
     }
 }
