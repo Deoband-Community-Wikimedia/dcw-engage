@@ -148,7 +148,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // would slip back in unfiltered.
                 $status = $isDraft ? 'Draft' : 'New';
                 $appId = $appModel->saveApplication($form['id'], $email, $applicantName, $status, json_encode($postData));
-                $trackingId = 'DCW-' . str_pad($appId, 5, '0', STR_PAD_LEFT);
+                $trackingId = $appModel->getTrackingId($appId);
 
                 require_once __DIR__ . '/../../includes/mailer.php';
 

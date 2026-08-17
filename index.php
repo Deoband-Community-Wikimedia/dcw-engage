@@ -45,6 +45,10 @@ if ($route === '/' || $route === '/index.php') {
     require __DIR__ . '/views/admin/form_manager.php';
 } elseif ($route === '/admin/builder') {
     require __DIR__ . '/views/admin/builder.php';
+} elseif ($route === '/track') {
+    // Public "check my application status" lookup (see #32) — a form's
+    // slug is matched by the catch-all below, so this has to come before it.
+    require __DIR__ . '/views/track.php';
 } elseif (preg_match('/^\/resume\/([a-zA-Z0-9_-]+)$/', $route, $matches)) {
     $token = $matches[1];
     global $resumeToken;
