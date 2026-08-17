@@ -170,6 +170,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // Notify the organizer(s) in charge of this form — only for
                 // a real submission, not every incomplete draft save.
                 if (!$isDraft) {
+                    // $form comes straight from FormModel::getFormByType(),
+                    // which never sets a 'title' key (only 'schema'), so
+                    // Mailer::sendOrganizerAlert()'s own fallback would land
+                    // on $form['form_type'] — the URL slug — instead of the
+                    // real title. Sync it with what the applicant email
+                    // above already resolved.
+                    $form['title'] = $formTitle;
                     Mailer::sendOrganizerAlert($form, $email, $applicantName, $appId);
                 }
             } catch (Exception $e) {
