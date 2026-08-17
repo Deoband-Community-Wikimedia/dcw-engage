@@ -88,7 +88,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked) {
                 // Draft again, stays silent like it does today.
                 if ($wasDraft && !$staysDraft) {
                     require_once __DIR__ . '/../../includes/mailer.php';
-                    $trackingId = 'DCW-' . str_pad($application['id'], 5, '0', STR_PAD_LEFT);
+                    // Assigned once at creation and unchanged by this edit —
+                    // $application already carries it via getApplicationByToken().
+                    $trackingId = $application['tracking_id'];
                     $formTitle = $schema['title'] ?? $application['form_type'];
                     Mailer::sendApplicationReceived($email, $name, $trackingId, $formTitle);
                     Mailer::sendOrganizerAlert(

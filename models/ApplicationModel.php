@@ -39,6 +39,10 @@ class ApplicationModel {
                 throw new Exception("This application is locked and cannot be edited.");
             }
 
+            // tracking_id is deliberately not touched here — it's assigned
+            // once at creation and stays the same across every Draft -> New
+            // edit, so an applicant's tracking ID never changes underneath
+            // them.
             $stmt = $this->db->prepare("UPDATE applications SET applicant_name = :name, status = :status, form_data = :data WHERE id = :id");
             $stmt->execute([
                 'name' => $applicantName,
@@ -48,16 +52,85 @@ class ApplicationModel {
             ]);
             return $appId;
         } else {
-            $stmt = $this->db->prepare("INSERT INTO applications (form_id, email, applicant_name, status, form_data) VALUES (:form_id, :email, :name, :status, :data)");
-            $stmt->execute([
-                'form_id' => $formId,
-                'email' => $email,
-                'name' => $applicantName,
-                'status' => $status,
-                'data' => $formDataJson
-            ]);
-            return $this->db->lastInsertId();
+            // A handful of retries against the UNIQUE constraint, not a
+            // check-then-insert — the space is ~1.1 trillion codes (see
+            // generateTrackingId()), so a genuine collision is not expected
+            // to ever actually happen; this only guards against it.
+            $maxAttempts = 5;
+            for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
+                $trackingId = self::generateTrackingId();
+                try {
+                    $stmt = $this->db->prepare("INSERT INTO applications (form_id, email, applicant_name, status, form_data, tracking_id) VALUES (:form_id, :email, :name, :status, :data, :tracking_id)");
+                    $stmt->execute([
+                        'form_id' => $formId,
+                        'email' => $email,
+                        'name' => $applicantName,
+                        'status' => $status,
+                        'data' => $formDataJson,
+                        'tracking_id' => $trackingId
+                    ]);
+                    return $this->db->lastInsertId();
+                } catch (PDOException $e) {
+                    // Only retry a tracking_id clash specifically — a
+                    // duplicate (form_id, email) race on uniq_form_email is
+                    // a real error the caller needs to see, not something a
+                    // fresh tracking_id would ever fix.
+                    $isTrackingIdClash = isset($e->errorInfo[2]) && str_contains($e->errorInfo[2], 'tracking_id');
+                    if (!$isTrackingIdClash || $attempt === $maxAttempts) {
+                        throw $e;
+                    }
+                }
+            }
         }
+    }
+
+    /**
+     * Random public-facing ID, e.g. 'DCW-7K4N9XQ2'. Deliberately unrelated
+     * to the row's auto-increment id (see #32) so it can't be walked by
+     * guessing neighbouring numbers or used to infer how many applications
+     * a form has received.
+     *
+     * Alphabet excludes 0/O/1/I/L, which read alike when an applicant is
+     * typing the code back in by hand on the tracking lookup page.
+     */
+    private static function generateTrackingId() {
+        $alphabet = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
+        $code = '';
+        for ($i = 0; $i < 8; $i++) {
+            $code .= $alphabet[random_int(0, strlen($alphabet) - 1)];
+        }
+        return 'DCW-' . $code;
+    }
+
+    /**
+     * Fetch just the tracking ID for a row — e.g. right after
+     * saveApplication() hands back a freshly-inserted row's id, which is
+     * all it returns.
+     */
+    public function getTrackingId($id) {
+        $stmt = $this->db->prepare("SELECT tracking_id FROM applications WHERE id = :id");
+        $stmt->execute(['id' => $id]);
+        return $stmt->fetchColumn();
+    }
+
+    /**
+     * Look up a single application by the combination of its tracking ID
+     * and the email it was submitted with — the public "check my status"
+     * lookup on the homepage (see #32). Both must match; a tracking ID
+     * alone is not treated as sufficient, since (unlike the id it replaces)
+     * it is otherwise unguessable but an applicant's email is often not a
+     * secret, so requiring both keeps a single leaked/guessed value from
+     * being enough on its own.
+     */
+    public function getApplicationByTrackingIdAndEmail($trackingId, $email) {
+        $stmt = $this->db->prepare("
+            SELECT a.*, JSON_UNQUOTE(JSON_EXTRACT(f.schema_json, '$.title')) as form_title
+            FROM applications a
+            JOIN forms f ON a.form_id = f.id
+            WHERE a.tracking_id = :tracking_id AND a.email = :email
+        ");
+        $stmt->execute(['tracking_id' => $trackingId, 'email' => $email]);
+        return $stmt->fetch();
     }
 
     /**
@@ -165,12 +238,48 @@ class ApplicationModel {
      */
     public function getApplicationsByFormId($formId) {
         $stmt = $this->db->prepare("
-            SELECT * 
-            FROM applications 
-            WHERE form_id = :form_id 
+            SELECT *
+            FROM applications
+            WHERE form_id = :form_id
             ORDER BY created_at DESC
         ");
         $stmt->execute(['form_id' => $formId]);
         return $stmt->fetchAll();
+    }
+
+    /**
+     * Assign a tracking_id to every row that predates the column (see #32
+     * and the migration note in database.sql). Used by
+     * bin/backfill_tracking_ids.php on an existing install; a fresh import
+     * never has any rows to backfill since the column is on the CREATE
+     * TABLE itself.
+     *
+     * Returns how many rows were updated.
+     */
+    public function backfillMissingTrackingIds() {
+        $ids = $this->db->query("SELECT id FROM applications WHERE tracking_id IS NULL")->fetchAll(PDO::FETCH_COLUMN);
+
+        $updated = 0;
+        foreach ($ids as $id) {
+            // Same collision-retry approach as saveApplication()'s insert
+            // path — see generateTrackingId() for why a real clash isn't
+            // expected to ever actually happen.
+            $maxAttempts = 5;
+            for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
+                try {
+                    $stmt = $this->db->prepare("UPDATE applications SET tracking_id = :tracking_id WHERE id = :id");
+                    $stmt->execute(['tracking_id' => self::generateTrackingId(), 'id' => $id]);
+                    $updated++;
+                    break;
+                } catch (PDOException $e) {
+                    $isTrackingIdClash = isset($e->errorInfo[2]) && str_contains($e->errorInfo[2], 'tracking_id');
+                    if (!$isTrackingIdClash || $attempt === $maxAttempts) {
+                        throw $e;
+                    }
+                }
+            }
+        }
+
+        return $updated;
     }
 }
