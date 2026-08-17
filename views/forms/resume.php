@@ -168,9 +168,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked) {
                 $disabledAttr = $isLocked ? 'disabled' : '';
             ?>
                 <div class="form-group">
-                    <label><?= htmlspecialchars($label) ?> <?= $required && !$isLocked ? '<span style="color:#ef4444">*</span>' : '' ?></label>
-                    
-                    <?php if ($type === 'select'): ?>
+                    <label for="<?= htmlspecialchars($name) ?>"><?= htmlspecialchars($label) ?> <?= $required && !$isLocked ? '<span style="color:#ef4444">*</span>' : '' ?></label>
+
+                    <?php if ($type === 'checkbox'):
+                        // An unchecked box isn't submitted at all, so on a
+                        // POST that hit a (different) validation error,
+                        // $_POST[$name] being absent means "unchecked" —
+                        // unlike other field types, it must NOT fall back
+                        // to the old $formData value or a just-unchecked
+                        // box would appear checked again.
+                        $isChecked = $_SERVER['REQUEST_METHOD'] === 'POST' ? !empty($_POST[$name]) : !empty($formData[$name]);
+                    ?>
+                        <input type="checkbox" name="<?= htmlspecialchars($name) ?>" id="<?= htmlspecialchars($name) ?>" value="1" <?= $isChecked ? 'checked' : '' ?> <?= $required ?> <?= $disabledAttr ?>>
+
+                    <?php elseif ($type === 'select'): ?>
                         <select name="<?= htmlspecialchars($name) ?>" <?= $required ?> <?= $disabledAttr ?>>
                             <option value="">-- Select --</option>
                             <?php foreach ($field['options'] ?? [] as $opt): ?>
