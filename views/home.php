@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/../includes/markdown.php';
 require_once __DIR__ . '/../models/FormModel.php';
 
 $formModel = new FormModel();
@@ -110,7 +111,11 @@ $activeForms = $formModel->getActiveForms();
                 <?php foreach ($activeForms as $form): ?>
                     <?php
                         $title = $form['title'] ?: ucwords(str_replace(['-', '_'], ' ', $form['form_type']));
-                        $desc  = $form['description'] ?: 'Open for applications now.';
+                        // Plain-text preview: strip the formatting syntax (see #15)
+                        // rather than render it, so truncating to 120 chars below
+                        // can never cut a tag in half or leave raw **/##/[]() in
+                        // the card blurb.
+                        $desc  = $form['description'] ? MiniMarkdown::stripToPlainText($form['description']) : 'Open for applications now.';
                     ?>
                     <a class="prog" href="/<?= htmlspecialchars($form['form_type']) ?>">
                         <span class="tick">
