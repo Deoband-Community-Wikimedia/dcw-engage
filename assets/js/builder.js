@@ -25,6 +25,7 @@ function createFieldCard(fieldData = null) {
                     <option value="textarea" ${type === 'textarea' ? 'selected' : ''}>Paragraph</option>
                     <option value="email" ${type === 'email' ? 'selected' : ''}>Email Address</option>
                     <option value="select" ${type === 'select' ? 'selected' : ''}>Dropdown Menu</option>
+                    <option value="checkbox" ${type === 'checkbox' ? 'selected' : ''}>Checkbox</option>
                     <option value="file" ${type === 'file' ? 'selected' : ''}>File Upload</option>
                 </select>
             </div>

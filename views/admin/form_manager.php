@@ -72,7 +72,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $target = $appModel->getApplicationById($targetAppId);
                 if ($target) {
                     require_once __DIR__ . '/../../includes/mailer.php';
-                    $trackingId = 'DCW-' . str_pad($target['id'], 5, '0', STR_PAD_LEFT);
+                    $trackingId = $target['tracking_id'];
                     Mailer::sendStatusUpdate($target['email'], $target['applicant_name'], $newStatus, $trackingId, $target['form_title'] ?? $form['title'], $applicantNote);
                 }
             }
@@ -91,7 +91,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     foreach ($selectedIds as $targetAppId) {
                         $target = $appModel->getApplicationById($targetAppId);
                         if ($target) {
-                            $trackingId = 'DCW-' . str_pad($target['id'], 5, '0', STR_PAD_LEFT);
+                            $trackingId = $target['tracking_id'];
                             Mailer::sendStatusUpdate($target['email'], $target['applicant_name'], $newBulkStatus, $trackingId, $target['form_title'] ?? $form['title'], $applicantNote);
                         }
                     }
@@ -138,7 +138,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'export') {
 
     foreach ($applications as $app) {
         $row = [
-            'DCW-' . str_pad($app['id'], 5, '0', STR_PAD_LEFT),
+            $app['tracking_id'],
             $app['status'],
             date('Y-m-d H:i', strtotime($app['created_at']))
         ];
@@ -329,7 +329,7 @@ if (!empty($activeFieldFilters)) {
                             <td><input type="checkbox" class="row-checkbox" value="<?= $app['id'] ?>"
                                     onchange="updateBulkBar()"></td>
                             <td style="font-family: monospace; font-weight: 600;">
-                                DCW-<?= str_pad($app['id'], 5, '0', STR_PAD_LEFT) ?></td>
+                                <?= htmlspecialchars($app['tracking_id']) ?></td>
                             <td style="font-weight: 500;"><?= htmlspecialchars($app['applicant_name']) ?></td>
                             <td><span
                                     class="status-badge <?= $statusClass ?>"><?= htmlspecialchars($app['status']) ?></span>

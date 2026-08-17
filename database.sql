@@ -26,6 +26,14 @@ CREATE TABLE `forms` (
 
 CREATE TABLE `applications` (
     `id` INT AUTO_INCREMENT PRIMARY KEY,
+    -- Public-facing identifier, e.g. 'DCW-7K4N9XQ2'. Deliberately unrelated
+    -- to `id` (see #32) — a sequential 'DCW-00001' both reveals how many
+    -- applications exist and lets anyone walk the whole set by guessing
+    -- neighbouring IDs. Assigned once at INSERT by
+    -- ApplicationModel::generateTrackingId() and never changes across a
+    -- Draft -> New edit. NULL only for rows that predate this column on an
+    -- existing install — see the backfill note below.
+    `tracking_id` VARCHAR(12) NULL UNIQUE,
     `form_id` INT NOT NULL,
     `email` VARCHAR(255) NOT NULL,
     `applicant_name` VARCHAR(255),
@@ -39,6 +47,25 @@ CREATE TABLE `applications` (
     UNIQUE KEY `uniq_form_email` (`form_id`, `email`),
     FOREIGN KEY (`form_id`) REFERENCES `forms`(`id`) ON DELETE CASCADE
 );
+
+-- ============================================================
+-- Note for installs that predate `tracking_id` (see #32): a fresh import
+-- of this file already has the column, inline, on `applications` above —
+-- do NOT run the ALTER below against a fresh install, it will fail with
+-- "Duplicate column name 'tracking_id'".
+--
+-- Only run this by hand, once, against an existing database that was
+-- created before this column existed:
+--
+--   ALTER TABLE `applications`
+--       ADD COLUMN `tracking_id` VARCHAR(12) NULL UNIQUE AFTER `id`;
+--
+-- That leaves every existing row's tracking_id as NULL (multiple NULLs
+-- don't violate a UNIQUE constraint in MySQL/MariaDB, so this is safe to
+-- run without downtime). Assign real codes to those rows with:
+--
+--   php bin/backfill_tracking_ids.php
+-- ============================================================
 
 CREATE TABLE `magic_links` (
     `id` INT AUTO_INCREMENT PRIMARY KEY,

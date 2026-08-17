@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/../includes/markdown.php';
 require_once __DIR__ . '/../models/FormModel.php';
 
 $formModel = new FormModel();
@@ -94,6 +95,9 @@ $activeForms = $formModel->getActiveForms();
         <p class="kicker">Deoband Community Wikimedia</p>
         <h1>DCW Engage</h1>
         <p>One home for our applications and forms — scholarships, fellowships, volunteering, course registration and more. Pick a program below to get started.</p>
+        <p style="margin-top:16px;">
+            <a href="/track" style="color:var(--primary); font-weight:600; text-decoration:none; font-size:14.5px;">Already applied? Track your application status →</a>
+        </p>
     </div>
 
     <div class="wrap">
@@ -108,7 +112,11 @@ $activeForms = $formModel->getActiveForms();
                 <?php foreach ($activeForms as $form): ?>
                     <?php
                         $title = $form['title'] ?: ucwords(str_replace(['-', '_'], ' ', $form['form_type']));
-                        $desc  = $form['description'] ?: 'Open for applications now.';
+                        // Plain-text preview: strip the formatting syntax (see #15)
+                        // rather than render it, so truncating to 120 chars below
+                        // can never cut a tag in half or leave raw **/##/[]() in
+                        // the card blurb.
+                        $desc  = $form['description'] ? MiniMarkdown::stripToPlainText($form['description']) : 'Open for applications now.';
                     ?>
                     <a class="prog" href="/<?= htmlspecialchars($form['form_type']) ?>">
                         <span class="tick">
