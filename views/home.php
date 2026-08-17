@@ -94,6 +94,9 @@ $activeForms = $formModel->getActiveForms();
         <p class="kicker">Deoband Community Wikimedia</p>
         <h1>DCW Engage</h1>
         <p>One home for our applications and forms — scholarships, fellowships, volunteering, course registration and more. Pick a program below to get started.</p>
+        <p style="margin-top:16px;">
+            <a href="/track" style="color:var(--primary); font-weight:600; text-decoration:none; font-size:14.5px;">Already applied? Track your application status →</a>
+        </p>
     </div>
 
     <div class="wrap">
