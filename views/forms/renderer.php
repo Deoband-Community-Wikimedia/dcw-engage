@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/../../includes/init.php';
+require_once __DIR__ . '/../../includes/markdown.php';
 require_once __DIR__ . '/../../models/FormModel.php';
 
 // $formType should be passed from the router in index.php
@@ -201,9 +202,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <h1 style="<?= empty($schema['banner_image']) ? 'margin-top:0;' : 'margin-top:10px;' ?>"><?= htmlspecialchars($schema['title']) ?></h1>
         
         <?php if (!empty($schema['description'])): ?>
-            <p style="color: #475569; font-size: 15px; margin-bottom: 30px; line-height: 1.6;">
-                <?= nl2br(htmlspecialchars($schema['description'])) ?>
-            </p>
+            <div style="color: #475569; font-size: 15px; margin-bottom: 30px; line-height: 1.6;">
+                <?= MiniMarkdown::render($schema['description']) ?>
+            </div>
         <?php endif; ?>
         
         <?php if ($success): ?>
