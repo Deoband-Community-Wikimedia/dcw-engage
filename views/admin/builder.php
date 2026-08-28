@@ -89,8 +89,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <div class="header-card">
                 <input type="text" class="field-title-input" id="form_title" placeholder="Form Title (e.g. Untitled Form)" required style="font-size: 28px !important; width: 100%;">
                 
+                <div id="description_toolbar" style="display:flex; gap:6px; margin-bottom:6px;">
+                    <button type="button" class="btn-outline btn-sm" title="Bold" data-wiki-wrap="'''" style="font-weight:700;">B</button>
+                    <button type="button" class="btn-outline btn-sm" title="Italic" data-wiki-wrap="''" style="font-style:italic;">I</button>
+                    <button type="button" class="btn-outline btn-sm" title="Link" data-wiki-link="1">Link</button>
+                    <button type="button" class="btn-outline btn-sm" title="Large heading" data-wiki-heading="==">H1</button>
+                    <button type="button" class="btn-outline btn-sm" title="Medium heading" data-wiki-heading="===">H2</button>
+                    <button type="button" class="btn-outline btn-sm" title="Increase indent (up to 3 levels)" data-wiki-indent="1">Indent</button>
+                </div>
                 <textarea id="form_description" placeholder="Form Description (Optional)" style="width: 100%; padding: 12px; margin-bottom: 5px; border: 1px solid var(--border-color); border-radius: 6px; font-family: 'Inter', sans-serif; font-size: 14px; min-height: 80px;"></textarea>
-                <span style="font-size: 13px; color: #64748b; margin-bottom: 20px; display:block;">Formatting supported: **bold**, *italic* (or _italic_), [link text](https://example.com), # Large heading, ## Medium heading — each heading must start its own line.</span>
+                <span style="font-size: 13px; color: #64748b; margin-bottom: 20px; display:block;">Formatting supported: '''bold''', ''italic'', [https://example.com link text], == Large heading ==, === Medium heading === (each heading must start and end its own line), and :/::/::: for indenting up to 3 levels — use the buttons above or type wikitext directly.</span>
 
                 <input type="url" id="banner_image" placeholder="Banner Image URL (Optional, e.g. https://example.com/banner.jpg)" style="width: 100%; padding: 12px; margin-bottom: 20px; border: 1px solid var(--border-color); border-radius: 6px; font-family: 'Inter', sans-serif; font-size: 14px;">
                 

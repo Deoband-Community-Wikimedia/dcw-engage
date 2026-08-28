@@ -80,6 +80,85 @@ window.moveField = function(id, direction) {
     }
 };
 
+// --- Description formatting toolbar (wikitext syntax, see #44) ---
+// Operates directly on #form_description's selection — it's a plain
+// <textarea>, not contenteditable, so there's no execCommand to lean on.
+const descriptionToolbar = document.getElementById('description_toolbar');
+if (descriptionToolbar) {
+    const descriptionTextarea = document.getElementById('form_description');
+
+    const getLineBounds = function(value, pos) {
+        const start = value.lastIndexOf('\n', pos - 1) + 1;
+        let end = value.indexOf('\n', pos);
+        if (end === -1) end = value.length;
+        return { start: start, end: end };
+    };
+
+    // Replaces [start, end) with `replacement`, then places the cursor
+    // (or a selection, if selectLength is given) at start + selectOffset.
+    const replaceRange = function(start, end, replacement, selectOffset, selectLength) {
+        const value = descriptionTextarea.value;
+        descriptionTextarea.value = value.slice(0, start) + replacement + value.slice(end);
+        const cursor = start + selectOffset;
+        descriptionTextarea.focus();
+        descriptionTextarea.setSelectionRange(cursor, cursor + (selectLength || 0));
+    };
+
+    const wrapSelection = function(marker) {
+        const start = descriptionTextarea.selectionStart;
+        const end = descriptionTextarea.selectionEnd;
+        const selected = descriptionTextarea.value.slice(start, end);
+        replaceRange(start, end, marker + selected + marker, marker.length, selected.length);
+    };
+
+    // Re-clicking a heading button on an already-headinged line swaps the
+    // level instead of nesting a second pair of markers onto it.
+    const toggleHeadingLine = function(marker) {
+        const pos = descriptionTextarea.selectionStart;
+        const bounds = getLineBounds(descriptionTextarea.value, pos);
+        const line = descriptionTextarea.value.slice(bounds.start, bounds.end);
+        const bare = line.replace(/^={2,3}\s+/, '').replace(/\s+={2,3}$/, '');
+        const replacement = marker + ' ' + bare + ' ' + marker;
+        replaceRange(bounds.start, bounds.end, replacement, marker.length + 1, bare.length);
+    };
+
+    const increaseIndent = function() {
+        const pos = descriptionTextarea.selectionStart;
+        const bounds = getLineBounds(descriptionTextarea.value, pos);
+        const line = descriptionTextarea.value.slice(bounds.start, bounds.end);
+        const existing = line.match(/^(:+)/);
+        const level = Math.min((existing ? existing[1].length : 0) + 1, 3); // cap: #44 asks for up to level 3
+        const rest = line.replace(/^:+\s*/, '');
+        const replacement = ':'.repeat(level) + ' ' + rest;
+        replaceRange(bounds.start, bounds.end, replacement, replacement.length, 0);
+    };
+
+    const insertLink = function() {
+        const start = descriptionTextarea.selectionStart;
+        const end = descriptionTextarea.selectionEnd;
+        const url = window.prompt('Link URL (http:// or https://):', 'https://');
+        if (!url) return;
+        const text = descriptionTextarea.value.slice(start, end) || 'link text';
+        const replacement = '[' + url + ' ' + text + ']';
+        replaceRange(start, end, replacement, replacement.length, 0);
+    };
+
+    descriptionToolbar.addEventListener('click', function(e) {
+        const btn = e.target.closest('button');
+        if (!btn) return;
+
+        if (btn.dataset.wikiWrap) {
+            wrapSelection(btn.dataset.wikiWrap);
+        } else if (btn.dataset.wikiHeading) {
+            toggleHeadingLine(btn.dataset.wikiHeading);
+        } else if (btn.dataset.wikiIndent) {
+            increaseIndent();
+        } else if (btn.dataset.wikiLink) {
+            insertLink();
+        }
+    });
+}
+
 let slugEdited = false;
 
 if (typeof existingSchema !== 'undefined' && existingSchema) {
