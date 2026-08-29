@@ -1,6 +1,6 @@
 <?php
 require_once __DIR__ . '/../../includes/init.php';
-require_once __DIR__ . '/../../includes/markdown.php';
+require_once __DIR__ . '/../../includes/wikitext.php';
 require_once __DIR__ . '/../../models/FormModel.php';
 
 // $formType should be passed from the router in index.php
@@ -211,7 +211,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         
         <?php if (!empty($schema['description'])): ?>
             <div style="color: #475569; font-size: 15px; margin-bottom: 30px; line-height: 1.6;">
-                <?= MiniMarkdown::render($schema['description']) ?>
+                <?= MiniWikiText::render($schema['description']) ?>
             </div>
         <?php endif; ?>
         
