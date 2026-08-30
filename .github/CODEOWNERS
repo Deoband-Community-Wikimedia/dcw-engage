@@ -1,1 +1,25 @@
-* @zaidusyy
+# Code owners for dcw-engage
+#
+# Mirrors dcw-certificate-portal: the dcw-sysadmins team owns everything by
+# default, with the sensitive infrastructure and security paths called out
+# explicitly. The paths are adapted to this repo's layout — config lives in
+# includes/, scripts in bin/ and cron/, SECURITY.md at the root, and there
+# is no .env.
+
+# Global Catch-All Rule
+# The sysadmin team owns everything in the repository by default.
+*                       @Deoband-Community-Wikimedia/dcw-sysadmins
+
+# Core Infrastructure & Sensitive Data
+# Strict control over the database schema, config templates, core includes,
+# and script executions.
+/database.sql           @Deoband-Community-Wikimedia/dcw-sysadmins
+/includes/              @Deoband-Community-Wikimedia/dcw-sysadmins
+/bin/                   @Deoband-Community-Wikimedia/dcw-sysadmins
+/cron/                  @Deoband-Community-Wikimedia/dcw-sysadmins
+/.htaccess              @Deoband-Community-Wikimedia/dcw-sysadmins
+
+# Server Security & Workflows
+# Protects GitHub automation and the security policy.
+/.github/workflows/     @Deoband-Community-Wikimedia/dcw-sysadmins
+/SECURITY.md            @Deoband-Community-Wikimedia/dcw-sysadmins
