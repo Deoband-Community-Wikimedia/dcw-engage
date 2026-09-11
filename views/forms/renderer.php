@@ -262,13 +262,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $value = htmlspecialchars($_POST[$name] ?? '');
                     $fieldError = $errors[$name] ?? null;
                 ?>
-                    <div class="form-group">
+                    <div class="form-group<?= $type === 'checkbox' ? ' form-group-checkbox' : '' ?>">
+                        <?php if ($type === 'checkbox'): ?>
+                            <label for="<?= htmlspecialchars($name) ?>" class="checkbox-label">
+                                <input type="checkbox" name="<?= htmlspecialchars($name) ?>" id="<?= htmlspecialchars($name) ?>" value="1" <?= !empty($_POST[$name]) ? 'checked' : '' ?> <?= $required ?>>
+                                <span><?= htmlspecialchars($label) ?> <?= $required ? '<span style="color:#ef4444">*</span>' : '' ?></span>
+                            </label>
+
+                        <?php else: ?>
                         <label for="<?= htmlspecialchars($name) ?>"><?= htmlspecialchars($label) ?> <?= $required ? '<span style="color:#ef4444">*</span>' : '' ?></label>
 
-                        <?php if ($type === 'checkbox'): ?>
-                            <input type="checkbox" name="<?= htmlspecialchars($name) ?>" id="<?= htmlspecialchars($name) ?>" value="1" <?= !empty($_POST[$name]) ? 'checked' : '' ?> <?= $required ?>>
-
-                        <?php elseif ($type === 'select'): ?>
+                        <?php if ($type === 'select'): ?>
                             <select name="<?= htmlspecialchars($name) ?>" <?= $required ?>>
                                 <option value="">-- Select --</option>
                                 <?php foreach ($field['options'] ?? [] as $opt): ?>
@@ -311,7 +315,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         <?php else: ?>
                             <input type="<?= htmlspecialchars($type) ?>" name="<?= htmlspecialchars($name) ?>" value="<?= $value ?>" <?= $required ?>>
                         <?php endif; ?>
-                        
+                        <?php endif; ?>
+
                         <?php if ($fieldError): ?>
                             <span class="error-text"><?= htmlspecialchars($fieldError) ?></span>
                         <?php endif; ?>

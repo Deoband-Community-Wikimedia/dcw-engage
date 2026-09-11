@@ -170,9 +170,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked) {
                 $fieldError = $errors[$name] ?? null;
                 $disabledAttr = $isLocked ? 'disabled' : '';
             ?>
-                <div class="form-group">
-                    <label for="<?= htmlspecialchars($name) ?>"><?= htmlspecialchars($label) ?> <?= $required && !$isLocked ? '<span style="color:#ef4444">*</span>' : '' ?></label>
-
+                <div class="form-group<?= $type === 'checkbox' ? ' form-group-checkbox' : '' ?>">
                     <?php if ($type === 'checkbox'):
                         // An unchecked box isn't submitted at all, so on a
                         // POST that hit a (different) validation error,
@@ -182,9 +180,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked) {
                         // box would appear checked again.
                         $isChecked = $_SERVER['REQUEST_METHOD'] === 'POST' ? !empty($_POST[$name]) : !empty($formData[$name]);
                     ?>
-                        <input type="checkbox" name="<?= htmlspecialchars($name) ?>" id="<?= htmlspecialchars($name) ?>" value="1" <?= $isChecked ? 'checked' : '' ?> <?= $required ?> <?= $disabledAttr ?>>
+                        <label for="<?= htmlspecialchars($name) ?>" class="checkbox-label">
+                            <input type="checkbox" name="<?= htmlspecialchars($name) ?>" id="<?= htmlspecialchars($name) ?>" value="1" <?= $isChecked ? 'checked' : '' ?> <?= $required ?> <?= $disabledAttr ?>>
+                            <span><?= htmlspecialchars($label) ?> <?= $required && !$isLocked ? '<span style="color:#ef4444">*</span>' : '' ?></span>
+                        </label>
 
-                    <?php elseif ($type === 'select'): ?>
+                    <?php else: ?>
+                    <label for="<?= htmlspecialchars($name) ?>"><?= htmlspecialchars($label) ?> <?= $required && !$isLocked ? '<span style="color:#ef4444">*</span>' : '' ?></label>
+
+                    <?php if ($type === 'select'): ?>
                         <select name="<?= htmlspecialchars($name) ?>" <?= $required ?> <?= $disabledAttr ?>>
                             <option value="">-- Select --</option>
                             <?php foreach ($field['options'] ?? [] as $opt): ?>
@@ -244,7 +248,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked) {
                     <?php else: ?>
                         <input type="<?= htmlspecialchars($type) ?>" name="<?= htmlspecialchars($name) ?>" value="<?= htmlspecialchars($value) ?>" <?= $required ?> <?= $disabledAttr ?>>
                     <?php endif; ?>
-                    
+                    <?php endif; ?>
+
                     <?php if ($fieldError && !$isLocked): ?>
                         <span class="error-text"><?= htmlspecialchars($fieldError) ?></span>
                     <?php endif; ?>
