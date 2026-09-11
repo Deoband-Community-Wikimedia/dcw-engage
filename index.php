@@ -45,6 +45,8 @@ if ($route === '/' || $route === '/index.php') {
     require __DIR__ . '/views/admin/form_manager.php';
 } elseif ($route === '/admin/builder') {
     require __DIR__ . '/views/admin/builder.php';
+} elseif ($route === '/admin/preview_form') {
+    require __DIR__ . '/views/admin/preview_form.php';
 } elseif ($route === '/track') {
     // Public "check my application status" lookup (see #32) — a form's
     // slug is matched by the catch-all below, so this has to come before it.

@@ -23,30 +23,41 @@ function cleanupUploads(array $paths) {
     }
 }
 
-$formModel = new FormModel();
-$form = $formModel->getFormByType($formType);
+// An admin previewing an in-progress, unsaved form schema (see #47) sets
+// this global before including this file — views/admin/preview_form.php.
+// When set, the DB lookup below is skipped entirely, and — combined with
+// the guard added to the POST branch further down — a preview can never
+// touch the database or send email no matter what gets POSTed here.
+global $previewSchema;
 
-if (!$form) {
-    // Tell "closed" apart from "never existed" so a form that was live and is
-    // now closed shows a proper message instead of a bare 404.
-    $inactiveForm = $formModel->getAnyFormByType($formType);
+if (!empty($previewSchema)) {
+    $form = ['id' => null, 'schema' => $previewSchema];
+} else {
+    $formModel = new FormModel();
+    $form = $formModel->getFormByType($formType);
 
-    if ($inactiveForm) {
-        http_response_code(403);
-        $closedTitle = $inactiveForm['schema']['title'] ?? 'This form';
-        require __DIR__ . '/closed.php';
-    } else {
-        http_response_code(404);
-        require __DIR__ . '/not_found.php';
+    if (!$form) {
+        // Tell "closed" apart from "never existed" so a form that was live and is
+        // now closed shows a proper message instead of a bare 404.
+        $inactiveForm = $formModel->getAnyFormByType($formType);
+
+        if ($inactiveForm) {
+            http_response_code(403);
+            $closedTitle = $inactiveForm['schema']['title'] ?? 'This form';
+            require __DIR__ . '/closed.php';
+        } else {
+            http_response_code(404);
+            require __DIR__ . '/not_found.php';
+        }
+        die();
     }
-    die();
 }
 
 $schema = $form['schema'];
 $errors = [];
 $success = '';
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!CSRF::validate($_POST['csrf_token'])) {
         die("Invalid CSRF token.");
     }
@@ -203,6 +214,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 </head>
 <body>
     <div class="container">
+        <?php if (!empty($previewSchema)): ?>
+            <div style="background:#fef3c7; border:1px solid #f59e0b; color:#92400e; padding:10px 14px; border-radius:6px; margin-bottom:20px; font-size:14px; font-weight:600;">
+                🔍 Preview — this is how the form will look. Submissions are disabled here.
+            </div>
+        <?php endif; ?>
+
         <?php if (!empty($schema['banner_image'])): ?>
             <img src="<?= htmlspecialchars($schema['banner_image']) ?>" alt="Banner" style="width: 100%; height: auto; border-radius: 8px; margin-bottom: 20px; max-height: 250px; object-fit: cover;">
         <?php endif; ?>
@@ -324,8 +341,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <?php endforeach; ?>
 
                 <div style="display:flex; gap:10px;">
-                    <button type="submit" name="intent" value="draft" class="btn-outline" style="background:#fff; color:#106b9a; border:1px solid #106b9a;">Save as Draft</button>
-                    <button type="submit" name="intent" value="submit">Submit Application</button>
+                    <button type="submit" name="intent" value="draft" class="btn-outline" style="background:#fff; color:#106b9a; border:1px solid #106b9a;" <?= !empty($previewSchema) ? 'disabled title="Disabled in preview"' : '' ?>>Save as Draft</button>
+                    <button type="submit" name="intent" value="submit" <?= !empty($previewSchema) ? 'disabled title="Disabled in preview"' : '' ?>>Submit Application</button>
                 </div>
             </form>
         <?php endif; ?>

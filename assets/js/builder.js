@@ -143,6 +143,20 @@ if (descriptionToolbar) {
         replaceRange(start, end, replacement, replacement.length, 0);
     };
 
+    // Prefixes the current line with the list marker, e.g. '* ' or '# '
+    // (see #47). Re-clicking the same marker removes it (toggle off);
+    // clicking the other marker swaps it, same "one marker per line" rule
+    // MiniWikiText::render() applies when grouping lines into a list.
+    const toggleListLine = function(marker) {
+        const pos = descriptionTextarea.selectionStart;
+        const bounds = getLineBounds(descriptionTextarea.value, pos);
+        const line = descriptionTextarea.value.slice(bounds.start, bounds.end);
+        const existing = line.match(/^([*#])\s*/);
+        const rest = line.replace(/^[*#]\s*/, '');
+        const replacement = (existing && existing[1] === marker) ? rest : marker + ' ' + rest;
+        replaceRange(bounds.start, bounds.end, replacement, replacement.length, 0);
+    };
+
     descriptionToolbar.addEventListener('click', function(e) {
         const btn = e.target.closest('button');
         if (!btn) return;
@@ -155,8 +169,19 @@ if (descriptionToolbar) {
             increaseIndent();
         } else if (btn.dataset.wikiLink) {
             insertLink();
+        } else if (btn.dataset.wikiList) {
+            toggleListLine(btn.dataset.wikiList);
         }
     });
+
+    // Auto-grow the textarea to fit its content instead of a fixed height
+    // with an inner scrollbar (see #47).
+    const autoGrowDescription = function() {
+        descriptionTextarea.style.height = 'auto';
+        descriptionTextarea.style.height = descriptionTextarea.scrollHeight + 'px';
+    };
+    descriptionTextarea.addEventListener('input', autoGrowDescription);
+    window.addEventListener('load', autoGrowDescription);
 }
 
 let slugEdited = false;
@@ -203,49 +228,70 @@ if (formTitleInput) {
     });
 }
 
+// Reads the builder's current state (title/description/banner/fields) into
+// the same schema shape the backend stores — shared by the real save
+// (submit handler below) and the Preview button (see #47), so there's only
+// one place that knows how to read a field card off the DOM.
+function buildSchemaFromForm() {
+    const title = document.getElementById('form_title').value;
+    const description = document.getElementById('form_description').value;
+    const bannerImage = document.getElementById('banner_image').value;
+
+    const schema = {
+        title: title,
+        description: description,
+        banner_image: bannerImage,
+        fields: []
+    };
+
+    const cards = document.querySelectorAll('.field-card');
+    cards.forEach(card => {
+        const label = card.querySelector('.field-label').value;
+        const type = card.querySelector('.field-type').value;
+        const isRequired = card.querySelector('.field-required').checked;
+
+        // Auto generate an internal database name from the label
+        const name = label.toLowerCase().replace(/[^a-z0-9]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
+
+        const fieldData = {
+            name: name || 'field_' + Math.floor(Math.random() * 1000),
+            label: label,
+            type: type,
+            required: isRequired
+        };
+
+        if (type === 'select') {
+            const optionsRaw = card.querySelector('.field-options').value;
+            fieldData.options = optionsRaw.split(',').map(opt => opt.trim()).filter(opt => opt.length > 0);
+        }
+
+        schema.fields.push(fieldData);
+    });
+
+    return schema;
+}
+
 // Compile JSON on submit
 if (builderForm) {
     builderForm.addEventListener('submit', function(e) {
         e.preventDefault();
-        
-        const title = document.getElementById('form_title').value;
-        const description = document.getElementById('form_description').value;
-        const bannerImage = document.getElementById('banner_image').value;
-        
-        const schema = {
-            title: title,
-            description: description,
-            banner_image: bannerImage,
-            fields: []
-        };
-
-        const cards = document.querySelectorAll('.field-card');
-        cards.forEach(card => {
-            const label = card.querySelector('.field-label').value;
-            const type = card.querySelector('.field-type').value;
-            const isRequired = card.querySelector('.field-required').checked;
-            
-            // Auto generate an internal database name from the label
-            const name = label.toLowerCase().replace(/[^a-z0-9]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
-
-            const fieldData = {
-                name: name || 'field_' + Math.floor(Math.random() * 1000),
-                label: label,
-                type: type,
-                required: isRequired
-            };
-
-            if (type === 'select') {
-                const optionsRaw = card.querySelector('.field-options').value;
-                fieldData.options = optionsRaw.split(',').map(opt => opt.trim()).filter(opt => opt.length > 0);
-            }
-
-            schema.fields.push(fieldData);
-        });
-
-        document.getElementById('schema_json_input').value = JSON.stringify(schema, null, 2);
-        
-        // Actually submit the form
+        document.getElementById('schema_json_input').value = JSON.stringify(buildSchemaFromForm(), null, 2);
         this.submit();
+    });
+}
+
+// Preview button — opens the real public-form template in a new tab against
+// the builder's current, unsaved schema (see #47).
+const previewFormBtn = document.getElementById('preview_form_btn');
+const previewForm = document.getElementById('previewForm');
+if (previewFormBtn && previewForm) {
+    previewFormBtn.addEventListener('click', function() {
+        const schema = buildSchemaFromForm();
+        if (!schema.fields.length) {
+            window.alert('Add at least one question before previewing.');
+            return;
+        }
+        document.getElementById('preview_schema_json_input').value = JSON.stringify(schema);
+        previewForm.submit();
     });
 }
