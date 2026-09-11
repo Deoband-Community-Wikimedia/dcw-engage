@@ -60,8 +60,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             global $db;
             $stmt = $db->prepare("INSERT INTO forms (form_type, schema_json, notify_emails, is_active) VALUES (?, ?, ?, 1) ON DUPLICATE KEY UPDATE schema_json = VALUES(schema_json), notify_emails = VALUES(notify_emails)");
             $stmt->execute([$formType, $schemaJson, $notifyEmails !== '' ? $notifyEmails : null]);
-            $success = "Form schema saved successfully for type: " . htmlspecialchars($formType);
-            $existingNotifyEmails = $notifyEmails;
+            // Back to the workspace dashboard on success (see #47) — a
+            // standard Post/Redirect/Get, same pattern already used by every
+            // other admin page's POST handler in this codebase.
+            header('Location: /admin/dashboard');
+            exit;
         }
     }
 }
@@ -96,9 +99,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <button type="button" class="btn-outline btn-sm" title="Large heading" data-wiki-heading="==">H1</button>
                     <button type="button" class="btn-outline btn-sm" title="Medium heading" data-wiki-heading="===">H2</button>
                     <button type="button" class="btn-outline btn-sm" title="Increase indent (up to 3 levels)" data-wiki-indent="1">Indent</button>
+                    <button type="button" class="btn-outline btn-sm" title="Bullet list" data-wiki-list="*">&bull; List</button>
+                    <button type="button" class="btn-outline btn-sm" title="Numbered list" data-wiki-list="#">1. List</button>
                 </div>
-                <textarea id="form_description" placeholder="Form Description (Optional)" style="width: 100%; padding: 12px; margin-bottom: 5px; border: 1px solid var(--border-color); border-radius: 6px; font-family: 'Inter', sans-serif; font-size: 14px; min-height: 80px;"></textarea>
-                <span style="font-size: 13px; color: #64748b; margin-bottom: 20px; display:block;">Formatting supported: '''bold''', ''italic'', [https://example.com link text], == Large heading ==, === Medium heading === (each heading must start and end its own line), and :/::/::: for indenting up to 3 levels — use the buttons above or type wikitext directly.</span>
+                <textarea id="form_description" placeholder="Form Description (Optional)" style="width: 100%; padding: 12px; margin-bottom: 5px; border: 1px solid var(--border-color); border-radius: 6px; font-family: 'Inter', sans-serif; font-size: 14px; min-height: 140px; overflow-y: hidden; resize: vertical;"></textarea>
+                <span style="font-size: 13px; color: #64748b; margin-bottom: 20px; display:block;">Formatting supported: '''bold''', ''italic'', [https://example.com link text], == Large heading ==, === Medium heading === (each heading must start and end its own line), :/::/::: for indenting up to 3 levels, and */# for bullet/numbered lists (consecutive lines of the same marker group into one list) — use the buttons above or type wikitext directly.</span>
 
                 <input type="url" id="banner_image" placeholder="Banner Image URL (Optional, e.g. https://example.com/banner.jpg)" style="width: 100%; padding: 12px; margin-bottom: 20px; border: 1px solid var(--border-color); border-radius: 6px; font-family: 'Inter', sans-serif; font-size: 14px;">
                 
@@ -125,9 +130,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             </div>
 
             <!-- Floating Save Actions -->
-            <div class="floating-action">
+            <div class="floating-action" style="display:flex; gap:10px;">
+                <button type="button" class="btn-outline" id="preview_form_btn" style="background:#fff; color:#106b9a; border:1px solid #106b9a;">Preview</button>
                 <button type="submit" class="btn-primary" style="box-shadow: 0 10px 15px -3px rgba(16,107,154,0.3);">Save Form & Publish</button>
             </div>
+        </form>
+
+        <!-- Opens the live public-form template in a new tab against the
+             builder's current (unsaved) schema — see #47. Submitted via JS
+             once the schema is built, same as the main form. -->
+        <form id="previewForm" method="POST" action="/admin/preview_form" target="_blank" style="display:none;">
+            <?= CSRF::getInputField() ?>
+            <input type="hidden" name="schema_json" id="preview_schema_json_input">
         </form>
     </div>
 

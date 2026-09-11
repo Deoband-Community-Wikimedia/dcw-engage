@@ -27,11 +27,14 @@
  *   : first indent                    — up to 3 levels (:, ::, :::)
  *   :: second indent
  *   ::: third indent
+ *   * bullet item                     — consecutive * lines become one list
+ *   # numbered item                   — consecutive # lines become one list
  *
  * This is intentionally not the real MediaWiki parser — no internal
- * [[links]], no lists, no nested/overlapping apostrophe runs beyond the
- * three fixed widths above. Just enough of the cheatsheet to cover what
- * form descriptions need.
+ * [[links]], no nested lists (a run of `*`/`#` lines is always a single
+ * flat list, regardless of how many stack up), no nested/overlapping
+ * apostrophe runs beyond the three fixed widths above. Just enough of the
+ * cheatsheet to cover what form descriptions need.
  */
 class MiniWikiText {
     /** How far margin-left grows per indent level, in pixels. */
@@ -47,9 +50,33 @@ class MiniWikiText {
         $lines = explode("\n", (string) $text);
         $htmlLines = [];
         $prevWasBlock = false;
+        $openListType = null; // null, 'ul', or 'ol' — a list left open across lines
 
         foreach ($lines as $line) {
             $escaped = htmlspecialchars($line, ENT_QUOTES, 'UTF-8');
+
+            // '*'/'#' lines group into one <ul>/<ol>; switching marker or
+            // hitting any non-list line closes whatever's currently open.
+            if (preg_match('/^([*#])\s*(.*)$/', $escaped, $m)) {
+                $listType = $m[1] === '*' ? 'ul' : 'ol';
+                if ($openListType !== null && $openListType !== $listType) {
+                    $htmlLines[] = $openListType === 'ul' ? '</ul>' : '</ol>';
+                    $openListType = null;
+                }
+                if ($openListType === null) {
+                    $htmlLines[] = $listType === 'ul'
+                        ? '<ul style="margin:6px 0; padding-left:24px;">'
+                        : '<ol style="margin:6px 0; padding-left:24px;">';
+                    $openListType = $listType;
+                }
+                $htmlLines[] = '<li>' . self::inline($m[2]) . '</li>';
+                $prevWasBlock = true;
+                continue;
+            }
+            if ($openListType !== null) {
+                $htmlLines[] = $openListType === 'ul' ? '</ul>' : '</ol>';
+                $openListType = null;
+            }
 
             if (preg_match('/^===\s+(.*?)\s+===$/', $escaped, $m)) {
                 $htmlLines[] = '<div style="font-size:1.15em; font-weight:700; margin:10px 0 4px;">' . self::inline($m[1]) . '</div>';
@@ -77,6 +104,10 @@ class MiniWikiText {
             }
             $htmlLines[] = self::inline($escaped);
             $prevWasBlock = false;
+        }
+
+        if ($openListType !== null) {
+            $htmlLines[] = $openListType === 'ul' ? '</ul>' : '</ol>';
         }
 
         return implode("\n", $htmlLines);
@@ -123,6 +154,7 @@ class MiniWikiText {
         $text = (string) $text;
         $text = preg_replace('/^={2,3}\s+(.*?)\s+={2,3}$/m', '$1', $text);
         $text = preg_replace('/^:+\s*/m', '', $text);
+        $text = preg_replace('/^[*#]\s*/m', '', $text);
         $text = preg_replace('/\[https?:\/\/\S+\s+([^\]]+)\]/', '$1', $text);
         $text = preg_replace("/'{5}(.+?)'{5}/", '$1', $text);
         $text = preg_replace("/'{3}(.+?)'{3}/", '$1', $text);
