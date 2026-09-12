@@ -201,12 +201,17 @@ if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 }
+
+// Determine the favicon URL: use banner_image if available, otherwise fall back to DCW logo
+$faviconUrl = !empty($schema['banner_image']) 
+    ? htmlspecialchars($schema['banner_image'])
+    : 'https://dcwwiki.org/dcwwiki/images/5/56/DCW_logo.png';
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <link rel="icon" type="image/png" href="https://dcwwiki.org/dcwwiki/images/5/56/DCW_logo.png">
+    <link rel="icon" type="image/png" href="<?= $faviconUrl ?>">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title><?= htmlspecialchars($schema['title']) ?> - DCW Engage</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
@@ -341,7 +346,7 @@ if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 <?php endforeach; ?>
 
                 <div style="display:flex; gap:10px;">
-                    <button type="submit" name="intent" value="draft" class="btn-outline" style="background:#fff; color:#106b9a; border:1px solid #106b9a;" <?= !empty($previewSchema) ? 'disabled title="Disabled in preview"' : '' ?>>Save as Draft</button>
+                    <button type="submit" name="intent" value="draft" class="btn-outline" style="background:#fff; color:#106b9a; border:1px solid #106b9a;" <?= !empty($previewSchema) ? 'disabled title="Disabled in preview"' : '' ?>>Save Draft</button>
                     <button type="submit" name="intent" value="submit" <?= !empty($previewSchema) ? 'disabled title="Disabled in preview"' : '' ?>>Submit Application</button>
                 </div>
             </form>
