@@ -258,7 +258,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked) {
 
             <?php if (!$isLocked && $wasDraft): ?>
                 <div style="display:flex; gap:10px;">
-                    <button type="submit" name="intent" value="draft" class="btn-outline" style="background:#fff; color:#106b9a; border:1px solid #106b9a;">Save as Draft</button>
+                    <button type="submit" name="intent" value="draft" formnovalidate class="btn-outline" style="background:#fff; color:#106b9a; border:1px solid #106b9a;">Save as Draft</button>
                     <button type="submit" name="intent" value="submit">Submit Application</button>
                 </div>
             <?php elseif (!$isLocked): ?>
