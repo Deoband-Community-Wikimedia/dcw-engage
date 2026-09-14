@@ -18,6 +18,7 @@ class DB {
             PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION, // Fail hard on SQL errors
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
             PDO::ATTR_EMULATE_PREPARES   => false, // Strictly use real prepared statements
+            PDO::ATTR_PERSISTENT => true,
         ];
 
         try {
