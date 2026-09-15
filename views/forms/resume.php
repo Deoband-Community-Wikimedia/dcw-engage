@@ -107,7 +107,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked) {
                 $status = $newStatus;
                 $wasDraft = $staysDraft;
             } catch (Exception $e) {
-                $errors['system'] = $e->getMessage();
+                // Previously showed the raw exception message straight to the
+                // applicant, which both leaked internal detail and was never
+                // written anywhere for us to see — a live incident
+                // (2026-09-16) had nothing to diagnose from. Log the real
+                // reason server-side; show a generic message like every
+                // other save-failure path in the app.
+                error_log("Application update failed for application #{$application['id']} <{$application['email']}>: " . $e->getMessage());
+                $errors['system'] = "An error occurred saving your application.";
             }
         }
     }

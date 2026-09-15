@@ -195,6 +195,13 @@ if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 // The save failed (including the UNIQUE(form_id, email) guard
                 // catching a duplicate that slipped past the check above).
                 // Delete any files we moved so they are not left orphaned.
+                //
+                // This used to be swallowed silently — the applicant saw a
+                // generic message and the real reason was never written
+                // anywhere, so a live incident (2026-09-16) had no trail to
+                // diagnose from. Log the real exception; the applicant still
+                // only ever sees the generic message.
+                error_log("Application save failed for form '$formType' <$email>: " . $e->getMessage());
                 cleanupUploads($uploadedPaths);
                 $errors['system'] = "An error occurred saving your application.";
             }
