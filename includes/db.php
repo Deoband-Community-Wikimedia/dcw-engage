@@ -10,6 +10,7 @@ class DB {
     private $pdo;
 
     private function __construct() {
+        require_once __DIR__ . '/app_log.php';
         $config = require __DIR__ . '/config.php';
         
         $dsn = "mysql:host=" . $config['db']['host'] . ";dbname=" . $config['db']['name'] . ";charset=" . $config['db']['charset'];
@@ -33,7 +34,7 @@ class DB {
             $this->pdo = new PDO($dsn, $config['db']['user'], $config['db']['password'], $options);
         } catch (PDOException $e) {
             // Prevent leaking credentials in error logs
-            error_log("Database Connection Error: " . $e->getMessage());
+            app_log("Database Connection Error: " . $e->getMessage());
 
             // A plain die() here used to return HTTP 200 with no cache
             // headers, so the server cache stored the failure page and kept
