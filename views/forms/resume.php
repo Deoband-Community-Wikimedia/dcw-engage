@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/../../includes/init.php';
+require_once __DIR__ . '/../../includes/app_log.php';
 require_once __DIR__ . '/../../models/ApplicationModel.php';
 
 global $resumeToken;
@@ -113,7 +114,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked) {
                 // (2026-09-16) had nothing to diagnose from. Log the real
                 // reason server-side; show a generic message like every
                 // other save-failure path in the app.
-                error_log("Application update failed for application #{$application['id']} <{$application['email']}>: " . $e->getMessage());
+                app_log("Application update failed for application #{$application['id']} <{$application['email']}>: " . $e->getMessage());
                 $errors['system'] = "An error occurred saving your application.";
             }
         }

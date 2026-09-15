@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../../includes/init.php';
 require_once __DIR__ . '/../../includes/wikitext.php';
+require_once __DIR__ . '/../../includes/app_log.php';
 require_once __DIR__ . '/../../models/FormModel.php';
 
 // $formType should be passed from the router in index.php
@@ -201,7 +202,7 @@ if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 // anywhere, so a live incident (2026-09-16) had no trail to
                 // diagnose from. Log the real exception; the applicant still
                 // only ever sees the generic message.
-                error_log("Application save failed for form '$formType' <$email>: " . $e->getMessage());
+                app_log("Application save failed for form '$formType' <$email>: " . $e->getMessage());
                 cleanupUploads($uploadedPaths);
                 $errors['system'] = "An error occurred saving your application.";
             }
