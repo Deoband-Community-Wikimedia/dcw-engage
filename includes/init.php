@@ -23,6 +23,7 @@ if (!file_exists(__DIR__ . '/config.php')) {
 // 3. Load Core Classes
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/csrf.php';
+require_once __DIR__ . '/applicant_name.php';
 
 // 4. Initialize Database Connection safely
 // This will halt execution if DB is unreachable.

@@ -9,6 +9,11 @@ ServerSignature Off
     Require all denied
 </FilesMatch>
 
+# 3b. Never serve our own application log files over HTTP
+<FilesMatch "\.log$">
+    Require all denied
+</FilesMatch>
+
 # 4. HTTP Security Headers
 <IfModule mod_headers.c>
     Header set X-Frame-Options "SAMEORIGIN"
