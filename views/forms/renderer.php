@@ -24,6 +24,36 @@ function cleanupUploads(array $paths) {
     }
 }
 
+function resolveApplicantName(array $postData, array $schema, string $fallback = 'Applicant'): string {
+    $candidateKeys = ['full_name', 'name', 'applicant_name'];
+    foreach ($candidateKeys as $key) {
+        $value = trim((string)($postData[$key] ?? ''));
+        if ($value !== '') {
+            return $value;
+        }
+    }
+
+    foreach ($schema['fields'] ?? [] as $field) {
+        $fieldName = trim((string)($field['name'] ?? ''));
+        if ($fieldName === '') {
+            continue;
+        }
+
+        $normalizedName = strtolower($fieldName);
+        $normalizedLabel = strtolower(trim((string)($field['label'] ?? '')));
+
+        if (in_array($normalizedName, ['full_name', 'name', 'applicant_name'], true)
+            || in_array($normalizedLabel, ['full name', 'name', 'applicant name'], true)) {
+            $value = trim((string)($postData[$fieldName] ?? ''));
+            if ($value !== '') {
+                return $value;
+            }
+        }
+    }
+
+    return $fallback;
+}
+
 // An admin previewing an in-progress, unsaved form schema (see #47) sets
 // this global before including this file — views/admin/preview_form.php.
 // When set, the DB lookup below is skipped entirely, and — combined with
@@ -106,11 +136,10 @@ if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $postData = $_POST;
         unset($postData['csrf_token']);
 
-        // Real applicant name, sourced from the submitted full_name field.
-        // Falls back to 'Applicant' only if the form has no such field or it
-        // was left blank — this is a variable, not the literal text
-        // '$applicantName' that a single-quoted string would have produced.
-        $applicantName = trim($postData['full_name'] ?? '') ?: 'Applicant';
+        // Resolve the applicant name from the actual submitted field name,
+        // not a hardcoded full_name assumption, so both full_name and
+        // applicant_name labels keep working across builder-generated schemas.
+        $applicantName = resolveApplicantName($postData, $schema);
 
         // Reject duplicates BEFORE touching any files. Uploading first and
         // checking second leaves an orphaned file on disk with no application
@@ -155,10 +184,6 @@ if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if (empty($errors)) {
             try {
-                // $applicantName was already resolved (trimmed, with fallback)
-                // above, before the FileUploader loop — don't recompute it
-                // here without the trim, or a name that's whitespace-only
-                // would slip back in unfiltered.
                 $status = $isDraft ? 'Draft' : 'New';
                 $appId = $appModel->saveApplication($form['id'], $email, $applicantName, $status, json_encode($postData));
                 $trackingId = $appModel->getTrackingId($appId);
@@ -166,42 +191,20 @@ if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 require_once __DIR__ . '/../../includes/mailer.php';
 
                 if ($isDraft) {
-                    // Drafts get the resume-by-email magic link, with the
-                    // longer draft expiry window.
                     $token = $appModel->generateMagicLink($appId, true);
                     Mailer::sendMagicLink($email, $applicantName, $token);
                     $success = "Draft saved! Your tracking ID is: $trackingId";
                 } else {
-                    // A real submission gets a plain confirmation instead —
-                    // no edit token. Returning applicants who need to make a
-                    // correction can still use "Resend Magic Link" above.
                     $formTitle = $schema['title'] ?? $formType;
                     Mailer::sendApplicationReceived($email, $applicantName, $trackingId, $formTitle);
                     $success = "Application submitted successfully! Your tracking ID is: $trackingId";
                 }
 
-                // Notify the organizer(s) in charge of this form — only for
-                // a real submission, not every incomplete draft save.
                 if (!$isDraft) {
-                    // $form comes straight from FormModel::getFormByType(),
-                    // which never sets a 'title' key (only 'schema'), so
-                    // Mailer::sendOrganizerAlert()'s own fallback would land
-                    // on $form['form_type'] — the URL slug — instead of the
-                    // real title. Sync it with what the applicant email
-                    // above already resolved.
                     $form['title'] = $formTitle;
                     Mailer::sendOrganizerAlert($form, $email, $applicantName, $appId);
                 }
             } catch (Exception $e) {
-                // The save failed (including the UNIQUE(form_id, email) guard
-                // catching a duplicate that slipped past the check above).
-                // Delete any files we moved so they are not left orphaned.
-                //
-                // This used to be swallowed silently — the applicant saw a
-                // generic message and the real reason was never written
-                // anywhere, so a live incident (2026-09-16) had no trail to
-                // diagnose from. Log the real exception; the applicant still
-                // only ever sees the generic message.
                 app_log("Application save failed for form '$formType' <$email>: " . $e->getMessage());
                 cleanupUploads($uploadedPaths);
                 $errors['system'] = "An error occurred saving your application.";
@@ -266,7 +269,7 @@ $faviconUrl = !empty($schema['banner_image'])
                                 <?= CSRF::getInputField() ?>
                                 <input type="hidden" name="action" value="resend_magic_link">
                                 <input type="hidden" name="email" value="<?= htmlspecialchars($_POST['email'] ?? '') ?>">
-                                <button type="submit" style="background: white; color: #991b1b; border: 1px solid #f87171; padding: 8px 16px; font-size: 14px; width: auto; font-weight: 500;">Resend Magic Link</button>
+                                <button type="submit" style="background: white; color: #991b1b; border: 1px solid #f87171; padding: 8px 16px; font-size: 14px; width: auto; font-weight: 500;">Resend magic link</button>
                             </form>
                         </div>
                     <?php endif; ?>
@@ -354,7 +357,7 @@ $faviconUrl = !empty($schema['banner_image'])
                 <?php endforeach; ?>
 
                 <div style="display:flex; gap:10px;">
-                    <button type="submit" name="intent" value="draft" class="btn-outline" style="background:#fff; color:#106b9a; border:1px solid #106b9a;" <?= !empty($previewSchema) ? 'disabled title="Disabled in preview"' : '' ?>>Save Draft</button>
+                    <button type="submit" name="intent" value="draft" class="btn-outline" style="background:#fff; color:#106b9a; border:1px solid #106b9a;" <?= !empty($previewSchema) ? 'disabled title="Disabled in preview"' : '' ?>>Save as Draft</button>
                     <button type="submit" name="intent" value="submit" <?= !empty($previewSchema) ? 'disabled title="Disabled in preview"' : '' ?>>Submit Application</button>
                 </div>
             </form>
@@ -362,7 +365,6 @@ $faviconUrl = !empty($schema['banner_image'])
     </div>
 
     <script>
-        // Drag-and-drop wiring for every file field on the page.
         document.querySelectorAll('.dropzone-input').forEach(input => {
             const fieldId = input.id;
             const dropzone = document.getElementById('dropzone_' + fieldId);
