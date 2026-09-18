@@ -40,7 +40,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked) {
 
     if (empty($errors)) {
         $email = $_POST['email'] ?? $application['email'];
-        $name = $_POST['full_name'] ?? $application['applicant_name'];
+        $name = resolveApplicantName($_POST, $schema, $application['applicant_name'] ?? 'Applicant');
 
         $postData = $_POST;
         unset($postData['csrf_token']);
@@ -98,7 +98,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked) {
                         ['id' => $application['form_id'], 'form_type' => $application['form_type'], 'title' => $formTitle, 'notify_emails' => $application['notify_emails'] ?? ''],
                         $email,
                         $name,
-                        $application['id']
+                        $trackingId
                     );
                 }
 

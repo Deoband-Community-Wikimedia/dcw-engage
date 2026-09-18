@@ -102,7 +102,7 @@ class Mailer {
      * whenever a new application is submitted.
      * Supports multiple recipients via a comma-separated notify_emails column.
      */
-    public static function sendOrganizerAlert($form, $applicantEmail, $applicantName, $appId) {
+    public static function sendOrganizerAlert($form, $applicantEmail, $applicantName, $trackingId) {
         $config = require __DIR__ . '/config.php';
         $mailConfig = $config['mail'];
 
@@ -117,13 +117,18 @@ class Mailer {
             return true;
         }
 
+        // Defensive backward compatibility: if an integer/numeric ID was passed
+        // by an older caller, format it; otherwise use the tracking ID directly.
+        if (is_numeric($trackingId)) {
+            $trackingId = 'DCW-' . str_pad((string)$trackingId, 5, '0', STR_PAD_LEFT);
+        }
+
         // If PHPMailer is not installed (dev environment), just log and return true
         if (!class_exists('PHPMailer\PHPMailer\PHPMailer')) {
-            error_log("DEV MODE: Organizer alert for form '{$form['form_type']}' (App #$appId) would be sent to: " . implode(', ', $recipients));
+            error_log("DEV MODE: Organizer alert for form '{$form['form_type']}' ($trackingId) would be sent to: " . implode(', ', $recipients));
             return true;
         }
 
-        $trackingId = 'DCW-' . str_pad($appId, 5, '0', STR_PAD_LEFT);
         $formTitle = $form['title'] ?? $form['form_type'];
         $manageUrl = $config['app']['url'] . '/admin/form_manager?id=' . $form['id'];
 

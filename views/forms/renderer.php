@@ -24,35 +24,6 @@ function cleanupUploads(array $paths) {
     }
 }
 
-function resolveApplicantName(array $postData, array $schema, string $fallback = 'Applicant'): string {
-    $candidateKeys = ['full_name', 'name', 'applicant_name'];
-    foreach ($candidateKeys as $key) {
-        $value = trim((string)($postData[$key] ?? ''));
-        if ($value !== '') {
-            return $value;
-        }
-    }
-
-    foreach ($schema['fields'] ?? [] as $field) {
-        $fieldName = trim((string)($field['name'] ?? ''));
-        if ($fieldName === '') {
-            continue;
-        }
-
-        $normalizedName = strtolower($fieldName);
-        $normalizedLabel = strtolower(trim((string)($field['label'] ?? '')));
-
-        if (in_array($normalizedName, ['full_name', 'name', 'applicant_name'], true)
-            || in_array($normalizedLabel, ['full name', 'name', 'applicant name'], true)) {
-            $value = trim((string)($postData[$fieldName] ?? ''));
-            if ($value !== '') {
-                return $value;
-            }
-        }
-    }
-
-    return $fallback;
-}
 
 // An admin previewing an in-progress, unsaved form schema (see #47) sets
 // this global before including this file — views/admin/preview_form.php.
@@ -191,20 +162,42 @@ if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 require_once __DIR__ . '/../../includes/mailer.php';
 
                 if ($isDraft) {
+                    // Drafts get the resume-by-email magic link, with the
+                    // longer draft expiry window.
                     $token = $appModel->generateMagicLink($appId, true);
                     Mailer::sendMagicLink($email, $applicantName, $token);
                     $success = "Draft saved! Your tracking ID is: $trackingId";
                 } else {
+                    // A real submission gets a plain confirmation instead —
+                    // no edit token. Returning applicants who need to make a
+                    // correction can still use "Resend Magic Link" above.
                     $formTitle = $schema['title'] ?? $formType;
                     Mailer::sendApplicationReceived($email, $applicantName, $trackingId, $formTitle);
                     $success = "Application submitted successfully! Your tracking ID is: $trackingId";
                 }
 
+                // Notify the organizer(s) in charge of this form — only for
+                // a real submission, not every incomplete draft save.
                 if (!$isDraft) {
+                    // $form comes straight from FormModel::getFormByType(),
+                    // which never sets a 'title' key (only 'schema'), so
+                    // Mailer::sendOrganizerAlert()'s own fallback would land
+                    // on $form['form_type'] — the URL slug — instead of the
+                    // real title. Sync it with what the applicant email
+                    // above already resolved.
                     $form['title'] = $formTitle;
-                    Mailer::sendOrganizerAlert($form, $email, $applicantName, $appId);
+                    Mailer::sendOrganizerAlert($form, $email, $applicantName, $trackingId);
                 }
             } catch (Exception $e) {
+                // The save failed (including the UNIQUE(form_id, email) guard
+                // catching a duplicate that slipped past the check above).
+                // Delete any files we moved so they are not left orphaned.
+                //
+                // This used to be swallowed silently — the applicant saw a
+                // generic message and the real reason was never written
+                // anywhere, so a live incident (2026-09-16) had no trail to
+                // diagnose from. Log the real exception; the applicant still
+                // only ever sees the generic message.
                 app_log("Application save failed for form '$formType' <$email>: " . $e->getMessage());
                 cleanupUploads($uploadedPaths);
                 $errors['system'] = "An error occurred saving your application.";
