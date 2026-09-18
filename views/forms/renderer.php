@@ -350,7 +350,7 @@ $faviconUrl = !empty($schema['banner_image'])
                 <?php endforeach; ?>
 
                 <div style="display:flex; gap:10px;">
-                    <button type="submit" name="intent" value="draft" class="btn-outline" style="background:#fff; color:#106b9a; border:1px solid #106b9a;" <?= !empty($previewSchema) ? 'disabled title="Disabled in preview"' : '' ?>>Save as Draft</button>
+                    <button type="submit" name="intent" value="draft" formnovalidate class="btn-outline" style="background:#fff; color:#106b9a; border:1px solid #106b9a;" <?= !empty($previewSchema) ? 'disabled title="Disabled in preview"' : '' ?>>Save as Draft</button>
                     <button type="submit" name="intent" value="submit" <?= !empty($previewSchema) ? 'disabled title="Disabled in preview"' : '' ?>>Submit Application</button>
                 </div>
             </form>
