@@ -58,13 +58,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $error = "Invalid JSON schema format generated.";
         } else {
             global $db;
-            $stmt = $db->prepare("INSERT INTO forms (form_type, schema_json, notify_emails, is_active) VALUES (?, ?, ?, 1) ON DUPLICATE KEY UPDATE schema_json = VALUES(schema_json), notify_emails = VALUES(notify_emails)");
-            $stmt->execute([$formType, $schemaJson, $notifyEmails !== '' ? $notifyEmails : null]);
-            // Back to the workspace dashboard on success (see #47) — a
-            // standard Post/Redirect/Get, same pattern already used by every
-            // other admin page's POST handler in this codebase.
-            header('Location: /admin/dashboard');
-            exit;
+            // Editing an existing form is identified by its stable form_id,
+            // not by matching form_type — matching on form_type meant that
+            // renaming a form's slug found no existing row to match against
+            // and silently INSERTed a brand new form instead of updating the
+            // one being edited (see #56).
+            $formId = !empty($_POST['form_id']) ? (int)$_POST['form_id'] : null;
+
+            try {
+                if ($formId) {
+                    $stmt = $db->prepare("UPDATE forms SET form_type = ?, schema_json = ?, notify_emails = ? WHERE id = ?");
+                    $stmt->execute([$formType, $schemaJson, $notifyEmails !== '' ? $notifyEmails : null, $formId]);
+                } else {
+                    $stmt = $db->prepare("INSERT INTO forms (form_type, schema_json, notify_emails, is_active) VALUES (?, ?, ?, 1)");
+                    $stmt->execute([$formType, $schemaJson, $notifyEmails !== '' ? $notifyEmails : null]);
+                }
+                // Back to the workspace dashboard on success (see #47) — a
+                // standard Post/Redirect/Get, same pattern already used by every
+                // other admin page's POST handler in this codebase.
+                header('Location: /admin/dashboard');
+                exit;
+            } catch (PDOException $e) {
+                // form_type is UNIQUE — this fires if the new/renamed slug
+                // collides with a different, already-existing form.
+                if ($e->getCode() === '23000') {
+                    $error = "That URL slug is already in use by another form. Please choose a different one.";
+                } else {
+                    $error = "Something went wrong while saving the form. Please try again.";
+                }
+            }
         }
     }
 }
@@ -87,6 +109,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <form id="builderForm" method="POST">
             <?= CSRF::getInputField() ?>
             <input type="hidden" name="schema_json" id="schema_json_input">
+            <input type="hidden" name="form_id" value="<?= isset($_GET['edit']) ? (int)$_GET['edit'] : '' ?>">
 
             <!-- Global Form Settings -->
             <div class="header-card">
