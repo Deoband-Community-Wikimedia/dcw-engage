@@ -138,7 +138,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'export') {
 
     foreach ($applications as $app) {
         $row = [
-            $app['tracking_id'],
+            $app['tracking_id'] ?? 'N/A',
             $app['status'],
             date('Y-m-d H:i', strtotime($app['created_at']))
         ];
@@ -329,7 +329,7 @@ if (!empty($activeFieldFilters)) {
                             <td><input type="checkbox" class="row-checkbox" value="<?= $app['id'] ?>"
                                     onchange="updateBulkBar()"></td>
                             <td style="font-family: monospace; font-weight: 600;">
-                                <?= htmlspecialchars($app['tracking_id']) ?></td>
+                                <?= htmlspecialchars($app['tracking_id'] ?? 'N/A') ?></td>
                             <td style="font-weight: 500;"><?= htmlspecialchars($app['applicant_name']) ?></td>
                             <td><span
                                     class="status-badge <?= $statusClass ?>"><?= htmlspecialchars($app['status']) ?></span>
