@@ -8,12 +8,12 @@ function createFieldCard(fieldData = null) {
     const card = document.createElement('div');
     card.className = 'field-card';
     card.id = `field_${fieldCounter}`;
-    
+
     const label = fieldData ? fieldData.label : '';
     const type = fieldData ? fieldData.type : 'text';
     const requiredStr = fieldData && fieldData.required ? 'checked' : '';
     const optionsStr = fieldData && fieldData.options ? fieldData.options.join(', ') : '';
-    
+
     card.innerHTML = `
         <div class="row">
             <div style="flex: 3;">
@@ -26,12 +26,13 @@ function createFieldCard(fieldData = null) {
                     <option value="email" ${type === 'email' ? 'selected' : ''}>Email Address</option>
                     <option value="select" ${type === 'select' ? 'selected' : ''}>Dropdown Menu</option>
                     <option value="checkbox" ${type === 'checkbox' ? 'selected' : ''}>Checkbox</option>
+                    <option value="checkbox_group" ${type === 'checkbox_group' ? 'selected' : ''}>Multiple Choice (Checkboxes)</option>
                     <option value="file" ${type === 'file' ? 'selected' : ''}>File Upload</option>
                 </select>
             </div>
         </div>
 
-        <div class="options-wrapper" id="options_wrapper_${fieldCounter}" style="display: ${type === 'select' ? 'block' : 'none'};">
+        <div class="options-wrapper" id="options_wrapper_${fieldCounter}" style="display: ${(type === 'select' || type === 'checkbox_group') ? 'block' : 'none'};">
             <label>Dropdown Options (comma separated)</label>
             <input type="text" class="field-options" placeholder="Option 1, Option 2, Option 3" value="${optionsStr.replace(/"/g, '&quot;')}">
         </div>
@@ -53,13 +54,14 @@ function createFieldCard(fieldData = null) {
 }
 
 // Toggle options visibility if select is chosen
-window.toggleOptions = function(selectElement, id) {
+window.toggleOptions = function (selectElement, id) {
     const wrapper = document.getElementById(`options_wrapper_${id}`);
-    wrapper.style.display = selectElement.value === 'select' ? 'block' : 'none';
+    const showFor = ['select', 'checkbox_group'];
+    wrapper.style.display = showFor.includes(selectElement.value) ? 'block' : 'none';
 };
 
 // Remove a field block
-window.removeField = function(id) {
+window.removeField = function (id) {
     document.getElementById(`field_${id}`).remove();
 };
 
@@ -67,7 +69,7 @@ window.removeField = function(id) {
 // straight off the DOM (see the submit handler below), so swapping the
 // cards' position in fields_container is the whole fix — no separate
 // "order" value to track or persist.
-window.moveField = function(id, direction) {
+window.moveField = function (id, direction) {
     const card = document.getElementById(`field_${id}`);
     if (!card) return;
 
@@ -87,7 +89,7 @@ const descriptionToolbar = document.getElementById('description_toolbar');
 if (descriptionToolbar) {
     const descriptionTextarea = document.getElementById('form_description');
 
-    const getLineBounds = function(value, pos) {
+    const getLineBounds = function (value, pos) {
         const start = value.lastIndexOf('\n', pos - 1) + 1;
         let end = value.indexOf('\n', pos);
         if (end === -1) end = value.length;
@@ -96,7 +98,7 @@ if (descriptionToolbar) {
 
     // Replaces [start, end) with `replacement`, then places the cursor
     // (or a selection, if selectLength is given) at start + selectOffset.
-    const replaceRange = function(start, end, replacement, selectOffset, selectLength) {
+    const replaceRange = function (start, end, replacement, selectOffset, selectLength) {
         const value = descriptionTextarea.value;
         descriptionTextarea.value = value.slice(0, start) + replacement + value.slice(end);
         const cursor = start + selectOffset;
@@ -104,7 +106,7 @@ if (descriptionToolbar) {
         descriptionTextarea.setSelectionRange(cursor, cursor + (selectLength || 0));
     };
 
-    const wrapSelection = function(marker) {
+    const wrapSelection = function (marker) {
         const start = descriptionTextarea.selectionStart;
         const end = descriptionTextarea.selectionEnd;
         const selected = descriptionTextarea.value.slice(start, end);
@@ -113,7 +115,7 @@ if (descriptionToolbar) {
 
     // Re-clicking a heading button on an already-headinged line swaps the
     // level instead of nesting a second pair of markers onto it.
-    const toggleHeadingLine = function(marker) {
+    const toggleHeadingLine = function (marker) {
         const pos = descriptionTextarea.selectionStart;
         const bounds = getLineBounds(descriptionTextarea.value, pos);
         const line = descriptionTextarea.value.slice(bounds.start, bounds.end);
@@ -122,7 +124,7 @@ if (descriptionToolbar) {
         replaceRange(bounds.start, bounds.end, replacement, marker.length + 1, bare.length);
     };
 
-    const increaseIndent = function() {
+    const increaseIndent = function () {
         const pos = descriptionTextarea.selectionStart;
         const bounds = getLineBounds(descriptionTextarea.value, pos);
         const line = descriptionTextarea.value.slice(bounds.start, bounds.end);
@@ -133,7 +135,7 @@ if (descriptionToolbar) {
         replaceRange(bounds.start, bounds.end, replacement, replacement.length, 0);
     };
 
-    const insertLink = function() {
+    const insertLink = function () {
         const start = descriptionTextarea.selectionStart;
         const end = descriptionTextarea.selectionEnd;
         const url = window.prompt('Link URL (http:// or https://):', 'https://');
@@ -147,7 +149,7 @@ if (descriptionToolbar) {
     // (see #47). Re-clicking the same marker removes it (toggle off);
     // clicking the other marker swaps it, same "one marker per line" rule
     // MiniWikiText::render() applies when grouping lines into a list.
-    const toggleListLine = function(marker) {
+    const toggleListLine = function (marker) {
         const pos = descriptionTextarea.selectionStart;
         const bounds = getLineBounds(descriptionTextarea.value, pos);
         const line = descriptionTextarea.value.slice(bounds.start, bounds.end);
@@ -157,7 +159,7 @@ if (descriptionToolbar) {
         replaceRange(bounds.start, bounds.end, replacement, replacement.length, 0);
     };
 
-    descriptionToolbar.addEventListener('click', function(e) {
+    descriptionToolbar.addEventListener('click', function (e) {
         const btn = e.target.closest('button');
         if (!btn) return;
 
@@ -176,7 +178,7 @@ if (descriptionToolbar) {
 
     // Auto-grow the textarea to fit its content instead of a fixed height
     // with an inner scrollbar (see #47).
-    const autoGrowDescription = function() {
+    const autoGrowDescription = function () {
         descriptionTextarea.style.height = 'auto';
         descriptionTextarea.style.height = descriptionTextarea.scrollHeight + 'px';
     };
@@ -192,7 +194,7 @@ if (typeof existingSchema !== 'undefined' && existingSchema) {
     document.getElementById('banner_image').value = existingSchema.banner_image || '';
     document.getElementById('form_type').value = typeof existingFormType !== 'undefined' ? existingFormType : '';
     slugEdited = true;
-    
+
     if (existingSchema.fields && existingSchema.fields.length > 0) {
         existingSchema.fields.forEach(field => {
             createFieldCard(field);
@@ -212,14 +214,14 @@ if (addFieldBtn) {
 // Auto-generate URL Slug from Title
 const formTypeInput = document.getElementById('form_type');
 if (formTypeInput) {
-    formTypeInput.addEventListener('input', function() {
+    formTypeInput.addEventListener('input', function () {
         slugEdited = true;
     });
 }
 
 const formTitleInput = document.getElementById('form_title');
 if (formTitleInput) {
-    formTitleInput.addEventListener('input', function(e) {
+    formTitleInput.addEventListener('input', function (e) {
         if (!slugEdited) {
             const title = e.target.value;
             const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
@@ -260,7 +262,7 @@ function buildSchemaFromForm() {
             required: isRequired
         };
 
-        if (type === 'select') {
+        if (type === 'select' || type === 'checkbox_group') {
             const optionsRaw = card.querySelector('.field-options').value;
             fieldData.options = optionsRaw.split(',').map(opt => opt.trim()).filter(opt => opt.length > 0);
         }
@@ -273,7 +275,7 @@ function buildSchemaFromForm() {
 
 // Compile JSON on submit
 if (builderForm) {
-    builderForm.addEventListener('submit', function(e) {
+    builderForm.addEventListener('submit', function (e) {
         e.preventDefault();
         document.getElementById('schema_json_input').value = JSON.stringify(buildSchemaFromForm(), null, 2);
         this.submit();
@@ -285,7 +287,7 @@ if (builderForm) {
 const previewFormBtn = document.getElementById('preview_form_btn');
 const previewForm = document.getElementById('previewForm');
 if (previewFormBtn && previewForm) {
-    previewFormBtn.addEventListener('click', function() {
+    previewFormBtn.addEventListener('click', function () {
         const schema = buildSchemaFromForm();
         if (!schema.fields.length) {
             window.alert('Add at least one question before previewing.');

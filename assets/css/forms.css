@@ -52,6 +52,18 @@ label {
     gap: 8px;
     margin-bottom: 0;
     cursor: pointer;
+    font-weight: 400;
+}
+
+.checkbox-group {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 4px;
+}
+
+.checkbox-option {
+    font-weight: 400;
 }
 
 .form-group-checkbox input[type="checkbox"] {
