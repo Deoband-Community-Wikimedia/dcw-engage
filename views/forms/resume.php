@@ -185,7 +185,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked) {
                 $fieldError = $errors[$name] ?? null;
                 $disabledAttr = $isLocked ? 'disabled' : '';
                 ?>
-                <div class="form-group<?= $type === 'checkbox' ? ' form-group-checkbox' : '' ?>">
+                <div class="form-group<?= in_array($type, ['checkbox', 'checkbox_group']) ? ' form-group-checkbox' : '' ?>">
                     <?php if ($type === 'checkbox'):
                         // An unchecked box isn't submitted at all, so on a POST that hit a
                         // (different) validation error, $_POST[$name] being absent means
