@@ -123,6 +123,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked) {
 ?>
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <link rel="icon" type="image/png" href="https://dcwwiki.org/dcwwiki/images/5/56/DCW_logo.png">
@@ -131,18 +132,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked) {
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/assets/css/forms.css?v=2">
 </head>
+
 <body>
     <div class="container">
         <?php if (!empty($schema['banner_image'])): ?>
-            <img src="<?= htmlspecialchars($schema['banner_image']) ?>" alt="Banner" style="width: 100%; height: auto; border-radius: 8px; margin-bottom: 20px; max-height: 250px; object-fit: cover;">
+            <img src="<?= htmlspecialchars($schema['banner_image']) ?>" alt="Banner"
+                style="width: 100%; height: auto; border-radius: 8px; margin-bottom: 20px; max-height: 250px; object-fit: cover;">
         <?php endif; ?>
-        
-        <h1 style="<?= empty($schema['banner_image']) ? 'margin-top:0;' : 'margin-top:10px;' ?>">Edit: <?= htmlspecialchars($schema['title']) ?></h1>
-        
+
+        <h1 style="<?= empty($schema['banner_image']) ? 'margin-top:0;' : 'margin-top:10px;' ?>">Edit:
+            <?= htmlspecialchars($schema['title']) ?></h1>
+
         <?php if ($isLocked): ?>
             <div class="alert-locked">
                 <strong>🔒 Application Locked</strong><br><br>
-                Your application is currently marked as <strong><?= htmlspecialchars($status) ?></strong>. You can no longer make edits to this submission.
+                Your application is currently marked as <strong><?= htmlspecialchars($status) ?></strong>. You can no longer
+                make edits to this submission.
             </div>
         <?php endif; ?>
 
@@ -151,7 +156,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked) {
                 <strong>Success:</strong> <?= htmlspecialchars($success) ?>
             </div>
         <?php endif; ?>
-            
+
         <?php if (!empty($errors['system'])): ?>
             <div class="alert-error">
                 <strong>Notice:</strong> <?= htmlspecialchars($errors['system']) ?>
@@ -160,102 +165,134 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked) {
 
         <form method="POST" enctype="multipart/form-data">
             <?= CSRF::getInputField() ?>
-            
-            <div style="background: #f8fafc; padding: 20px; border-radius: 8px; margin-bottom: 30px; border: 1px solid #e2e8f0;">
+
+            <div
+                style="background: #f8fafc; padding: 20px; border-radius: 8px; margin-bottom: 30px; border: 1px solid #e2e8f0;">
                 <div class="form-group" style="margin-bottom: 0;">
                     <label>Email Address <span style="color:#ef4444">*</span></label>
-                    <input type="email" name="email" value="<?= htmlspecialchars($_POST['email'] ?? $application['email']) ?>" required <?= $isLocked ? 'disabled' : '' ?>>
+                    <input type="email" name="email"
+                        value="<?= htmlspecialchars($_POST['email'] ?? $application['email']) ?>" required <?= $isLocked ? 'disabled' : '' ?>>
                 </div>
             </div>
-            <?php foreach ($schema['fields'] as $field): 
+            <?php foreach ($schema['fields'] as $field):
                 $name = $field['name'];
                 $label = $field['label'] ?? $name;
                 $type = $field['type'] ?? 'text';
                 $required = !empty($field['required']) ? 'required' : '';
-                
+
                 // Prioritize POST data if there's an error, otherwise load from database
                 $value = $_POST[$name] ?? $formData[$name] ?? '';
                 $fieldError = $errors[$name] ?? null;
                 $disabledAttr = $isLocked ? 'disabled' : '';
-            ?>
+                ?>
                 <div class="form-group<?= $type === 'checkbox' ? ' form-group-checkbox' : '' ?>">
                     <?php if ($type === 'checkbox'):
-                        // An unchecked box isn't submitted at all, so on a
-                        // POST that hit a (different) validation error,
-                        // $_POST[$name] being absent means "unchecked" —
-                        // unlike other field types, it must NOT fall back
-                        // to the old $formData value or a just-unchecked
-                        // box would appear checked again.
+                        // An unchecked box isn't submitted at all, so on a POST that hit a
+                        // (different) validation error, $_POST[$name] being absent means
+                        // "unchecked" — unlike other field types, it must NOT fall back
+                        // to the old $formData value or a just-unchecked box would appear
+                        // checked again.
                         $isChecked = $_SERVER['REQUEST_METHOD'] === 'POST' ? !empty($_POST[$name]) : !empty($formData[$name]);
-                    ?>
+                        ?>
                         <label for="<?= htmlspecialchars($name) ?>" class="checkbox-label">
-                            <input type="checkbox" name="<?= htmlspecialchars($name) ?>" id="<?= htmlspecialchars($name) ?>" value="1" <?= $isChecked ? 'checked' : '' ?> <?= $required ?> <?= $disabledAttr ?>>
-                            <span><?= htmlspecialchars($label) ?> <?= $required && !$isLocked ? '<span style="color:#ef4444">*</span>' : '' ?></span>
+                            <input type="checkbox" name="<?= htmlspecialchars($name) ?>" id="<?= htmlspecialchars($name) ?>"
+                                value="1" <?= $isChecked ? 'checked' : '' ?>         <?= $required ?>         <?= $disabledAttr ?>>
+                            <span><?= htmlspecialchars($label) ?>
+                                <?= $required && !$isLocked ? '<span style="color:#ef4444">*</span>' : '' ?></span>
                         </label>
 
-                    <?php else: ?>
-                    <label for="<?= htmlspecialchars($name) ?>"><?= htmlspecialchars($label) ?> <?= $required && !$isLocked ? '<span style="color:#ef4444">*</span>' : '' ?></label>
-
-                    <?php if ($type === 'select'): ?>
-                        <select name="<?= htmlspecialchars($name) ?>" <?= $required ?> <?= $disabledAttr ?>>
-                            <option value="">-- Select --</option>
+                    <?php elseif ($type === 'checkbox_group'):
+                        // Same absent-on-POST rule as the single checkbox above: on a POST,
+                        // $_POST[$name] reflects exactly what's checked right now (an absent
+                        // key means nothing was checked). Only fall back to the saved
+                        // $formData when this is a fresh GET load of the page.
+                        $selectedValues = $_SERVER['REQUEST_METHOD'] === 'POST' ? ($_POST[$name] ?? []) : ($formData[$name] ?? []);
+                        if (!is_array($selectedValues))
+                            $selectedValues = [];
+                        ?>
+                        <label><?= htmlspecialchars($label) ?>
+                            <?= $required && !$isLocked ? '<span style="color:#ef4444">*</span>' : '' ?></label>
+                        <div class="checkbox-group">
                             <?php foreach ($field['options'] ?? [] as $opt): ?>
-                                <option value="<?= htmlspecialchars($opt) ?>" <?= $value === $opt ? 'selected' : '' ?>><?= htmlspecialchars($opt) ?></option>
+                                <label class="checkbox-label checkbox-option">
+                                    <input type="checkbox" name="<?= htmlspecialchars($name) ?>[]"
+                                        value="<?= htmlspecialchars($opt) ?>" <?= in_array($opt, $selectedValues) ? 'checked' : '' ?>
+                                        <?= $disabledAttr ?>>
+                                    <span><?= htmlspecialchars($opt) ?></span>
+                                </label>
                             <?php endforeach; ?>
-                        </select>
-                        
-                    <?php elseif ($type === 'textarea'): ?>
-                        <textarea name="<?= htmlspecialchars($name) ?>" rows="4" <?= $required ?> <?= $disabledAttr ?>><?= htmlspecialchars($value) ?></textarea>
-                        
-                    <?php elseif ($type === 'file'):
-                        $fieldId = 'file_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $name);
-                    ?>
-                        <?php if (!empty($value)): ?>
-                            <div style="margin-bottom: 10px; font-size: 14px;">
-                                Currently uploaded: <a href="/<?= htmlspecialchars($value) ?>" target="_blank" style="color: var(--primary-color);">View File</a>
-                            </div>
-                        <?php endif; ?>
+                        </div>
 
-                        <?php if ($isLocked): ?>
-                            <!-- Locked applications cannot re-upload; keep this a plain disabled input
-                                 rather than an interactive dropzone. -->
-                            <input type="file" name="<?= htmlspecialchars($name) ?>" disabled>
-                        <?php else: ?>
-                            <div class="dropzone <?= $fieldError ? 'dropzone-has-error' : '' ?>" id="dropzone_<?= $fieldId ?>">
-                                <input type="file" name="<?= htmlspecialchars($name) ?>" id="<?= $fieldId ?>"
-                                    class="dropzone-input" accept=".pdf,.jpg,.jpeg,.png,.docx,.doc"
-                                    <?= ($required && empty($value)) ? 'required' : '' ?>>
-
-                                <div class="dropzone-content" id="<?= $fieldId ?>_content">
-                                    <svg class="dropzone-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                                        <path d="M12 16V4M12 4L7 9M12 4l5 5" stroke-linecap="round" stroke-linejoin="round"/>
-                                        <path d="M4 16v3a2 2 0 002 2h12a2 2 0 002-2v-3" stroke-linecap="round" stroke-linejoin="round"/>
-                                    </svg>
-                                    <p class="dropzone-text">
-                                        <?= !empty($value)
-                                            ? 'Drag &amp; drop a new file to replace it, or <span class="dropzone-browse">click to browse</span>'
-                                            : 'Drag &amp; drop your file here, or <span class="dropzone-browse">click to browse</span>' ?>
-                                    </p>
-                                    <p class="dropzone-hint">PDF, JPG, PNG, DOC, DOCX — up to 10MB</p>
-                                </div>
-
-                                <div class="dropzone-preview" id="<?= $fieldId ?>_preview" style="display:none;">
-                                    <svg class="dropzone-file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                                        <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" stroke-linejoin="round"/>
-                                        <path d="M14 2v6h6" stroke-linejoin="round"/>
-                                    </svg>
-                                    <div class="dropzone-file-info">
-                                        <span class="dropzone-filename"></span>
-                                        <span class="dropzone-filesize"></span>
-                                    </div>
-                                    <button type="button" class="dropzone-remove" aria-label="Remove file" onclick="removeDropzoneFile('<?= $fieldId ?>')">&times;</button>
-                                </div>
-                            </div>
-                        <?php endif; ?>
-                        
                     <?php else: ?>
-                        <input type="<?= htmlspecialchars($type) ?>" name="<?= htmlspecialchars($name) ?>" value="<?= htmlspecialchars($value) ?>" <?= $required ?> <?= $disabledAttr ?>>
-                    <?php endif; ?>
+                        <label for="<?= htmlspecialchars($name) ?>"><?= htmlspecialchars($label) ?>
+                            <?= $required && !$isLocked ? '<span style="color:#ef4444">*</span>' : '' ?></label>
+
+                        <?php if ($type === 'select'): ?>
+                            <select name="<?= htmlspecialchars($name) ?>" <?= $required ?>             <?= $disabledAttr ?>>
+                                <option value="">-- Select --</option>
+                                <?php foreach ($field['options'] ?? [] as $opt): ?>
+                                    <option value="<?= htmlspecialchars($opt) ?>" <?= $value === $opt ? 'selected' : '' ?>>
+                                        <?= htmlspecialchars($opt) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+
+                        <?php elseif ($type === 'textarea'): ?>
+                            <textarea name="<?= htmlspecialchars($name) ?>" rows="4" <?= $required ?>             <?= $disabledAttr ?>><?= htmlspecialchars($value) ?></textarea>
+
+                        <?php elseif ($type === 'file'):
+                            $fieldId = 'file_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $name);
+                            ?>
+                            <?php if (!empty($value)): ?>
+                                <div style="margin-bottom: 10px; font-size: 14px;">
+                                    Currently uploaded: <a href="/<?= htmlspecialchars($value) ?>" target="_blank"
+                                        style="color: var(--primary-color);">View File</a>
+                                </div>
+                            <?php endif; ?>
+
+                            <?php if ($isLocked): ?>
+                                <!-- Locked applications cannot re-upload; keep this a plain disabled input
+                                 rather than an interactive dropzone. -->
+                                <input type="file" name="<?= htmlspecialchars($name) ?>" disabled>
+                            <?php else: ?>
+                                <div class="dropzone <?= $fieldError ? 'dropzone-has-error' : '' ?>" id="dropzone_<?= $fieldId ?>">
+                                    <input type="file" name="<?= htmlspecialchars($name) ?>" id="<?= $fieldId ?>" class="dropzone-input"
+                                        accept=".pdf,.jpg,.jpeg,.png,.docx,.doc" <?= ($required && empty($value)) ? 'required' : '' ?>>
+
+                                    <div class="dropzone-content" id="<?= $fieldId ?>_content">
+                                        <svg class="dropzone-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                            stroke-width="1.5">
+                                            <path d="M12 16V4M12 4L7 9M12 4l5 5" stroke-linecap="round" stroke-linejoin="round" />
+                                            <path d="M4 16v3a2 2 0 002 2h12a2 2 0 002-2v-3" stroke-linecap="round"
+                                                stroke-linejoin="round" />
+                                        </svg>
+                                        <p class="dropzone-text">
+                                            <?= !empty($value)
+                                                ? 'Drag &amp; drop a new file to replace it, or <span class="dropzone-browse">click to browse</span>'
+                                                : 'Drag &amp; drop your file here, or <span class="dropzone-browse">click to browse</span>' ?>
+                                        </p>
+                                        <p class="dropzone-hint">PDF, JPG, PNG, DOC, DOCX — up to 10MB</p>
+                                    </div>
+
+                                    <div class="dropzone-preview" id="<?= $fieldId ?>_preview" style="display:none;">
+                                        <svg class="dropzone-file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                            stroke-width="1.5">
+                                            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" stroke-linejoin="round" />
+                                            <path d="M14 2v6h6" stroke-linejoin="round" />
+                                        </svg>
+                                        <div class="dropzone-file-info">
+                                            <span class="dropzone-filename"></span>
+                                            <span class="dropzone-filesize"></span>
+                                        </div>
+                                        <button type="button" class="dropzone-remove" aria-label="Remove file"
+                                            onclick="removeDropzoneFile('<?= $fieldId ?>')">&times;</button>
+                                    </div>
+                                </div>
+                            <?php endif; ?>
+
+                        <?php else: ?>
+                            <input type="<?= htmlspecialchars($type) ?>" name="<?= htmlspecialchars($name) ?>"
+                                value="<?= htmlspecialchars($value) ?>" <?= $required ?>             <?= $disabledAttr ?>>
+                        <?php endif; ?>
                     <?php endif; ?>
 
                     <?php if ($fieldError && !$isLocked): ?>
@@ -266,7 +303,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked) {
 
             <?php if (!$isLocked && $wasDraft): ?>
                 <div style="display:flex; gap:10px;">
-                    <button type="submit" name="intent" value="draft" formnovalidate class="btn-outline" style="background:#fff; color:#106b9a; border:1px solid #106b9a;">Save as Draft</button>
+                    <button type="submit" name="intent" value="draft" formnovalidate class="btn-outline"
+                        style="background:#fff; color:#106b9a; border:1px solid #106b9a;">Save as Draft</button>
                     <button type="submit" name="intent" value="submit">Submit Application</button>
                 </div>
             <?php elseif (!$isLocked): ?>
@@ -276,60 +314,61 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked) {
     </div>
 
     <?php if (!$isLocked): ?>
-    <script>
-        // Drag-and-drop wiring for every file field on the page.
-        document.querySelectorAll('.dropzone-input').forEach(input => {
-            const fieldId = input.id;
-            const dropzone = document.getElementById('dropzone_' + fieldId);
-            const content = document.getElementById(fieldId + '_content');
-            const preview = document.getElementById(fieldId + '_preview');
+        <script>
+            // Drag-and-drop wiring for every file field on the page.
+            document.querySelectorAll('.dropzone-input').forEach(input => {
+                const fieldId = input.id;
+                const dropzone = document.getElementById('dropzone_' + fieldId);
+                const content = document.getElementById(fieldId + '_content');
+                const preview = document.getElementById(fieldId + '_preview');
 
-            function showPreview(file) {
-                content.style.display = 'none';
-                preview.style.display = 'flex';
-                preview.querySelector('.dropzone-filename').textContent = file.name;
-                preview.querySelector('.dropzone-filesize').textContent = formatFileSize(file.size);
-                dropzone.classList.remove('dropzone-dragover');
+                function showPreview(file) {
+                    content.style.display = 'none';
+                    preview.style.display = 'flex';
+                    preview.querySelector('.dropzone-filename').textContent = file.name;
+                    preview.querySelector('.dropzone-filesize').textContent = formatFileSize(file.size);
+                    dropzone.classList.remove('dropzone-dragover');
+                }
+
+                input.addEventListener('change', () => {
+                    if (input.files.length > 0) {
+                        showPreview(input.files[0]);
+                    }
+                });
+
+                dropzone.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    dropzone.classList.add('dropzone-dragover');
+                });
+
+                dropzone.addEventListener('dragleave', () => {
+                    dropzone.classList.remove('dropzone-dragover');
+                });
+
+                dropzone.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    dropzone.classList.remove('dropzone-dragover');
+                    if (e.dataTransfer.files.length > 0) {
+                        input.files = e.dataTransfer.files;
+                        showPreview(input.files[0]);
+                    }
+                });
+            });
+
+            function formatFileSize(bytes) {
+                if (bytes < 1024) return bytes + ' B';
+                if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+                return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
             }
 
-            input.addEventListener('change', () => {
-                if (input.files.length > 0) {
-                    showPreview(input.files[0]);
-                }
-            });
-
-            dropzone.addEventListener('dragover', (e) => {
-                e.preventDefault();
-                dropzone.classList.add('dropzone-dragover');
-            });
-
-            dropzone.addEventListener('dragleave', () => {
-                dropzone.classList.remove('dropzone-dragover');
-            });
-
-            dropzone.addEventListener('drop', (e) => {
-                e.preventDefault();
-                dropzone.classList.remove('dropzone-dragover');
-                if (e.dataTransfer.files.length > 0) {
-                    input.files = e.dataTransfer.files;
-                    showPreview(input.files[0]);
-                }
-            });
-        });
-
-        function formatFileSize(bytes) {
-            if (bytes < 1024) return bytes + ' B';
-            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-            return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
-        }
-
-        function removeDropzoneFile(fieldId) {
-            const input = document.getElementById(fieldId);
-            input.value = '';
-            document.getElementById(fieldId + '_content').style.display = 'block';
-            document.getElementById(fieldId + '_preview').style.display = 'none';
-        }
-    </script>
+            function removeDropzoneFile(fieldId) {
+                const input = document.getElementById(fieldId);
+                input.value = '';
+                document.getElementById(fieldId + '_content').style.display = 'block';
+                document.getElementById(fieldId + '_preview').style.display = 'none';
+            }
+        </script>
     <?php endif; ?>
 </body>
+
 </html>

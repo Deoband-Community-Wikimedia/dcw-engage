@@ -297,7 +297,7 @@ $faviconUrl = !empty($schema['banner_image'])
                     $label = $field['label'] ?? $name;
                     $type = $field['type'] ?? 'text';
                     $required = !empty($field['required']) ? 'required' : '';
-                    $value = htmlspecialchars($_POST[$name] ?? '');
+                    $value = is_array($_POST[$name] ?? null) ? '' : htmlspecialchars($_POST[$name] ?? '');
                     $fieldError = $errors[$name] ?? null;
                     ?>
                     <div class="form-group<?= in_array($type, ['checkbox', 'checkbox_group']) ? ' form-group-checkbox' : '' ?>">
