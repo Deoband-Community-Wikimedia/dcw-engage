@@ -40,7 +40,7 @@ class Mailer {
             $mail->addAddress($email, $applicantName);
             
             $mail->isHTML(true);
-            $mail->Subject = 'Your DCW Application - Magic Link';
+            $mail->Subject = 'Magic link for your application on DCW Engage';
             
             // Generate link based on site URL
             $appUrl = $config['app']['url'] . '/resume/' . $token;
@@ -77,7 +77,7 @@ class Mailer {
                     </div>
                     <div class='footer'>
                         &copy; " . date('Y') . " Deoband Community Wikimedia. All rights reserved.<br>
-                        This is an automated message, please do not reply.
+                        This is an automated message; please do not reply.
                     </div>
                 </div>
             </body>
@@ -188,7 +188,7 @@ class Mailer {
                     </div>
                     <div class='footer'>
                         &copy; " . date('Y') . " Deoband Community Wikimedia. All rights reserved.<br>
-                        This is an automated message, please do not reply.
+                        This is an automated message; please do not reply.
                     </div>
                 </div>
             </body>
@@ -264,13 +264,13 @@ class Mailer {
                     </div>
                     <div class='body-content'>
                         <p>Hello <strong>" . htmlspecialchars($applicantName) . "</strong>,</p>
-                        <p>Thank you for applying to <strong>" . htmlspecialchars($formTitle) . "</strong>. Your application has been received.</p>
+                        <p>Thank you for applying to <strong>" . htmlspecialchars($formTitle) . "</strong>. We have received your application.</p>
                         <p><strong>Tracking ID:</strong> $trackingId</p>
-                        <p style='margin-bottom:0;'>We'll be in touch once a decision has been made. No action is needed from you right now.</p>
+                        <p style='margin-bottom:0;'>We'll be in touch once a decision has been made. We appreciate your interest.</p>
                     </div>
                     <div class='footer'>
                         &copy; " . date('Y') . " Deoband Community Wikimedia. All rights reserved.<br>
-                        This is an automated message, please do not reply.
+                        This is an automated message; please do not reply.
                     </div>
                 </div>
             </body>
@@ -278,7 +278,7 @@ class Mailer {
             ";
 
             $mail->Body    = $htmlBody;
-            $mail->AltBody = "Hello $applicantName,\n\nThank you for applying to $formTitle. Your application has been received.\nTracking ID: $trackingId\n\nWe'll be in touch once a decision has been made.";
+            $mail->AltBody = "Hello $applicantName,\n\nThank you for applying to $formTitle. We have received your application.\nTracking ID: $trackingId\n\nWe'll be in touch once a decision has been made.";
 
             if ($mailConfig['host'] !== 'smtp.example.com') {
                 $mail->send();
@@ -326,7 +326,7 @@ class Mailer {
             $mail->Subject = "Update on your $formTitle application - $status";
 
             $noteHtml = $note !== ''
-                ? "<p><strong>A note from the organizer:</strong><br>" . nl2br(htmlspecialchars($note)) . "</p>"
+                ? "<p><strong>Reviewer notes:</strong><br>" . nl2br(htmlspecialchars($note)) . "</p>"
                 : '';
 
             $htmlBody = "
@@ -350,12 +350,12 @@ class Mailer {
                     </div>
                     <div class='body-content'>
                         <p>Hello <strong>" . htmlspecialchars($applicantName) . "</strong>,</p>
-                        <p>Your application to <strong>" . htmlspecialchars($formTitle) . "</strong> (Tracking ID: $trackingId) has been updated to: <strong>" . htmlspecialchars($status) . "</strong>.</p>
+                        <p>Your application to <strong>" . htmlspecialchars($formTitle) . "</strong>, with tracking ID $trackingId has been marked as <strong>" . htmlspecialchars($status). "</strong>.</p>
                         $noteHtml
                     </div>
                     <div class='footer'>
                         &copy; " . date('Y') . " Deoband Community Wikimedia. All rights reserved.<br>
-                        This is an automated message, please do not reply.
+                        This is an automated message; please do not reply.
                     </div>
                 </div>
             </body>
@@ -363,7 +363,7 @@ class Mailer {
             ";
 
             $mail->Body    = $htmlBody;
-            $mail->AltBody = "Hello $applicantName,\n\nYour application to $formTitle (Tracking ID: $trackingId) has been updated to: $status." . ($note ? "\n\nA note from the organizer:\n$note" : '');
+            $mail->AltBody = "Hello $applicantName,\n\nYour application to $formTitle (Tracking ID: $trackingId) has been marked as $status." . ($note ? "\n\nReviewer notes:\n$note" : '');
 
             if ($mailConfig['host'] !== 'smtp.example.com') {
                 $mail->send();
