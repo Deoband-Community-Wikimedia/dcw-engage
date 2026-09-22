@@ -145,7 +145,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'export') {
 
         $data = json_decode($app['form_data'], true);
         foreach ($fields as $fieldName) {
-            $row[] = $data[$fieldName] ?? '';
+            $val = $data[$fieldName] ?? '';
+            $row[] = is_array($val) ? implode(', ', $val) : $val;
         }
         fputcsv($output, $row);
     }
@@ -215,7 +216,8 @@ if (!empty($activeFieldFilters)) {
                     URL Endpoint: <strong>/<?= htmlspecialchars($form['form_type']) ?></strong>
                     <button type="button" class="copy-btn"
                         onclick="copyToClipboard('<?= 'http://' . $_SERVER['HTTP_HOST'] . '/' . $form['form_type'] ?>', this)">
-                        <svg style="width:13px; height:13px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <svg style="width:13px; height:13px;" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
                             <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
                         </svg>
@@ -299,7 +301,8 @@ if (!empty($activeFieldFilters)) {
                 <option value="Accepted">Accepted</option>
                 <option value="Rejected">Rejected</option>
             </select>
-            <input type="text" name="bulk_applicant_note" placeholder="Optional note to include in the applicant email" style="width:260px; padding:6px 10px; font-size:13px;">
+            <input type="text" name="bulk_applicant_note" placeholder="Optional note to include in the applicant email"
+                style="width:260px; padding:6px 10px; font-size:13px;">
             <button type="submit" class="btn btn-sm btn-primary">Apply to Selected</button>
         </form>
         <div class="table-wrapper">
@@ -329,7 +332,8 @@ if (!empty($activeFieldFilters)) {
                             <td><input type="checkbox" class="row-checkbox" value="<?= $app['id'] ?>"
                                     onchange="updateBulkBar()"></td>
                             <td style="font-family: monospace; font-weight: 600;">
-                                <?= htmlspecialchars($app['tracking_id'] ?? 'N/A') ?></td>
+                                <?= htmlspecialchars($app['tracking_id'] ?? 'N/A') ?>
+                            </td>
                             <td style="font-weight: 500;"><?= htmlspecialchars($app['applicant_name']) ?></td>
                             <td><span
                                     class="status-badge <?= $statusClass ?>"><?= htmlspecialchars($app['status']) ?></span>
@@ -340,7 +344,8 @@ if (!empty($activeFieldFilters)) {
                                     onclick='viewData(<?= json_encode($app['form_data'], JSON_HEX_APOS | JSON_HEX_QUOT) ?>, "<?= htmlspecialchars($app['applicant_name'], ENT_QUOTES) ?>", <?= $app['id'] ?>, <?= json_encode($notesModel->getNotesByApplication($app['id']), JSON_HEX_APOS | JSON_HEX_QUOT) ?>)'>View
                                     Data</button>
 
-                                <form method="POST" style="display:inline-flex; gap:6px; align-items:center; margin-left:10px;">
+                                <form method="POST"
+                                    style="display:inline-flex; gap:6px; align-items:center; margin-left:10px;">
                                     <?= CSRF::getInputField() ?>
                                     <input type="hidden" name="action" value="update_applicant_status">
                                     <input type="hidden" name="application_id" value="<?= $app['id'] ?>">
@@ -355,7 +360,8 @@ if (!empty($activeFieldFilters)) {
                                     </select>
                                     <!-- Note is a one-off addition to the outcome email only — not the
                                          persisted internal Notes thread above (that stays admin-only). -->
-                                    <input type="text" name="applicant_note" placeholder="Optional note to applicant" style="width:150px; padding:4px 8px; font-size:13px;">
+                                    <input type="text" name="applicant_note" placeholder="Optional note to applicant"
+                                        style="width:150px; padding:4px 8px; font-size:13px;">
                                     <button type="submit" class="btn btn-sm btn-outline">Apply</button>
                                 </form>
                             </td>

@@ -6,14 +6,16 @@ require_once __DIR__ . '/../../models/FormModel.php';
 
 // $formType should be passed from the router in index.php
 global $formType;
-if (!$formType) $formType = $_GET['type'] ?? '';
+if (!$formType)
+    $formType = $_GET['type'] ?? '';
 
 /**
  * Delete files that were moved into /uploads during a submission that then
  * failed, so a rejected or errored submission never leaves an orphan behind.
  * Paths are the 'uploads/...' strings returned by FileUploader.
  */
-function cleanupUploads(array $paths) {
+function cleanupUploads(array $paths)
+{
     foreach ($paths as $p) {
         if (is_string($p) && strpos($p, 'uploads/') === 0) {
             $full = __DIR__ . '/../../' . $p;
@@ -63,9 +65,9 @@ if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!CSRF::validate($_POST['csrf_token'])) {
         die("Invalid CSRF token.");
     }
-    
+
     $email = trim($_POST['email'] ?? '');
-    
+
     if (isset($_POST['action']) && $_POST['action'] === 'resend_magic_link') {
         if (empty($email)) {
             $errors['email'] = "Email Address is required to resend the link.";
@@ -100,7 +102,7 @@ if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
             $errors['email'] = "Please enter a valid email address.";
         }
-        
+
         require_once __DIR__ . '/../../models/ApplicationModel.php';
         $appModel = new ApplicationModel();
 
@@ -207,12 +209,13 @@ if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 // Determine the favicon URL: use banner_image if available, otherwise fall back to DCW logo
-$faviconUrl = !empty($schema['banner_image']) 
+$faviconUrl = !empty($schema['banner_image'])
     ? htmlspecialchars($schema['banner_image'])
     : 'https://dcwwiki.org/dcwwiki/images/5/56/DCW_logo.png';
 ?>
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <link rel="icon" type="image/png" href="<?= $faviconUrl ?>">
@@ -221,29 +224,34 @@ $faviconUrl = !empty($schema['banner_image'])
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/assets/css/forms.css?v=2">
 </head>
+
 <body>
     <div class="container">
         <?php if (!empty($previewSchema)): ?>
-            <div style="background:#fef3c7; border:1px solid #f59e0b; color:#92400e; padding:10px 14px; border-radius:6px; margin-bottom:20px; font-size:14px; font-weight:600;">
+            <div
+                style="background:#fef3c7; border:1px solid #f59e0b; color:#92400e; padding:10px 14px; border-radius:6px; margin-bottom:20px; font-size:14px; font-weight:600;">
                 🔍 Preview — this is how the form will look. Submissions are disabled here.
             </div>
         <?php endif; ?>
 
         <?php if (!empty($schema['banner_image'])): ?>
-            <img src="<?= htmlspecialchars($schema['banner_image']) ?>" alt="Banner" style="width: 100%; height: auto; border-radius: 8px; margin-bottom: 20px; max-height: 250px; object-fit: cover;">
+            <img src="<?= htmlspecialchars($schema['banner_image']) ?>" alt="Banner"
+                style="width: 100%; height: auto; border-radius: 8px; margin-bottom: 20px; max-height: 250px; object-fit: cover;">
         <?php endif; ?>
-        
-        <h1 style="<?= empty($schema['banner_image']) ? 'margin-top:0;' : 'margin-top:10px;' ?>"><?= htmlspecialchars($schema['title']) ?></h1>
-        
+
+        <h1 style="<?= empty($schema['banner_image']) ? 'margin-top:0;' : 'margin-top:10px;' ?>">
+            <?= htmlspecialchars($schema['title']) ?></h1>
+
         <?php if (!empty($schema['description'])): ?>
             <div style="color: #475569; font-size: 15px; margin-bottom: 30px; line-height: 1.6;">
                 <?= MiniWikiText::render($schema['description']) ?>
             </div>
         <?php endif; ?>
-        
+
         <?php if ($success): ?>
             <div class="alert-success">
-                <h3 style="margin-top:0"><?= ($_POST['intent'] ?? '') === 'draft' ? 'Draft Saved!' : 'Application Received!' ?></h3>
+                <h3 style="margin-top:0">
+                    <?= ($_POST['intent'] ?? '') === 'draft' ? 'Draft Saved!' : 'Application Received!' ?></h3>
                 <?= htmlspecialchars($success) ?>
                 <p style="margin-bottom:0; margin-top:10px; font-size: 14px;">
                     <?= ($_POST['intent'] ?? '') === 'draft'
@@ -252,7 +260,7 @@ $faviconUrl = !empty($schema['banner_image'])
                 </p>
             </div>
         <?php else: ?>
-            
+
             <?php if (!empty($errors['system']) || !empty($errors['email'])): ?>
                 <div class="alert-error">
                     <strong>Notice:</strong> <?= htmlspecialchars($errors['system'] ?? $errors['email']) ?>
@@ -262,7 +270,9 @@ $faviconUrl = !empty($schema['banner_image'])
                                 <?= CSRF::getInputField() ?>
                                 <input type="hidden" name="action" value="resend_magic_link">
                                 <input type="hidden" name="email" value="<?= htmlspecialchars($_POST['email'] ?? '') ?>">
-                                <button type="submit" style="background: white; color: #991b1b; border: 1px solid #f87171; padding: 8px 16px; font-size: 14px; width: auto; font-weight: 500;">Resend magic link</button>
+                                <button type="submit"
+                                    style="background: white; color: #991b1b; border: 1px solid #f87171; padding: 8px 16px; font-size: 14px; width: auto; font-weight: 500;">Resend
+                                    magic link</button>
                             </form>
                         </div>
                     <?php endif; ?>
@@ -271,76 +281,105 @@ $faviconUrl = !empty($schema['banner_image'])
 
             <form method="POST" enctype="multipart/form-data">
                 <?= CSRF::getInputField() ?>
-                
-                <div style="background: #f8fafc; padding: 20px; border-radius: 8px; margin-bottom: 30px; border: 1px solid #e2e8f0;">
+
+                <div
+                    style="background: #f8fafc; padding: 20px; border-radius: 8px; margin-bottom: 30px; border: 1px solid #e2e8f0;">
                     <div class="form-group" style="margin-bottom: 0;">
                         <label>Email Address <span style="color:#ef4444">*</span></label>
                         <input type="email" name="email" value="<?= htmlspecialchars($_POST['email'] ?? '') ?>" required>
-                        <span style="font-size: 13px; color: #64748b; margin-top: 5px; display: block;">We will send your secure Magic Link here to save your progress.</span>
+                        <span style="font-size: 13px; color: #64748b; margin-top: 5px; display: block;">We will send your
+                            secure Magic Link here to save your progress.</span>
                     </div>
                 </div>
-                
-                <?php foreach ($schema['fields'] as $field): 
+
+                <?php foreach ($schema['fields'] as $field):
                     $name = $field['name'];
                     $label = $field['label'] ?? $name;
                     $type = $field['type'] ?? 'text';
                     $required = !empty($field['required']) ? 'required' : '';
-                    $value = htmlspecialchars($_POST[$name] ?? '');
+                    $value = is_array($_POST[$name] ?? null) ? '' : htmlspecialchars($_POST[$name] ?? '');
                     $fieldError = $errors[$name] ?? null;
-                ?>
-                    <div class="form-group<?= $type === 'checkbox' ? ' form-group-checkbox' : '' ?>">
+                    ?>
+                    <div class="form-group<?= in_array($type, ['checkbox', 'checkbox_group']) ? ' form-group-checkbox' : '' ?>">
                         <?php if ($type === 'checkbox'): ?>
                             <label for="<?= htmlspecialchars($name) ?>" class="checkbox-label">
-                                <input type="checkbox" name="<?= htmlspecialchars($name) ?>" id="<?= htmlspecialchars($name) ?>" value="1" <?= !empty($_POST[$name]) ? 'checked' : '' ?> <?= $required ?>>
-                                <span><?= htmlspecialchars($label) ?> <?= $required ? '<span style="color:#ef4444">*</span>' : '' ?></span>
+                                <input type="checkbox" name="<?= htmlspecialchars($name) ?>" id="<?= htmlspecialchars($name) ?>"
+                                    value="1" <?= !empty($_POST[$name]) ? 'checked' : '' ?>             <?= $required ?>>
+                                <span><?= htmlspecialchars($label) ?>
+                                    <?= $required ? '<span style="color:#ef4444">*</span>' : '' ?></span>
                             </label>
 
-                        <?php else: ?>
-                        <label for="<?= htmlspecialchars($name) ?>"><?= htmlspecialchars($label) ?> <?= $required ? '<span style="color:#ef4444">*</span>' : '' ?></label>
-
-                        <?php if ($type === 'select'): ?>
-                            <select name="<?= htmlspecialchars($name) ?>" <?= $required ?>>
-                                <option value="">-- Select --</option>
+                        <?php elseif ($type === 'checkbox_group'):
+                            $selectedValues = $_POST[$name] ?? [];
+                            if (!is_array($selectedValues))
+                                $selectedValues = [];
+                            ?>
+                            <label><?= htmlspecialchars($label) ?>
+                                <?= $required ? '<span style="color:#ef4444">*</span>' : '' ?></label>
+                            <div class="checkbox-group">
                                 <?php foreach ($field['options'] ?? [] as $opt): ?>
-                                    <option value="<?= htmlspecialchars($opt) ?>" <?= $value === $opt ? 'selected' : '' ?>><?= htmlspecialchars($opt) ?></option>
+                                    <label class="checkbox-label checkbox-option">
+                                        <input type="checkbox" name="<?= htmlspecialchars($name) ?>[]"
+                                            value="<?= htmlspecialchars($opt) ?>" <?= in_array($opt, $selectedValues) ? 'checked' : '' ?>>
+                                        <span><?= htmlspecialchars($opt) ?></span>
+                                    </label>
                                 <?php endforeach; ?>
-                            </select>
-                            
-                        <?php elseif ($type === 'textarea'): ?>
-                            <textarea name="<?= htmlspecialchars($name) ?>" rows="4" <?= $required ?>><?= $value ?></textarea>
-                            
-                        <?php elseif ($type === 'file'):
-                            $fieldId = 'file_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $name);
-                        ?>
-                            <div class="dropzone <?= $fieldError ? 'dropzone-has-error' : '' ?>" id="dropzone_<?= $fieldId ?>">
-                                <input type="file" name="<?= htmlspecialchars($name) ?>" id="<?= $fieldId ?>"
-                                    class="dropzone-input" accept=".pdf,.jpg,.jpeg,.png,.docx,.doc" <?= $required ?>>
-
-                                <div class="dropzone-content" id="<?= $fieldId ?>_content">
-                                    <svg class="dropzone-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                                        <path d="M12 16V4M12 4L7 9M12 4l5 5" stroke-linecap="round" stroke-linejoin="round"/>
-                                        <path d="M4 16v3a2 2 0 002 2h12a2 2 0 002-2v-3" stroke-linecap="round" stroke-linejoin="round"/>
-                                    </svg>
-                                    <p class="dropzone-text">Drag &amp; drop your file here, or <span class="dropzone-browse">click to browse</span></p>
-                                    <p class="dropzone-hint">PDF, JPG, PNG, DOC, DOCX — up to 10MB</p>
-                                </div>
-
-                                <div class="dropzone-preview" id="<?= $fieldId ?>_preview" style="display:none;">
-                                    <svg class="dropzone-file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                                        <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" stroke-linejoin="round"/>
-                                        <path d="M14 2v6h6" stroke-linejoin="round"/>
-                                    </svg>
-                                    <div class="dropzone-file-info">
-                                        <span class="dropzone-filename"></span>
-                                        <span class="dropzone-filesize"></span>
-                                    </div>
-                                    <button type="button" class="dropzone-remove" aria-label="Remove file" onclick="removeDropzoneFile('<?= $fieldId ?>')">&times;</button>
-                                </div>
                             </div>
 
                         <?php else: ?>
-                            <input type="<?= htmlspecialchars($type) ?>" name="<?= htmlspecialchars($name) ?>" value="<?= $value ?>" <?= $required ?>>
-                        <?php endif; ?>
+                            <label for="<?= htmlspecialchars($name) ?>"><?= htmlspecialchars($label) ?>
+                                <?= $required ? '<span style="color:#ef4444">*</span>' : '' ?></label>
+
+                            <?php if ($type === 'select'): ?>
+                                <select name="<?= htmlspecialchars($name) ?>" <?= $required ?>>
+                                    <option value="">-- Select --</option>
+                                    <?php foreach ($field['options'] ?? [] as $opt): ?>
+                                        <option value="<?= htmlspecialchars($opt) ?>" <?= $value === $opt ? 'selected' : '' ?>>
+                                            <?= htmlspecialchars($opt) ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+
+                            <?php elseif ($type === 'textarea'): ?>
+                                <textarea name="<?= htmlspecialchars($name) ?>" rows="4" <?= $required ?>><?= $value ?></textarea>
+
+                            <?php elseif ($type === 'file'):
+                                $fieldId = 'file_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $name);
+                                ?>
+                                <div class="dropzone <?= $fieldError ? 'dropzone-has-error' : '' ?>" id="dropzone_<?= $fieldId ?>">
+                                    <input type="file" name="<?= htmlspecialchars($name) ?>" id="<?= $fieldId ?>" class="dropzone-input"
+                                        accept=".pdf,.jpg,.jpeg,.png,.docx,.doc" <?= $required ?>>
+
+                                    <div class="dropzone-content" id="<?= $fieldId ?>_content">
+                                        <svg class="dropzone-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                            stroke-width="1.5">
+                                            <path d="M12 16V4M12 4L7 9M12 4l5 5" stroke-linecap="round" stroke-linejoin="round" />
+                                            <path d="M4 16v3a2 2 0 002 2h12a2 2 0 002-2v-3" stroke-linecap="round"
+                                                stroke-linejoin="round" />
+                                        </svg>
+                                        <p class="dropzone-text">Drag &amp; drop your file here, or <span class="dropzone-browse">click
+                                                to browse</span></p>
+                                        <p class="dropzone-hint">PDF, JPG, PNG, DOC, DOCX — up to 10MB</p>
+                                    </div>
+
+                                    <div class="dropzone-preview" id="<?= $fieldId ?>_preview" style="display:none;">
+                                        <svg class="dropzone-file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                            stroke-width="1.5">
+                                            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" stroke-linejoin="round" />
+                                            <path d="M14 2v6h6" stroke-linejoin="round" />
+                                        </svg>
+                                        <div class="dropzone-file-info">
+                                            <span class="dropzone-filename"></span>
+                                            <span class="dropzone-filesize"></span>
+                                        </div>
+                                        <button type="button" class="dropzone-remove" aria-label="Remove file"
+                                            onclick="removeDropzoneFile('<?= $fieldId ?>')">&times;</button>
+                                    </div>
+                                </div>
+
+                            <?php else: ?>
+                                <input type="<?= htmlspecialchars($type) ?>" name="<?= htmlspecialchars($name) ?>" value="<?= $value ?>"
+                                    <?= $required ?>>
+                            <?php endif; ?>
                         <?php endif; ?>
 
                         <?php if ($fieldError): ?>
@@ -350,7 +389,8 @@ $faviconUrl = !empty($schema['banner_image'])
                 <?php endforeach; ?>
 
                 <div style="display:flex; gap:10px;">
-                    <button type="submit" name="intent" value="draft" formnovalidate class="btn-outline" style="background:#fff; color:#106b9a; border:1px solid #106b9a;" <?= !empty($previewSchema) ? 'disabled title="Disabled in preview"' : '' ?>>Save as Draft</button>
+                    <button type="submit" name="intent" value="draft" formnovalidate class="btn-outline"
+                        style="background:#fff; color:#106b9a; border:1px solid #106b9a;" <?= !empty($previewSchema) ? 'disabled title="Disabled in preview"' : '' ?>>Save as Draft</button>
                     <button type="submit" name="intent" value="submit" <?= !empty($previewSchema) ? 'disabled title="Disabled in preview"' : '' ?>>Submit Application</button>
                 </div>
             </form>
@@ -411,4 +451,5 @@ $faviconUrl = !empty($schema['banner_image'])
         }
     </script>
 </body>
+
 </html>
