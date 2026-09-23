@@ -17,6 +17,11 @@ function createFieldCard(fieldData = null) {
     card.innerHTML = `
         <div class="row">
             <div style="flex: 3;">
+                <div class="label-toolbar" style="display:flex; gap:4px; margin-bottom:4px;">
+                    <button type="button" class="btn-outline btn-sm label-fmt-btn" data-wrap="'''" title="Bold" style="font-weight:700; padding:2px 8px;">B</button>
+                    <button type="button" class="btn-outline btn-sm label-fmt-btn" data-wrap="''" title="Italic" style="font-style:italic; padding:2px 8px;">I</button>
+                    <button type="button" class="btn-outline btn-sm label-fmt-link" title="Link" style="padding:2px 8px;">Link</button>
+                </div>
                 <input type="text" class="field-title-input field-label" placeholder="Question Title (e.g. Full Name)" value="${label.replace(/"/g, '&quot;')}" required>
             </div>
             <div style="flex: 1;">
@@ -82,6 +87,43 @@ window.moveField = function (id, direction) {
     }
 };
 
+// --- Question label formatting toolbar (wikitext syntax, see #61) ---
+// Same Bold/Italic/Link syntax as the description toolbar below, but
+// deliberately without heading/indent/list — those are block-level
+// constructs that don't make sense inside a single-line question label.
+// Delegated on fieldsContainer since cards are added/removed dynamically,
+// so one listener covers every card without rebinding per-card.
+fieldsContainer.addEventListener('click', function(e) {
+    const wrapBtn = e.target.closest('.label-fmt-btn');
+    const linkBtn = e.target.closest('.label-fmt-link');
+    if (!wrapBtn && !linkBtn) return;
+
+    const card = e.target.closest('.field-card');
+    const input = card.querySelector('.field-label');
+    const start = input.selectionStart;
+    const end = input.selectionEnd;
+    const value = input.value;
+    const selected = value.slice(start, end);
+
+    let replacement, cursorOffset, selectLength;
+    if (wrapBtn) {
+        const marker = wrapBtn.dataset.wrap;
+        replacement = marker + selected + marker;
+        cursorOffset = marker.length;
+        selectLength = selected.length;
+    } else {
+        const url = window.prompt('Link URL (http:// or https://):', 'https://');
+        if (!url) return;
+        const text = selected || 'link text';
+        replacement = '[' + url + ' ' + text + ']';
+        cursorOffset = replacement.length;
+        selectLength = 0;
+    }
+
+    input.value = value.slice(0, start) + replacement + value.slice(end);
+    input.focus();
+    input.setSelectionRange(start + cursorOffset, start + cursorOffset + selectLength);
+});
 // --- Description formatting toolbar (wikitext syntax, see #44) ---
 // Operates directly on #form_description's selection — it's a plain
 // <textarea>, not contenteditable, so there's no execCommand to lean on.

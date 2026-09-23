@@ -305,8 +305,8 @@ $faviconUrl = !empty($schema['banner_image'])
                             <label for="<?= htmlspecialchars($name) ?>" class="checkbox-label">
                                 <input type="checkbox" name="<?= htmlspecialchars($name) ?>" id="<?= htmlspecialchars($name) ?>"
                                     value="1" <?= !empty($_POST[$name]) ? 'checked' : '' ?>             <?= $required ?>>
-                                <span><?= htmlspecialchars($label) ?>
-                                    <?= $required ? '<span style="color:#ef4444">*</span>' : '' ?></span>
+                                <span><?= MiniWikiText::inline(htmlspecialchars($label, ENT_QUOTES, 'UTF-8')) ?>
+    <?= $required ? '<span style="color:#ef4444">*</span>' : '' ?></span>
                             </label>
 
                         <?php elseif ($type === 'checkbox_group'):
@@ -314,8 +314,8 @@ $faviconUrl = !empty($schema['banner_image'])
                             if (!is_array($selectedValues))
                                 $selectedValues = [];
                             ?>
-                            <label><?= htmlspecialchars($label) ?>
-                                <?= $required ? '<span style="color:#ef4444">*</span>' : '' ?></label>
+                            <label><?= MiniWikiText::inline(htmlspecialchars($label, ENT_QUOTES, 'UTF-8')) ?>
+    <?= $required ? '<span style="color:#ef4444">*</span>' : '' ?></label>
                             <div class="checkbox-group">
                                 <?php foreach ($field['options'] ?? [] as $opt): ?>
                                     <label class="checkbox-label checkbox-option">
@@ -327,8 +327,8 @@ $faviconUrl = !empty($schema['banner_image'])
                             </div>
 
                         <?php else: ?>
-                            <label for="<?= htmlspecialchars($name) ?>"><?= htmlspecialchars($label) ?>
-                                <?= $required ? '<span style="color:#ef4444">*</span>' : '' ?></label>
+                            <label for="<?= htmlspecialchars($name) ?>"><?= MiniWikiText::inline(htmlspecialchars($label, ENT_QUOTES, 'UTF-8')) ?>
+    <?= $required ? '<span style="color:#ef4444">*</span>' : '' ?></label>
 
                             <?php if ($type === 'select'): ?>
                                 <select name="<?= htmlspecialchars($name) ?>" <?= $required ?>>

@@ -121,7 +121,7 @@ class MiniWikiText {
      * entity, not a literal quote. Widest run (bold+italic) first, so it
      * isn't partially consumed by the narrower bold/italic patterns.
      */
-    private static function inline($escaped) {
+    public static function inline($escaped) {
         // Links first, so a URL's own punctuation, or the link text's own
         // apostrophes, never get misread as bold/italic markers afterward.
         $escaped = preg_replace_callback(
