@@ -61,14 +61,82 @@ $schema = $form['schema'];
 $errors = [];
 $success = '';
 
+// Email verification comes first (#67). Nobody — whether they mean to submit
+// or only save a draft — reaches the form until they have proved they control
+// the address, so junk entries can't create rows or trigger magic links to
+// addresses that aren't theirs. The proof lives in the session, per form,
+// and is redeemed from the emailed link (?verify=<token>).
+$verifiedEmail = '';
+$verifySent = false;
+
+if (empty($previewSchema)) {
+    if (isset($_GET['verify'])) {
+        require_once __DIR__ . '/../../models/EmailVerificationModel.php';
+        $verifiedFor = (new EmailVerificationModel())->consume($form['id'], (string) $_GET['verify']);
+
+        if ($verifiedFor) {
+            $_SESSION['verified_emails'][$form['id']] = $verifiedFor;
+            // Drop the token from the URL so it can't be bookmarked or shared.
+            header('Location: ' . parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH));
+            exit;
+        }
+
+        // One message for every failure — unknown, expired, used, wrong form.
+        $errors['verify'] = "That verification link has expired or was already used. Enter your email below to get a new one.";
+    }
+
+    $verifiedEmail = $_SESSION['verified_emails'][$form['id']] ?? '';
+}
+
 if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!CSRF::validate($_POST['csrf_token'])) {
         die("Invalid CSRF token.");
     }
 
     $email = trim($_POST['email'] ?? '');
+    $postAction = $_POST['action'] ?? '';
+    $gatePassed = false;
 
-    if (isset($_POST['action']) && $_POST['action'] === 'resend_magic_link') {
+    if ($postAction === 'request_verification') {
+        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            $errors['email'] = "Please enter a valid email address.";
+        } else {
+            try {
+                require_once __DIR__ . '/../../models/EmailVerificationModel.php';
+                require_once __DIR__ . '/../../includes/mailer.php';
+                $config = require __DIR__ . '/../../includes/config.php';
+                $email = strtolower($email);
+                $issued = (new EmailVerificationModel())->request($form['id'], $email);
+
+                if ($issued) {
+                    $verifyUrl = rtrim($config['app']['url'], '/') . '/' . rawurlencode($formType)
+                        . '?verify=' . urlencode($issued['token']);
+                    Mailer::sendEmailVerification($email, $schema['title'] ?? $formType, $verifyUrl, $issued['expires_at']);
+                }
+                // Same screen whether or not a link went out (rate limited,
+                // mail failure): the page must not reveal which happened.
+                $verifySent = true;
+            } catch (Exception $e) {
+                app_log("Email verification request failed for form '$formType' <$email>: " . $e->getMessage());
+                $errors['system'] = "Something went wrong sending your verification email. Please try again.";
+            }
+        }
+    } elseif ($postAction === 'change_email') {
+        unset($_SESSION['verified_emails'][$form['id']]);
+        $verifiedEmail = '';
+    } elseif ($verifiedEmail === '') {
+        $errors['system'] = "Please verify your email address first.";
+    } else {
+        // Past this point the address the applicant typed is irrelevant. The
+        // verified one is what gets saved and mailed, so editing the request
+        // cannot swap in an address that was never proved.
+        $email = $verifiedEmail;
+        $gatePassed = true;
+    }
+
+    if (!$gatePassed) {
+        // Handled above; nothing further to do for this request.
+    } elseif ($postAction === 'resend_magic_link') {
         if (empty($email)) {
             $errors['email'] = "Email Address is required to resend the link.";
         } else {
@@ -180,6 +248,10 @@ if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 // Notify the organizer(s) in charge of this form — only for
                 // a real submission, not every incomplete draft save.
+                // The address is spent once it has been saved against an
+                // application; a second one needs a fresh verification.
+                unset($_SESSION['verified_emails'][$form['id']]);
+
                 if (!$isDraft) {
                     // $form comes straight from FormModel::getFormByType(),
                     // which never sets a 'title' key (only 'schema'), so
@@ -261,15 +333,21 @@ $faviconUrl = !empty($schema['banner_image'])
             </div>
         <?php else: ?>
 
-            <?php if (!empty($errors['system']) || !empty($errors['email'])): ?>
+            <?php
+            // Until the address is verified, only the verification step is
+            // shown. A preview has no session/DB, so it always shows the form.
+            $showGate = empty($previewSchema) && $verifiedEmail === '';
+            ?>
+
+            <?php if (!empty($errors['system']) || !empty($errors['email']) || !empty($errors['verify'])): ?>
                 <div class="alert-error">
-                    <strong>Notice:</strong> <?= htmlspecialchars($errors['system'] ?? $errors['email']) ?>
+                    <strong>Notice:</strong> <?= htmlspecialchars($errors['system'] ?? $errors['email'] ?? $errors['verify']) ?>
                     <?php if (!empty($errors['show_resend'])): ?>
                         <div style="margin-top: 15px;">
                             <form method="POST" style="margin:0;">
                                 <?= CSRF::getInputField() ?>
                                 <input type="hidden" name="action" value="resend_magic_link">
-                                <input type="hidden" name="email" value="<?= htmlspecialchars($_POST['email'] ?? '') ?>">
+                                <input type="hidden" name="email" value="<?= htmlspecialchars($verifiedEmail) ?>">
                                 <button type="submit"
                                     style="background: white; color: #991b1b; border: 1px solid #f87171; padding: 8px 16px; font-size: 14px; width: auto; font-weight: 500;">Resend
                                     magic link</button>
@@ -279,6 +357,44 @@ $faviconUrl = !empty($schema['banner_image'])
                 </div>
             <?php endif; ?>
 
+            <?php if ($showGate): ?>
+                <?php if ($verifySent): ?>
+                    <div class="alert-success">
+                        <h3 style="margin-top:0">Check your inbox</h3>
+                        If <strong><?= htmlspecialchars($email) ?></strong> can receive email, a verification link is on its
+                        way. Open it in this browser to start your application. The link works once and expires
+                        soon.
+                        <p style="margin-bottom:0; margin-top:10px; font-size: 14px;">Nothing yet? Check your spam folder, or
+                            request a new link below (up to 3 per hour).</p>
+                    </div>
+                <?php endif; ?>
+
+                <form method="POST"
+                    style="background: #f8fafc; padding: 20px; border-radius: 8px; margin-bottom: 30px; border: 1px solid #e2e8f0;">
+                    <?= CSRF::getInputField() ?>
+                    <input type="hidden" name="action" value="request_verification">
+                    <div class="form-group" style="margin-bottom: 15px;">
+                        <label>Verify your email to begin <span style="color:#ef4444">*</span></label>
+                        <input type="email" name="email" value="<?= htmlspecialchars($email ?? '') ?>" required>
+                        <span style="font-size: 13px; color: #64748b; margin-top: 5px; display: block;">We will email you a
+                            one-time link. Once you open it, the application form unlocks — whether you want to submit
+                            now or save a draft and finish later.</span>
+                    </div>
+                    <button type="submit"><?= $verifySent ? 'Send a new link' : 'Send verification link' ?></button>
+                </form>
+            <?php else: ?>
+
+            <?php if ($verifiedEmail !== ''): ?>
+                <form method="POST" style="margin: 0 0 12px; font-size: 14px; color: #475569;">
+                    <?= CSRF::getInputField() ?>
+                    <input type="hidden" name="action" value="change_email">
+                    Verified as <strong><?= htmlspecialchars($verifiedEmail) ?></strong> ✓
+                    <button type="submit" formnovalidate
+                        style="background:none; border:none; color:#106b9a; padding:0 0 0 6px; width:auto; font-size:14px; font-weight:500; text-decoration:underline; cursor:pointer;">Use
+                        a different email</button>
+                </form>
+            <?php endif; ?>
+
             <form method="POST" enctype="multipart/form-data">
                 <?= CSRF::getInputField() ?>
 
@@ -286,7 +402,8 @@ $faviconUrl = !empty($schema['banner_image'])
                     style="background: #f8fafc; padding: 20px; border-radius: 8px; margin-bottom: 30px; border: 1px solid #e2e8f0;">
                     <div class="form-group" style="margin-bottom: 0;">
                         <label>Email Address <span style="color:#ef4444">*</span></label>
-                        <input type="email" name="email" value="<?= htmlspecialchars($_POST['email'] ?? '') ?>" required>
+                        <input type="email" name="email" value="<?= htmlspecialchars($verifiedEmail) ?>"
+                            <?= $verifiedEmail !== '' ? 'readonly' : '' ?> required>
                         <span style="font-size: 13px; color: #64748b; margin-top: 5px; display: block;">We will send your
                             secure Magic Link here to save your progress.</span>
                     </div>
@@ -394,6 +511,7 @@ $faviconUrl = !empty($schema['banner_image'])
                     <button type="submit" name="intent" value="submit" <?= !empty($previewSchema) ? 'disabled title="Disabled in preview"' : '' ?>>Submit Application</button>
                 </div>
             </form>
+            <?php endif; ?>
         <?php endif; ?>
     </div>
 
