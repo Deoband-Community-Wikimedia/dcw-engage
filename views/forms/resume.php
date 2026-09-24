@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../../includes/init.php';
 require_once __DIR__ . '/../../includes/app_log.php';
 require_once __DIR__ . '/../../models/ApplicationModel.php';
+require_once __DIR__ . '/../../includes/wikitext.php';
 
 global $resumeToken;
 
@@ -197,8 +198,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked) {
                         <label for="<?= htmlspecialchars($name) ?>" class="checkbox-label">
                             <input type="checkbox" name="<?= htmlspecialchars($name) ?>" id="<?= htmlspecialchars($name) ?>"
                                 value="1" <?= $isChecked ? 'checked' : '' ?>         <?= $required ?>         <?= $disabledAttr ?>>
-                            <span><?= htmlspecialchars($label) ?>
-                                <?= $required && !$isLocked ? '<span style="color:#ef4444">*</span>' : '' ?></span>
+                            <span><?= MiniWikiText::inline(htmlspecialchars($label, ENT_QUOTES, 'UTF-8')) ?>
+    <?= $required && !$isLocked ? '<span style="color:#ef4444">*</span>' : '' ?></span>
                         </label>
 
                     <?php elseif ($type === 'checkbox_group'):
@@ -210,8 +211,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked) {
                         if (!is_array($selectedValues))
                             $selectedValues = [];
                         ?>
-                        <label><?= htmlspecialchars($label) ?>
-                            <?= $required && !$isLocked ? '<span style="color:#ef4444">*</span>' : '' ?></label>
+                        <label><?= MiniWikiText::inline(htmlspecialchars($label, ENT_QUOTES, 'UTF-8')) ?>
+    <?= $required && !$isLocked ? '<span style="color:#ef4444">*</span>' : '' ?></label>
                         <div class="checkbox-group">
                             <?php foreach ($field['options'] ?? [] as $opt): ?>
                                 <label class="checkbox-label checkbox-option">
@@ -224,8 +225,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked) {
                         </div>
 
                     <?php else: ?>
-                        <label for="<?= htmlspecialchars($name) ?>"><?= htmlspecialchars($label) ?>
-                            <?= $required && !$isLocked ? '<span style="color:#ef4444">*</span>' : '' ?></label>
+                        <label for="<?= htmlspecialchars($name) ?>"><?= MiniWikiText::inline(htmlspecialchars($label, ENT_QUOTES, 'UTF-8')) ?>
+    <?= $required && !$isLocked ? '<span style="color:#ef4444">*</span>' : '' ?></label>
 
                         <?php if ($type === 'select'): ?>
                             <select name="<?= htmlspecialchars($name) ?>" <?= $required ?>             <?= $disabledAttr ?>>
