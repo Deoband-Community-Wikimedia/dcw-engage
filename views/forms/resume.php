@@ -197,7 +197,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked) {
                         ?>
                         <label for="<?= htmlspecialchars($name) ?>" class="checkbox-label">
                             <input type="checkbox" name="<?= htmlspecialchars($name) ?>" id="<?= htmlspecialchars($name) ?>"
-                                value="1" <?= $isChecked ? 'checked' : '' ?>         <?= $required ?>         <?= $disabledAttr ?>>
+                                value="Yes" <?= $isChecked ? 'checked' : '' ?>         <?= $required ?>         <?= $disabledAttr ?>>
                             <span><?= MiniWikiText::inline(htmlspecialchars($label, ENT_QUOTES, 'UTF-8')) ?>
     <?= $required && !$isLocked ? '<span style="color:#ef4444">*</span>' : '' ?></span>
                         </label>
