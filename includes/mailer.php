@@ -578,4 +578,107 @@ Deoband Community Wikimedia";
             return false;
         }
     }
+
+    /**
+     * Sends the "verify your email" link that opens an application form (#67).
+     * Returns true when handed to the mailer, false otherwise. Callers must not
+     * let the result change what the visitor sees.
+     */
+    public static function sendEmailVerification($email, $formTitle, $verifyUrl, $expiresAt) {
+        $config = require __DIR__ . '/config.php';
+        $mailConfig = $config['mail'];
+
+        $expiresTime = date('j M Y, H:i', strtotime($expiresAt));
+        // Form titles are organizer-typed; never drop them into HTML raw.
+        $safeTitle = htmlspecialchars($formTitle, ENT_QUOTES, 'UTF-8');
+
+        if (!class_exists('PHPMailer\PHPMailer\PHPMailer')) {
+            error_log("DEV MODE: Email verification for $email: $verifyUrl");
+            return false;
+        }
+
+        $mail = new PHPMailer\PHPMailer\PHPMailer(true);
+        try {
+            $mail->isSMTP();
+            $mail->Host       = $mailConfig['host'];
+            $mail->SMTPAuth   = true;
+            $mail->Username   = $mailConfig['user'];
+            $mail->Password   = $mailConfig['pass'];
+            $mail->Port       = $mailConfig['port'];
+            $secure = $mailConfig['secure'] ?? ((int)$mailConfig['port'] === 465 ? 'ssl' : 'tls');
+            if (!empty($secure)) {
+                $mail->SMTPSecure = $secure;
+            }
+
+            $mail->setFrom($mailConfig['user'], 'DCW Engage');
+            $mail->addAddress($email);
+
+            $mail->isHTML(true);
+            $mail->Subject = 'Verify your email to start your application';
+
+            $mail->Body = "
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <style>
+                    body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background-color: #f4f6f8; margin: 0; padding: 0; color: #1e293b; }
+                    .email-container { max-width: 600px; margin: 40px auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; }
+                    .header { background-color: #106b9a; padding: 30px 20px; text-align: center; color: #ffffff; }
+                    .header h1 { margin: 0; font-size: 24px; font-weight: 600; letter-spacing: -0.5px; }
+                    .body-content { padding: 40px 30px; }
+                    .body-content p { font-size: 16px; line-height: 1.6; margin-bottom: 20px; }
+                    .btn-wrapper { text-align: center; margin: 30px 0; }
+                    .btn { display: inline-block; background-color: #106b9a; color: #ffffff !important; text-decoration: none; padding: 14px 28px; border-radius: 6px; font-size: 16px; font-weight: 600; }
+                    .footer { background-color: #f8fafc; padding: 20px; text-align: center; font-size: 13px; color: #64748b; border-top: 1px solid #e2e8f0; }
+                </style>
+            </head>
+            <body>
+                <div class='email-container'>
+                    <div class='header'>
+                        <h1>DCW Engage</h1>
+                    </div>
+                    <div class='body-content'>
+                        <p>Hello,</p>
+                        <p>Please confirm this email address to start your application for <strong>$safeTitle</strong>.</p>
+                        <div class='btn-wrapper'>
+                            <a href='$verifyUrl' class='btn'>Verify My Email</a>
+                        </div>
+                        <p>If the button doesn't work, copy and paste this link into your browser:<br><br><a href='$verifyUrl' style='color: #106b9a; word-break: break-all;'>$verifyUrl</a></p>
+                        <p><strong>This link expires at $expiresTime</strong> and can only be used once.</p>
+                        <p style='margin-bottom:0;'>If you did not ask for this, ignore this email. Nothing has been submitted and no application was created.</p>
+                    </div>
+                    <div class='footer'>
+                        &copy; " . date('Y') . " Deoband Community Wikimedia. All rights reserved.<br>
+                        This is an automated message, please do not reply.
+                    </div>
+                </div>
+            </body>
+            </html>
+            ";
+
+            $mail->AltBody = "Hello,
+
+Please confirm this email address to start your application for $formTitle.
+
+Verify your email here:
+$verifyUrl
+
+This link expires at $expiresTime and can only be used once.
+
+If you did not ask for this, ignore this email. Nothing has been submitted.
+
+Deoband Community Wikimedia";
+
+            if ($mailConfig['host'] === 'smtp.example.com') {
+                error_log("DEV MODE: Email verification for $email: $verifyUrl");
+                return false;
+            }
+
+            $mail->send();
+            return true;
+        } catch (Exception $e) {
+            error_log("Verification email could not be sent. Mailer Error: {$mail->ErrorInfo}");
+            return false;
+        }
+    }
 }

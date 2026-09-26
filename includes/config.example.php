@@ -29,6 +29,8 @@ return [
         'magic_link_expiry_draft' => '+7 days',
         'magic_link_expiry_edit'  => '+2 hours',
         // How long an emailed organizer invitation stays usable.
-        'invite_expiry'           => '+7 days'
+        'invite_expiry'           => '+7 days',
+        // How long the emailed "verify your email" link for a form stays usable.
+        'email_verify_expiry'     => '+1 hour'
     ]
 ];

@@ -236,3 +236,33 @@ CREATE TABLE `audit_log` (
     KEY `idx_audit_action` (`action`),
     FOREIGN KEY (`actor_id`) REFERENCES `admin_users`(`id`) ON DELETE SET NULL
 );
+
+-- ============================================================
+-- Applicant email verification (#67)
+--
+-- Every applicant must prove they control their email address before the form
+-- opens, whether they go on to submit or only save a draft. Nothing is written
+-- to `applications` before that, so abandoned or junk entries never create
+-- rows.
+--
+-- Same design as admin_invites / password_resets: only the SHA-256 of the token
+-- is stored, the raw value exists solely in the email, and a link works once.
+--
+-- Live on a fresh import. On a database created before this block existed, run
+-- the CREATE TABLE below by hand, once — it adds a table and changes no
+-- existing data.
+-- ============================================================
+CREATE TABLE `email_verifications` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `form_id` INT NOT NULL,
+    `email` VARCHAR(255) NOT NULL,
+    `token_hash` CHAR(64) NOT NULL UNIQUE,
+    -- DATETIME, not TIMESTAMP: the first NOT NULL TIMESTAMP column would pick
+    -- up an implicit ON UPDATE CURRENT_TIMESTAMP and reset its own expiry.
+    `expires_at` DATETIME NOT NULL,
+    `used_at` DATETIME NULL,
+    `invalidated_at` DATETIME NULL,
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    KEY `idx_verify_form_email` (`form_id`, `email`),
+    FOREIGN KEY (`form_id`) REFERENCES `forms`(`id`) ON DELETE CASCADE
+);
