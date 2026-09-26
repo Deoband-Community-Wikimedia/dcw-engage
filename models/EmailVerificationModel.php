@@ -16,7 +16,11 @@ class EmailVerificationModel {
     private const DEFAULT_EXPIRY = '+1 hour';
 
     /** Links one address may ask for, per form, per hour. Keeps the endpoint
-     *  from being used to flood somebody's inbox. */
+     *  from being used to flood somebody's inbox. This is a soft throttle,
+     *  not a security boundary — consume() below is what actually protects
+     *  the account, so a rare race letting one extra request slip through
+     *  under concurrent load is not worth a stricter (and slower) locking
+     *  scheme. */
     private const MAX_REQUESTS_PER_HOUR = 3;
 
     private $db;
@@ -59,7 +63,17 @@ class EmailVerificationModel {
 
             // Expiry is computed by the database so that it and the later
             // NOW() comparison share one clock (see PasswordResetModel).
-            $seconds = max(60, strtotime($this->expiry) - time());
+            // strtotime() returning false (a malformed config value) must
+            // fail loudly here rather than silently handing out 60-second
+            // links to every applicant with no trace of why in the logs.
+            $parsedExpiry = strtotime($this->expiry);
+            if ($parsedExpiry === false) {
+                throw new \RuntimeException(
+                    "Invalid email_verify_expiry config value: '{$this->expiry}'. " .
+                    "Expected a strtotime()-parseable relative format, e.g. '+1 hour'."
+                );
+            }
+            $seconds = max(60, $parsedExpiry - time());
 
             $this->db->prepare(
                 "INSERT INTO email_verifications (form_id, email, token_hash, expires_at)
@@ -102,8 +116,19 @@ class EmailVerificationModel {
      * failure (unknown, expired, already used, superseded, wrong form) so the
      * caller cannot tell them apart.
      *
-     * The token is claimed with a conditional UPDATE, so two requests racing
-     * on the same link cannot both succeed.
+     * The token is claimed with a conditional UPDATE re-checking every gate
+     * the initial SELECT checked (used_at, invalidated_at, expires_at), so
+     * two requests racing on the same link cannot both succeed, and a token
+     * that expires in the gap between the SELECT and the UPDATE is still
+     * correctly rejected rather than claimed.
+     *
+     * CALLER CONTRACT: only call this in response to an explicit user
+     * action (e.g. a POST from a "confirm" button), never directly from a
+     * GET handler. Automated mail-security link scanners (Outlook Safe
+     * Links, Proofpoint URL Defense, Mimecast, Gmail's link proxy) prefetch
+     * every link in an email with a GET before a human opens it, and would
+     * silently burn the one-time token before the real applicant gets to
+     * it. GET should only ever stage the token for confirmation.
      */
     public function consume($formId, $token) {
         if (!is_string($token) || $token === '') {
@@ -125,7 +150,8 @@ class EmailVerificationModel {
 
         $claim = $this->db->prepare(
             "UPDATE email_verifications SET used_at = NOW()
-             WHERE id = :id AND used_at IS NULL AND invalidated_at IS NULL"
+             WHERE id = :id AND used_at IS NULL AND invalidated_at IS NULL
+               AND expires_at > NOW()"
         );
         $claim->execute(['id' => $row['id']]);
 
