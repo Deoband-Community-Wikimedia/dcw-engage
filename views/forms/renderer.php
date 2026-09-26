@@ -66,13 +66,32 @@ $success = '';
 // the address, so junk entries can't create rows or trigger magic links to
 // addresses that aren't theirs. The proof lives in the session, per form,
 // and is redeemed from the emailed link (?verify=<token>).
+//
+// IMPORTANT: redeeming the token must never happen on a plain GET. Mail
+// security scanners (Outlook Safe Links, Proofpoint URL Defense, Mimecast,
+// Gmail's link proxy) automatically issue a GET to every link in an email
+// before a human opens the message, to check it isn't malicious. If GET
+// consumed the one-time token, that automated prefetch would burn it first
+// and the real applicant — who is only ever a GET request behind, arriving
+// seconds to minutes later — would always land back on this gate with
+// "expired or already used." So GET only *stages* the token; only an
+// explicit POST (which scanners never send) actually redeems it.
 $verifiedEmail = '';
 $verifySent = false;
+$pendingVerifyToken = null;
 
 if (empty($previewSchema)) {
     if (isset($_GET['verify'])) {
+        // Side-effect-free: just carry the token forward to a confirmation
+        // step. Nothing is written to the database here.
+        $pendingVerifyToken = (string) $_GET['verify'];
+    } elseif ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confirm_verification') {
+        if (!CSRF::validate($_POST['csrf_token'] ?? '')) {
+            die("Invalid CSRF token.");
+        }
+
         require_once __DIR__ . '/../../models/EmailVerificationModel.php';
-        $verifiedFor = (new EmailVerificationModel())->consume($form['id'], (string) $_GET['verify']);
+        $verifiedFor = (new EmailVerificationModel())->consume($form['id'], (string) ($_POST['verify_token'] ?? ''));
 
         if ($verifiedFor) {
             $_SESSION['verified_emails'][$form['id']] = $verifiedFor;
@@ -88,7 +107,7 @@ if (empty($previewSchema)) {
     $verifiedEmail = $_SESSION['verified_emails'][$form['id']] ?? '';
 }
 
-if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST') {
+if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') !== 'confirm_verification') {
     if (!CSRF::validate($_POST['csrf_token'])) {
         die("Invalid CSRF token.");
     }
@@ -334,9 +353,11 @@ $faviconUrl = !empty($schema['banner_image'])
         <?php else: ?>
 
             <?php
-            // Until the address is verified, only the verification step is
+            // Until the address is verified, only the verification step (or,
+            // if a token just arrived via GET, the confirmation step) is
             // shown. A preview has no session/DB, so it always shows the form.
-            $showGate = empty($previewSchema) && $verifiedEmail === '';
+            $showConfirm = $pendingVerifyToken !== null && $verifiedEmail === '';
+            $showGate = empty($previewSchema) && $verifiedEmail === '' && !$showConfirm;
             ?>
 
             <?php if (!empty($errors['system']) || !empty($errors['email']) || !empty($errors['verify'])): ?>
@@ -357,7 +378,19 @@ $faviconUrl = !empty($schema['banner_image'])
                 </div>
             <?php endif; ?>
 
-            <?php if ($showGate): ?>
+            <?php if ($showConfirm): ?>
+                <div class="alert-success" style="margin-bottom:20px;">
+                    <h3 style="margin-top:0">Confirm your email</h3>
+                    Click below to finish verifying and open the application. This extra click keeps automated
+                    email-safety scanners from using up your link before you get to it.
+                </div>
+                <form method="POST" style="margin-bottom:30px;">
+                    <?= CSRF::getInputField() ?>
+                    <input type="hidden" name="action" value="confirm_verification">
+                    <input type="hidden" name="verify_token" value="<?= htmlspecialchars($pendingVerifyToken) ?>">
+                    <button type="submit">Continue to application</button>
+                </form>
+            <?php elseif ($showGate): ?>
                 <?php if ($verifySent): ?>
                     <div class="alert-success">
                         <h3 style="margin-top:0">Check your inbox</h3>
