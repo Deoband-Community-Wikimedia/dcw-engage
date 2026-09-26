@@ -421,7 +421,7 @@ $faviconUrl = !empty($schema['banner_image'])
                         <?php if ($type === 'checkbox'): ?>
                             <label for="<?= htmlspecialchars($name) ?>" class="checkbox-label">
                                 <input type="checkbox" name="<?= htmlspecialchars($name) ?>" id="<?= htmlspecialchars($name) ?>"
-                                    value="1" <?= !empty($_POST[$name]) ? 'checked' : '' ?>             <?= $required ?>>
+                                    value="Yes" <?= !empty($_POST[$name]) ? 'checked' : '' ?>             <?= $required ?>>
                                 <span><?= MiniWikiText::inline(htmlspecialchars($label, ENT_QUOTES, 'UTF-8')) ?>
     <?= $required ? '<span style="color:#ef4444">*</span>' : '' ?></span>
                             </label>
