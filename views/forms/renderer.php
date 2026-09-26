@@ -81,11 +81,15 @@ $verifySent = false;
 $pendingVerifyToken = null;
 
 if (empty($previewSchema)) {
-    if (isset($_GET['verify'])) {
-        // Side-effect-free: just carry the token forward to a confirmation
-        // step. Nothing is written to the database here.
-        $pendingVerifyToken = (string) $_GET['verify'];
-    } elseif ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confirm_verification') {
+    // Checked in this order deliberately: the confirm-step form below posts
+    // back to this same URL without stripping the query string, so
+    // $_GET['verify'] is still set on that POST too. If the isset($_GET[...])
+    // check ran first, it would win on every request — GET or POST — and the
+    // branch that actually calls consume() would never run, leaving the
+    // "Continue to application" button stuck re-rendering the same
+    // confirmation screen forever. Checking for the confirm POST first
+    // avoids that regardless of what's left in the query string.
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confirm_verification') {
         if (!CSRF::validate($_POST['csrf_token'] ?? '')) {
             die("Invalid CSRF token.");
         }
@@ -102,6 +106,10 @@ if (empty($previewSchema)) {
 
         // One message for every failure — unknown, expired, used, wrong form.
         $errors['verify'] = "That verification link has expired or was already used. Enter your email below to get a new one.";
+    } elseif (isset($_GET['verify'])) {
+        // Side-effect-free: just carry the token forward to a confirmation
+        // step. Nothing is written to the database here.
+        $pendingVerifyToken = (string) $_GET['verify'];
     }
 
     $verifiedEmail = $_SESSION['verified_emails'][$form['id']] ?? '';
@@ -384,7 +392,7 @@ $faviconUrl = !empty($schema['banner_image'])
                     Click below to finish verifying and open the application. This extra click keeps automated
                     email-safety scanners from using up your link before you get to it.
                 </div>
-                <form method="POST" style="margin-bottom:30px;">
+                <form method="POST" action="<?= htmlspecialchars(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH)) ?>" style="margin-bottom:30px;">
                     <?= CSRF::getInputField() ?>
                     <input type="hidden" name="action" value="confirm_verification">
                     <input type="hidden" name="verify_token" value="<?= htmlspecialchars($pendingVerifyToken) ?>">
