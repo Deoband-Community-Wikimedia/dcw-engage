@@ -1,8 +1,8 @@
 <?php
 require_once __DIR__ . '/../../includes/init.php';
+require_once __DIR__ . '/../../includes/auth.php';
+require_once __DIR__ . '/../../includes/audit.php';
 require_once __DIR__ . '/../../includes/require_role.php';
-require_once __DIR__ . '/../../models/FormModel.php';
-require_once __DIR__ . '/../../models/ReimbursementFormModel.php';
 require_once __DIR__ . '/../../models/ReimbursementModel.php';
 
 // Both owner and organizer can review claim substance — same access level
@@ -11,15 +11,9 @@ require_once __DIR__ . '/../../models/ReimbursementModel.php';
 // details, not claim substance.
 requireRole(['owner', 'organizer']);
 
-$formType = $_GET['type'] ?? '';
-$formModel = new FormModel();
-$form = $formModel->getFormByType($formType);
-if (!$form) { http_response_code(404); die('Form not found.'); }
-
-$reimbursementFormModel = new ReimbursementFormModel();
-$reimbursementForm = $reimbursementFormModel->getByFormId($form['id']);
-if (!$reimbursementForm) { http_response_code(404); die('No reimbursement config for this event.'); }
-
+// Global now — one reimbursement form covers every event, so there's no
+// per-event slug to look up (no more FormModel/ReimbursementFormModel here
+// at all). Every open request across every event lands on this one page.
 $reimbursementModel = new ReimbursementModel();
 $message = '';
 
@@ -28,51 +22,61 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         die('Invalid CSRF token.');
     }
 
+    // Same double-submit guard as team.php: a double click on Approve/Reject
+    // is exactly the kind of thing that shouldn't be able to fire twice on a
+    // financial action. The first click consumes the token; a second finds
+    // it gone and is silently dropped here, before anything changes.
+    if (!CSRF::consumeSubmitToken($_POST['submit_token'] ?? '')) {
+        header('Location: /admin/reimbursements/review');
+        exit;
+    }
+
     $requestId = (int) ($_POST['request_id'] ?? 0);
-    $adminIdentifier = currentAdminIdentifier(); // ASSUMPTION: see require_role.php
     $notes = trim($_POST['notes'] ?? '');
 
     if (($_POST['decision'] ?? '') === 'approve') {
-        if ($reimbursementModel->approveForPayment($requestId, $adminIdentifier)) {
+        if ($reimbursementModel->approveForPayment($requestId, Auth::email())) {
             $info = $reimbursementModel->getForNotification($requestId);
+            AuditLog::record('reimbursement.approved', Auth::id(), Auth::email(), $info['email'], 'Tracking: ' . $info['tracking_id']);
             require_once __DIR__ . '/../../includes/mailer.php';
             Mailer::sendReimbursementStatusUpdate(
                 $info['email'], $info['applicant_name'], $info['tracking_id'],
-                $info['event_title'], 'Approved for Payment'
+                $info['event_name'], 'Approved for Payment'
             );
             $message = "Request #$requestId approved for payment. It now moves to the finance queue.";
         }
     } elseif (($_POST['decision'] ?? '') === 'reject') {
-        if ($reimbursementModel->reject($requestId, $adminIdentifier, $notes)) {
+        if ($reimbursementModel->reject($requestId, Auth::email(), $notes)) {
             $info = $reimbursementModel->getForNotification($requestId);
+            AuditLog::record('reimbursement.rejected', Auth::id(), Auth::email(), $info['email'], 'Tracking: ' . $info['tracking_id'] . ($notes ? ' | ' . $notes : ''));
             require_once __DIR__ . '/../../includes/mailer.php';
             Mailer::sendReimbursementStatusUpdate(
                 $info['email'], $info['applicant_name'], $info['tracking_id'],
-                $info['event_title'], 'Rejected', $notes
+                $info['event_name'], 'Rejected', $notes
             );
             $message = "Request #$requestId rejected.";
         }
     }
 }
 
-$pending = $reimbursementModel->listForAdminReview($reimbursementForm['id'], 'Submitted');
-$underReview = $reimbursementModel->listForAdminReview($reimbursementForm['id'], 'Under Review');
+$pending = $reimbursementModel->listForAdminReview('Submitted');
+$underReview = $reimbursementModel->listForAdminReview('Under Review');
 // Payment Failed lands back here, not with the applicant — see the
 // CALLER CONTRACT note on Mailer::sendReimbursementStatusUpdate(). An admin
 // needs to either fix the payment details and re-approve, or reject outright.
-$paymentFailed = $reimbursementModel->listForAdminReview($reimbursementForm['id'], 'Payment Failed');
+$paymentFailed = $reimbursementModel->listForAdminReview('Payment Failed');
 $requests = array_merge($pending, $underReview);
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Reimbursement Review — <?= htmlspecialchars($form['schema']['title'] ?? $formType) ?></title>
+    <title>Reimbursement Review — DCW Engage</title>
     <link rel="stylesheet" href="/assets/css/forms.css?v=2">
 </head>
 <body>
     <div class="container">
-        <h1>Reimbursement Review — <?= htmlspecialchars($form['schema']['title'] ?? $formType) ?></h1>
+        <h1>Reimbursement Review</h1>
 
         <?php if ($message): ?>
             <div class="alert-success"><?= htmlspecialchars($message) ?></div>
@@ -88,6 +92,9 @@ $requests = array_merge($pending, $underReview);
                     <?= htmlspecialchars($req['applicant_name']) ?>
                     (<?= htmlspecialchars($req['email']) ?>) — #<?= htmlspecialchars($req['tracking_id']) ?>
                 </h3>
+                <p style="color:#475569; font-size:14px; margin-top:-8px;">
+                    Event: <strong><?= htmlspecialchars($req['event_name']) ?></strong>
+                </p>
                 <p><strong>Total: ₹<?= number_format($req['total_amount_paise'] / 100, 2) ?></strong></p>
 
                 <table style="width:100%; border-collapse:collapse; margin-bottom:15px;">
@@ -113,6 +120,7 @@ $requests = array_merge($pending, $underReview);
 
                 <form method="POST" style="display:flex; gap:10px; align-items:flex-start;">
                     <?= CSRF::getInputField() ?>
+                    <?= CSRF::getSubmitField() ?>
                     <input type="hidden" name="request_id" value="<?= (int) $req['id'] ?>">
                     <textarea name="notes" placeholder="Notes (required if rejecting)" style="flex:1; min-height:40px;"></textarea>
                     <button type="submit" name="decision" value="approve" style="width:auto; background:#059669;">Approve for payment</button>
@@ -134,6 +142,9 @@ $requests = array_merge($pending, $underReview);
                         <?= htmlspecialchars($req['applicant_name']) ?>
                         (<?= htmlspecialchars($req['email']) ?>) — #<?= htmlspecialchars($req['tracking_id']) ?>
                     </h3>
+                    <p style="color:#475569; font-size:14px; margin-top:-8px;">
+                        Event: <strong><?= htmlspecialchars($req['event_name']) ?></strong>
+                    </p>
                     <p><strong>Total: ₹<?= number_format($req['total_amount_paise'] / 100, 2) ?></strong></p>
                     <?php if (!empty($req['payment_notes'])): ?>
                         <p><strong>Finance's note:</strong> <?= htmlspecialchars($req['payment_notes']) ?></p>
@@ -141,6 +152,7 @@ $requests = array_merge($pending, $underReview);
 
                     <form method="POST" style="display:flex; gap:10px; align-items:flex-start;">
                         <?= CSRF::getInputField() ?>
+                        <?= CSRF::getSubmitField() ?>
                         <input type="hidden" name="request_id" value="<?= (int) $req['id'] ?>">
                         <textarea name="notes" placeholder="Notes (required if rejecting)" style="flex:1; min-height:40px;"></textarea>
                         <button type="submit" name="decision" value="approve" style="width:auto; background:#059669;">Re-approve for payment</button>
