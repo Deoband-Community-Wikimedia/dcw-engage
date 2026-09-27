@@ -681,4 +681,278 @@ Deoband Community Wikimedia";
             return false;
         }
     }
+
+    /**
+     * Sends the "verify your email" link that opens a reimbursement request
+     * form. Same shape as sendEmailVerification() — separate method rather
+     * than a shared one so the copy can say "reimbursement request" instead
+     * of "application" without a conditional string in the middle of the
+     * template. Returns true when handed to the mailer, false otherwise;
+     * callers must not let the result change what the visitor sees.
+     */
+    public static function sendReimbursementVerification($email, $eventTitle, $verifyUrl, $expiresAt) {
+        $config = require __DIR__ . '/config.php';
+        $mailConfig = $config['mail'];
+
+        $expiresTime = date('j M Y, H:i', strtotime($expiresAt));
+        $safeTitle = htmlspecialchars($eventTitle, ENT_QUOTES, 'UTF-8');
+
+        if (!class_exists('PHPMailer\PHPMailer\PHPMailer')) {
+            error_log("DEV MODE: Reimbursement email verification for $email: $verifyUrl");
+            return false;
+        }
+
+        $mail = new PHPMailer\PHPMailer\PHPMailer(true);
+        try {
+            $mail->isSMTP();
+            $mail->Host       = $mailConfig['host'];
+            $mail->SMTPAuth   = true;
+            $mail->Username   = $mailConfig['user'];
+            $mail->Password   = $mailConfig['pass'];
+            $mail->Port       = $mailConfig['port'];
+            $secure = $mailConfig['secure'] ?? ((int)$mailConfig['port'] === 465 ? 'ssl' : 'tls');
+            if (!empty($secure)) {
+                $mail->SMTPSecure = $secure;
+            }
+
+            $mail->setFrom($mailConfig['user'], 'DCW Engage');
+            $mail->addAddress($email);
+
+            $mail->isHTML(true);
+            $mail->Subject = 'Verify your email to start your reimbursement request';
+
+            $mail->Body = "
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <style>
+                    body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background-color: #f4f6f8; margin: 0; padding: 0; color: #1e293b; }
+                    .email-container { max-width: 600px; margin: 40px auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; }
+                    .header { background-color: #106b9a; padding: 30px 20px; text-align: center; color: #ffffff; }
+                    .header h1 { margin: 0; font-size: 24px; font-weight: 600; letter-spacing: -0.5px; }
+                    .body-content { padding: 40px 30px; }
+                    .body-content p { font-size: 16px; line-height: 1.6; margin-bottom: 20px; }
+                    .btn-wrapper { text-align: center; margin: 30px 0; }
+                    .btn { display: inline-block; background-color: #106b9a; color: #ffffff !important; text-decoration: none; padding: 14px 28px; border-radius: 6px; font-size: 16px; font-weight: 600; }
+                    .footer { background-color: #f8fafc; padding: 20px; text-align: center; font-size: 13px; color: #64748b; border-top: 1px solid #e2e8f0; }
+                </style>
+            </head>
+            <body>
+                <div class='email-container'>
+                    <div class='header'>
+                        <h1>DCW Engage</h1>
+                    </div>
+                    <div class='body-content'>
+                        <p>Hello,</p>
+                        <p>Please confirm this email address to start your reimbursement request for <strong>$safeTitle</strong>.</p>
+                        <div class='btn-wrapper'>
+                            <a href='$verifyUrl' class='btn'>Verify My Email</a>
+                        </div>
+                        <p>If the button doesn't work, copy and paste this link into your browser:<br><br><a href='$verifyUrl' style='color: #106b9a; word-break: break-all;'>$verifyUrl</a></p>
+                        <p><strong>This link expires at $expiresTime</strong> and can only be used once.</p>
+                        <p style='margin-bottom:0;'>If you did not ask for this, ignore this email. Nothing has been submitted and no request was created.</p>
+                    </div>
+                    <div class='footer'>
+                        &copy; " . date('Y') . " Deoband Community Wikimedia. All rights reserved.<br>
+                        This is an automated message, please do not reply.
+                    </div>
+                </div>
+            </body>
+            </html>
+            ";
+
+            $mail->AltBody = "Hello,
+
+Please confirm this email address to start your reimbursement request for $eventTitle.
+
+Verify your email here:
+$verifyUrl
+
+This link expires at $expiresTime and can only be used once.
+
+If you did not ask for this, ignore this email. Nothing has been submitted.
+
+Deoband Community Wikimedia";
+
+            if ($mailConfig['host'] === 'smtp.example.com') {
+                error_log("DEV MODE: Reimbursement email verification for $email: $verifyUrl");
+                return false;
+            }
+
+            $mail->send();
+            return true;
+        } catch (Exception $e) {
+            error_log("Reimbursement verification email could not be sent. Mailer Error: {$mail->ErrorInfo}");
+            return false;
+        }
+    }
+
+    /**
+     * Sends a plain confirmation once a reimbursement request is submitted.
+     * Same shape as sendApplicationReceived() — no edit token, no status
+     * yet, just an acknowledgment with the tracking ID.
+     */
+    public static function sendReimbursementReceived($email, $applicantName, $trackingId, $eventTitle) {
+        $config = require __DIR__ . '/config.php';
+        $mailConfig = $config['mail'];
+
+        if (!class_exists('PHPMailer\PHPMailer\PHPMailer')) {
+            error_log("DEV MODE: Reimbursement confirmation email for $email ($trackingId, $eventTitle)");
+            return true;
+        }
+
+        $mail = new PHPMailer\PHPMailer\PHPMailer(true);
+        try {
+            $mail->isSMTP();
+            $mail->Host       = $mailConfig['host'];
+            $mail->SMTPAuth   = true;
+            $mail->Username   = $mailConfig['user'];
+            $mail->Password   = $mailConfig['pass'];
+            $mail->Port       = $mailConfig['port'];
+            $secure = $mailConfig['secure'] ?? ((int)$mailConfig['port'] === 465 ? 'ssl' : 'tls');
+            if (!empty($secure)) {
+                $mail->SMTPSecure = $secure;
+            }
+
+            $mail->setFrom($mailConfig['user'], 'DCW Engage');
+            $mail->addAddress($email, $applicantName);
+
+            $mail->isHTML(true);
+            $mail->Subject = "Reimbursement Request Received - " . htmlspecialchars($eventTitle, ENT_QUOTES, 'UTF-8');
+
+            $htmlBody = "
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <style>
+                    body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background-color: #f4f6f8; margin: 0; padding: 0; color: #1e293b; }
+                    .email-container { max-width: 600px; margin: 40px auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; }
+                    .header { background-color: #106b9a; padding: 30px 20px; text-align: center; color: #ffffff; }
+                    .header h1 { margin: 0; font-size: 24px; font-weight: 600; letter-spacing: -0.5px; }
+                    .body-content { padding: 40px 30px; }
+                    .body-content p { font-size: 16px; line-height: 1.6; margin-bottom: 20px; }
+                    .footer { background-color: #f8fafc; padding: 20px; text-align: center; font-size: 13px; color: #64748b; border-top: 1px solid #e2e8f0; }
+                </style>
+            </head>
+            <body>
+                <div class='email-container'>
+                    <div class='header'>
+                        <h1>DCW Engage</h1>
+                    </div>
+                    <div class='body-content'>
+                        <p>Hello <strong>" . htmlspecialchars($applicantName) . "</strong>,</p>
+                        <p>We've received your reimbursement request for <strong>" . htmlspecialchars($eventTitle) . "</strong>.</p>
+                        <p><strong>Tracking ID:</strong> $trackingId</p>
+                        <p style='margin-bottom:0;'>We'll email you again once it's been reviewed. No further action is needed right now.</p>
+                    </div>
+                    <div class='footer'>
+                        &copy; " . date('Y') . " Deoband Community Wikimedia. All rights reserved.<br>
+                        This is an automated message; please do not reply.
+                    </div>
+                </div>
+            </body>
+            </html>
+            ";
+
+            $mail->Body    = $htmlBody;
+            $mail->AltBody = "Hello $applicantName,\n\nWe've received your reimbursement request for $eventTitle.\nTracking ID: $trackingId\n\nWe'll email you again once it's been reviewed.";
+
+            if ($mailConfig['host'] !== 'smtp.example.com') {
+                $mail->send();
+            }
+            return true;
+        } catch (Exception $e) {
+            error_log("Reimbursement confirmation email could not be sent. Mailer Error: {$mail->ErrorInfo}");
+            return false;
+        }
+    }
+
+    /**
+     * Notifies an applicant that their reimbursement request's status
+     * changed. Same shape as sendStatusUpdate().
+     *
+     * CALLER CONTRACT: only call this for applicant-facing statuses —
+     * 'Approved for Payment', 'Rejected', or 'Paid'. Never call it for
+     * 'Payment Failed': that status is a signal from finance back to an
+     * admin that the transfer itself needs fixing, not a message for the
+     * applicant, who has done nothing wrong and shouldn't be alarmed by a
+     * payment-plumbing problem that isn't theirs to solve.
+     */
+    public static function sendReimbursementStatusUpdate($email, $applicantName, $trackingId, $eventTitle, $status, $note = '') {
+        $config = require __DIR__ . '/config.php';
+        $mailConfig = $config['mail'];
+
+        if (!class_exists('PHPMailer\PHPMailer\PHPMailer')) {
+            error_log("DEV MODE: Reimbursement status update for $email — $trackingId ($eventTitle) is now '$status'" . ($note ? " | note: $note" : ''));
+            return true;
+        }
+
+        $mail = new PHPMailer\PHPMailer\PHPMailer(true);
+        try {
+            $mail->isSMTP();
+            $mail->Host       = $mailConfig['host'];
+            $mail->SMTPAuth   = true;
+            $mail->Username   = $mailConfig['user'];
+            $mail->Password   = $mailConfig['pass'];
+            $mail->Port       = $mailConfig['port'];
+            $secure = $mailConfig['secure'] ?? ((int)$mailConfig['port'] === 465 ? 'ssl' : 'tls');
+            if (!empty($secure)) {
+                $mail->SMTPSecure = $secure;
+            }
+
+            $mail->setFrom($mailConfig['user'], 'DCW Engage');
+            $mail->addAddress($email, $applicantName);
+
+            $mail->isHTML(true);
+            $mail->Subject = "Update on your reimbursement request - " . htmlspecialchars($status, ENT_QUOTES, 'UTF-8');
+
+            $noteHtml = $note !== ''
+                ? "<p><strong>Notes:</strong><br>" . nl2br(htmlspecialchars($note)) . "</p>"
+                : '';
+
+            $htmlBody = "
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <style>
+                    body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background-color: #f4f6f8; margin: 0; padding: 0; color: #1e293b; }
+                    .email-container { max-width: 600px; margin: 40px auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; }
+                    .header { background-color: #106b9a; padding: 30px 20px; text-align: center; color: #ffffff; }
+                    .header h1 { margin: 0; font-size: 24px; font-weight: 600; letter-spacing: -0.5px; }
+                    .body-content { padding: 40px 30px; }
+                    .body-content p { font-size: 16px; line-height: 1.6; margin-bottom: 20px; }
+                    .footer { background-color: #f8fafc; padding: 20px; text-align: center; font-size: 13px; color: #64748b; border-top: 1px solid #e2e8f0; }
+                </style>
+            </head>
+            <body>
+                <div class='email-container'>
+                    <div class='header'>
+                        <h1>DCW Engage</h1>
+                    </div>
+                    <div class='body-content'>
+                        <p>Hello <strong>" . htmlspecialchars($applicantName) . "</strong>,</p>
+                        <p>Your reimbursement request for <strong>" . htmlspecialchars($eventTitle) . "</strong>, tracking ID $trackingId, has been marked as <strong>" . htmlspecialchars($status) . "</strong>.</p>
+                        $noteHtml
+                    </div>
+                    <div class='footer'>
+                        &copy; " . date('Y') . " Deoband Community Wikimedia. All rights reserved.<br>
+                        This is an automated message; please do not reply.
+                    </div>
+                </div>
+            </body>
+            </html>
+            ";
+
+            $mail->Body    = $htmlBody;
+            $mail->AltBody = "Hello $applicantName,\n\nYour reimbursement request for $eventTitle (Tracking ID: $trackingId) has been marked as $status." . ($note ? "\n\nNotes:\n$note" : '');
+
+            if ($mailConfig['host'] !== 'smtp.example.com') {
+                $mail->send();
+            }
+            return true;
+        } catch (Exception $e) {
+            error_log("Reimbursement status update email could not be sent. Mailer Error: {$mail->ErrorInfo}");
+            return false;
+        }
+    }
 }
