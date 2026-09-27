@@ -58,19 +58,17 @@ if ($route === '/' || $route === '/index.php') {
     require __DIR__ . '/views/forms/resume.php';
 
 // --- Reimbursements ---------------------------------------------------
-// Applicant-facing submission, one per event (same slug the event's
-// application form uses). Must come before the catch-all dynamic form
-// route below, since otherwise '/reimbursements' would be treated as a
-// form type of its own.
-} elseif (preg_match('/^\/reimbursements\/([a-zA-Z0-9_-]+)$/', $route, $matches)) {
-    global $formType;
-    $formType = $matches[1];
-    require __DIR__ . '/views/reimbursements/renderer.php';
+// One global form now, not one per event — the applicant types the event
+// name themselves inside the form. A literal route, so it must come before
+// the catch-all dynamic form route below or '/reimbursement' would be
+// treated as a form type of its own.
+} elseif ($route === '/reimbursement') {
+    require __DIR__ . '/views/reimbursement.php';
 
-// Admin substance review, per event. Auth/role check happens inside the
-// view itself (requireRole('admin')), same pattern as the rest of /admin.
-} elseif (preg_match('/^\/admin\/reimbursements\/([a-zA-Z0-9_-]+)\/review$/', $route, $matches)) {
-    $_GET['type'] = $matches[1];
+// Admin/organizer substance review — global too, not per event. Auth/role
+// check happens inside the view itself (requireRole(['owner','organizer'])),
+// same pattern as the rest of /admin.
+} elseif ($route === '/admin/reimbursements/review') {
     require __DIR__ . '/views/admin/reimbursement_review.php';
 
 // Finance payment queue. Deliberately NOT under /admin — see the note in

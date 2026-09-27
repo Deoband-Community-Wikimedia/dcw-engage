@@ -6,11 +6,19 @@ require_once __DIR__ . '/../includes/crypto.php';
  *
  * Handles the applicant-facing submission (eligibility, server-computed
  * total, encrypted bank details) and the two-stage approval flow:
- *   - an ADMIN decides whether the claim is valid (Approved for Payment / Rejected)
- *   - FINANCE, a separate role, decides whether the transfer actually went
- *     through (Paid / Payment Failed) — see listForFinanceQueue(), which
- *     deliberately excludes line items and receipts. Finance needs to know
- *     how much and where to send it, not what was bought.
+ *   - an ADMIN/ORGANIZER decides whether the claim is valid (Approved for
+ *     Payment / Rejected)
+ *   - FINANCE (which includes owners), a separate role, decides whether the
+ *     transfer actually went through (Paid / Payment Failed) — see
+ *     listForFinanceQueue(), which deliberately excludes line items and
+ *     receipts. Finance needs to know how much and where to send it, not
+ *     what was bought.
+ *
+ * One global form now, not one per event: the applicant types the event
+ * name themselves (event_name, free text) rather than this being scoped to
+ * a specific row in `forms`. That's why nothing here takes a $formId or
+ * $reimbursementFormId anymore, and why there's no join back to `forms` —
+ * event_name lives directly on reimbursement_requests.
  */
 class ReimbursementModel {
     private $db;
@@ -24,41 +32,43 @@ class ReimbursementModel {
     // ------------------------------------------------------------------
 
     /**
-     * Eligible if either: accepted into the underlying event's application
-     * process, or an admin explicitly added this email to this
-     * reimbursement form's eligibility list.
+     * Eligible if either: accepted into ANY event's application process
+     * (status = 'Accepted' on any form, not a specific one — there's no
+     * specific one to check against anymore), or an owner/organizer
+     * explicitly added this email to the global eligibility list.
      */
-    public function isEligible($reimbursementFormId, $formId, $email) {
+    public function isEligible($email) {
         $email = strtolower(trim($email));
 
         $stmt = $this->db->prepare(
-            "SELECT 1 FROM applications WHERE form_id = :form_id AND email = :email AND status = 'Accepted'"
+            "SELECT 1 FROM applications WHERE email = :email AND status = 'Accepted'"
         );
-        $stmt->execute(['form_id' => $formId, 'email' => $email]);
+        $stmt->execute(['email' => $email]);
         if ($stmt->fetchColumn()) {
             return true;
         }
 
         $stmt = $this->db->prepare(
-            "SELECT 1 FROM reimbursement_eligibility WHERE reimbursement_form_id = :rid AND email = :email"
+            "SELECT 1 FROM reimbursement_global_eligibility WHERE email = :email"
         );
-        $stmt->execute(['rid' => $reimbursementFormId, 'email' => $email]);
+        $stmt->execute(['email' => $email]);
         return (bool) $stmt->fetchColumn();
     }
 
     /**
-     * True if this email already has a request that isn't Rejected. A
-     * Rejected request doesn't block resubmission; anything else
-     * (Submitted through Paid) does, since letting someone file a second
-     * claim while a first is still live or already paid is exactly the
-     * duplicate-payment risk this guards against.
+     * True if this email already has a non-Rejected request for THIS
+     * event name specifically. Scoped per (email, event_name) rather than
+     * globally per email, since the same person can legitimately claim
+     * reimbursement for two different events they attended — the
+     * duplicate-payment risk this guards against is filing twice for the
+     * *same* event, not ever submitting more than once at all.
      */
-    public function hasOpenOrPaidRequest($reimbursementFormId, $email) {
+    public function hasOpenOrPaidRequest($email, $eventName) {
         $stmt = $this->db->prepare(
             "SELECT 1 FROM reimbursement_requests
-             WHERE reimbursement_form_id = :rid AND email = :email AND status != 'Rejected'"
+             WHERE email = :email AND event_name = :event_name AND status != 'Rejected'"
         );
-        $stmt->execute(['rid' => $reimbursementFormId, 'email' => strtolower(trim($email))]);
+        $stmt->execute(['email' => strtolower(trim($email)), 'event_name' => trim($eventName)]);
         return (bool) $stmt->fetchColumn();
     }
 
@@ -77,10 +87,19 @@ class ReimbursementModel {
      * here too — the UI hides the cash option client-side once the running
      * total crosses the threshold, but that's a UX hint, not enforcement.
      *
+     * @param array $settings The single row from ReimbursementSettingsModel::get()
      * @throws \InvalidArgumentException on any validation failure
-     * @return array ['id' => int, 'tracking_id' => string]
+     * @return array ['id' => int, 'tracking_id' => string, 'total_paise' => int]
      */
-    public function createRequest($reimbursementForm, $formId, $email, $applicantName, array $payment, array $lineItems) {
+    public function createRequest($settings, $email, $applicantName, $eventName, array $payment, array $lineItems) {
+        $eventName = trim($eventName);
+        if ($eventName === '') {
+            throw new \InvalidArgumentException('Please enter the name of the event.');
+        }
+        if (mb_strlen($eventName) > 255) {
+            throw new \InvalidArgumentException('Event name is too long (255 characters max).');
+        }
+
         if (empty($lineItems)) {
             throw new \InvalidArgumentException('At least one expense line item is required.');
         }
@@ -102,8 +121,8 @@ class ReimbursementModel {
             throw new \InvalidArgumentException('Please select a payment method.');
         }
 
-        if ($method === 'cash' && $totalPaise > (int) $reimbursementForm['cash_threshold_paise']) {
-            $rupees = number_format($reimbursementForm['cash_threshold_paise'] / 100, 2);
+        if ($method === 'cash' && $totalPaise > (int) $settings['cash_threshold_paise']) {
+            $rupees = number_format($settings['cash_threshold_paise'] / 100, 2);
             throw new \InvalidArgumentException("Cash isn't available above ₹$rupees. Please choose UPI or bank transfer.");
         }
 
@@ -145,18 +164,18 @@ class ReimbursementModel {
         try {
             $stmt = $this->db->prepare(
                 "INSERT INTO reimbursement_requests
-                    (reimbursement_form_id, email, applicant_name, total_amount_paise,
+                    (email, applicant_name, event_name, total_amount_paise,
                      payment_method, upi_id, bank_account_name, bank_account_number_enc, bank_ifsc,
                      tracking_id)
                  VALUES
-                    (:rid, :email, :name, :total,
+                    (:email, :name, :event_name, :total,
                      :method, :upi_id, :bank_name, :bank_acct_enc, :bank_ifsc,
                      :tracking_id)"
             );
             $stmt->execute([
-                'rid'           => $reimbursementForm['id'],
                 'email'         => strtolower(trim($email)),
                 'name'          => $applicantName,
+                'event_name'    => $eventName,
                 'total'         => $totalPaise,
                 'method'        => $method,
                 'upi_id'        => $upiId,
@@ -204,15 +223,9 @@ class ReimbursementModel {
     }
 
     // ------------------------------------------------------------------
-    // Admin: substance review (is the claim valid?)
+    // Admin/organizer: substance review (is the claim valid?)
     // ------------------------------------------------------------------
 
-    /**
-     * Full detail for admin review: line items and receipts included,
-     * bank account number NOT decrypted here — admin is judging the claim,
-     * not executing payment, so plaintext account numbers have no reason
-     * to pass through this view at all.
-     */
     /**
      * Full detail for admin/organizer substance review: line items and
      * receipts included, but NO payment-execution fields at all —
@@ -223,34 +236,34 @@ class ReimbursementModel {
      * the query level: a column that's fetched but merely not printed can
      * still leak through a future template change, a var_dump left in by
      * mistake, or an error trace. An admin/organizer judging whether a
-     * claim is legitimate needs the amount and the receipts, not how or
-     * where the money will be sent.
+     * claim is legitimate needs the amount, the event name, and the
+     * receipts — not how or where the money will be sent.
+     *
+     * Global now, not scoped to one event's config — one form covers every
+     * event, so this lists every request across all of them, and
+     * event_name (typed by the applicant) is just another column.
      */
-    public function listForAdminReview($reimbursementFormId, $status = null) {
-        $sql = "SELECT r.id, r.reimbursement_form_id, r.email, r.applicant_name,
-                       r.total_amount_paise, r.status, r.tracking_id,
-                       r.admin_notes, r.decided_by, r.decided_at,
-                       r.payment_notes, r.created_at
-                FROM reimbursement_requests r
-                WHERE r.reimbursement_form_id = :rid";
-        $params = ['rid' => $reimbursementFormId];
+    public function listForAdminReview($status = null) {
+        $sql = "SELECT id, email, applicant_name, event_name,
+                       total_amount_paise, status, tracking_id,
+                       admin_notes, decided_by, decided_at,
+                       payment_notes, created_at
+                FROM reimbursement_requests";
+        $params = [];
 
         if ($status !== null) {
-            $sql .= " AND r.status = :status";
+            $sql .= " WHERE status = :status";
             $params['status'] = $status;
         }
 
-        $sql .= " ORDER BY r.created_at ASC";
+        $sql .= " ORDER BY created_at ASC";
 
         $stmt = $this->db->prepare($sql);
         $stmt->execute($params);
         $requests = $stmt->fetchAll();
 
-        $eventTitle = $this->getEventTitle($reimbursementFormId);
-
         foreach ($requests as &$req) {
             $req['line_items'] = $this->getLineItems($req['id']);
-            $req['event_title'] = $eventTitle;
         }
 
         return $requests;
@@ -263,27 +276,6 @@ class ReimbursementModel {
         );
         $stmt->execute(['rid' => $requestId]);
         return $stmt->fetchAll();
-    }
-
-    /**
-     * The event title lives in forms.schema (JSON), not on the reimbursement
-     * tables themselves — reused here rather than denormalized onto every
-     * request row, since it's only needed for the handful of emails sent
-     * around admin/finance decisions, not for every read of a request.
-     */
-    private function getEventTitle($reimbursementFormId) {
-        $stmt = $this->db->prepare(
-            "SELECT f.schema, f.form_type FROM forms f
-             JOIN reimbursement_forms rf ON rf.form_id = f.id
-             WHERE rf.id = :rid"
-        );
-        $stmt->execute(['rid' => $reimbursementFormId]);
-        $row = $stmt->fetch();
-        if (!$row) {
-            return null;
-        }
-        $schema = json_decode($row['schema'], true) ?: [];
-        return $schema['title'] ?? $row['form_type'];
     }
 
     public function approveForPayment($requestId, $adminIdentifier) {
@@ -307,7 +299,7 @@ class ReimbursementModel {
     }
 
     // ------------------------------------------------------------------
-    // Finance: payment execution (did the transfer go through?)
+    // Finance (includes owners): payment execution (did the transfer go through?)
     // ------------------------------------------------------------------
 
     /**
@@ -318,7 +310,7 @@ class ReimbursementModel {
      */
     public function listForFinanceQueue() {
         $stmt = $this->db->query(
-            "SELECT id, reimbursement_form_id, tracking_id, applicant_name, email, total_amount_paise,
+            "SELECT id, tracking_id, applicant_name, email, event_name, total_amount_paise,
                     payment_method, upi_id, bank_account_name, bank_account_number_enc, bank_ifsc,
                     decided_by, decided_at
              FROM reimbursement_requests
@@ -332,29 +324,24 @@ class ReimbursementModel {
                 $row['bank_account_number'] = Crypto::decrypt($row['bank_account_number_enc']);
             }
             unset($row['bank_account_number_enc']);
-            $row['event_title'] = $this->getEventTitle($row['reimbursement_form_id']);
         }
 
         return $rows;
     }
 
     /**
-     * Fetch a single request with its email/name/tracking/event-title,
-     * for use right after markPaid()/markPaymentFailed() to send the
+     * Fetch a single request with its email/name/tracking/event-name, for
+     * use right after markPaid()/markPaymentFailed() to send the
      * corresponding notification without the caller needing to reconstruct
      * that context itself.
      */
     public function getForNotification($requestId) {
         $stmt = $this->db->prepare(
-            "SELECT id, reimbursement_form_id, tracking_id, applicant_name, email, status
+            "SELECT id, tracking_id, applicant_name, email, event_name, status
              FROM reimbursement_requests WHERE id = :id"
         );
         $stmt->execute(['id' => $requestId]);
-        $row = $stmt->fetch();
-        if ($row) {
-            $row['event_title'] = $this->getEventTitle($row['reimbursement_form_id']);
-        }
-        return $row ?: null;
+        return $stmt->fetch() ?: null;
     }
 
     public function markPaid($requestId, $financeIdentifier, $paymentReference) {
@@ -370,8 +357,8 @@ class ReimbursementModel {
     /**
      * The transfer itself failed (bad account number, bounced UPI, etc).
      * This is a finance signal, not a rejection of the claim's substance —
-     * it goes back to an admin to fix payment details or otherwise
-     * resolve, NOT back to the applicant.
+     * it goes back to an admin/organizer to fix payment details or
+     * otherwise resolve, NOT back to the applicant.
      */
     public function markPaymentFailed($requestId, $financeIdentifier, $notes) {
         $stmt = $this->db->prepare(

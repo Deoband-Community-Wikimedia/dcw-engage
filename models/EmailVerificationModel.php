@@ -9,6 +9,15 @@
  *
  * Same shape as InviteModel / PasswordResetModel: a random token goes out by
  * email, only its SHA-256 is stored, and it works once.
+ *
+ * $formId is nullable throughout this class: NULL means "not tied to any
+ * specific event's application form" — used by the global reimbursement
+ * flow, which verifies an address once regardless of which event the
+ * applicant is claiming for. Every query below compares form_id with MySQL's
+ * NULL-safe equality operator (<=>) rather than plain =, because a normal
+ * `form_id = :form` bound to a NULL parameter never matches anything — not
+ * even another NULL row — which would silently break rate-limiting,
+ * superseding, and redemption for every global (formless) verification.
  */
 
 class EmailVerificationModel {
@@ -57,7 +66,7 @@ class EmailVerificationModel {
             // Asking again supersedes the previous link.
             $this->db->prepare(
                 "UPDATE email_verifications SET invalidated_at = NOW()
-                 WHERE form_id = :form AND email = :email
+                 WHERE form_id <=> :form AND email = :email
                    AND used_at IS NULL AND invalidated_at IS NULL"
             )->execute(['form' => $formId, 'email' => $email]);
 
@@ -103,7 +112,7 @@ class EmailVerificationModel {
     private function recentRequestCount($formId, $email) {
         $stmt = $this->db->prepare(
             "SELECT COUNT(*) FROM email_verifications
-             WHERE form_id = :form AND email = :email
+             WHERE form_id <=> :form AND email = :email
                AND created_at > (NOW() - INTERVAL 1 HOUR)"
         );
         $stmt->execute(['form' => $formId, 'email' => $email]);
@@ -137,7 +146,7 @@ class EmailVerificationModel {
 
         $stmt = $this->db->prepare(
             "SELECT id, email FROM email_verifications
-             WHERE token_hash = :hash AND form_id = :form
+             WHERE token_hash = :hash AND form_id <=> :form
                AND used_at IS NULL AND invalidated_at IS NULL
                AND expires_at > NOW()"
         );

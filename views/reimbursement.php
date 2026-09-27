@@ -1,69 +1,60 @@
 <?php
-require_once __DIR__ . '/../../includes/init.php';
-require_once __DIR__ . '/../../includes/wikitext.php';
-require_once __DIR__ . '/../../includes/app_log.php';
-require_once __DIR__ . '/../../models/FormModel.php';
-require_once __DIR__ . '/../../models/ReimbursementFormModel.php';
-require_once __DIR__ . '/../../models/ReimbursementModel.php';
-require_once __DIR__ . '/../../models/EmailVerificationModel.php';
+require_once __DIR__ . '/../includes/init.php';
+require_once __DIR__ . '/../includes/wikitext.php';
+require_once __DIR__ . '/../includes/app_log.php';
+require_once __DIR__ . '/../models/ReimbursementSettingsModel.php';
+require_once __DIR__ . '/../models/ReimbursementModel.php';
+require_once __DIR__ . '/../models/EmailVerificationModel.php';
 
-// ASSUMPTION: mirrors forms/renderer.php's router contract — the router sets
-// a global identifying which event's reimbursement form this is. Adjust the
-// variable name/source to match however your router actually passes it.
-global $formType;
-if (!$formType)
-    $formType = $_GET['type'] ?? '';
+// One global reimbursement form, not one per event — the applicant types
+// the event name themselves in the form below rather than this page being
+// scoped to a specific row in `forms`. Email verification therefore isn't
+// tied to any particular form either: $formId is passed as null throughout
+// (see the NULL-safe <=> comparisons added to EmailVerificationModel for
+// exactly this case), meaning "verified once, usable regardless of which
+// event they're claiming for."
+const REIMBURSEMENT_FORM_ID = null;
 
-$formModel = new FormModel();
-$form = $formModel->getFormByType($formType);
+$settingsModel = new ReimbursementSettingsModel();
+$settings = $settingsModel->get();
 
-if (!$form) {
+if (!$settings || !$settings['is_active']) {
     http_response_code(404);
-    require __DIR__ . '/../forms/not_found.php';
-    die();
-}
-
-$reimbursementFormModel = new ReimbursementFormModel();
-$reimbursementForm = $reimbursementFormModel->getByFormId($form['id']);
-
-if (!$reimbursementForm || !$reimbursementForm['is_active']) {
-    http_response_code(404);
-    require __DIR__ . '/../forms/not_found.php';
+    require __DIR__ . '/forms/not_found.php';
     die();
 }
 
 $reimbursementModel = new ReimbursementModel();
-$schema = $form['schema'];
 $errors = [];
 $success = null;
 
 // ------------------------------------------------------------------
-// Email verification — identical pattern to forms/renderer.php, including
-// the GET-stages/POST-confirms fix (scanner-prefetch safe).
+// Email verification — identical GET-stages/POST-confirms pattern as
+// views/forms/renderer.php (scanner-prefetch safe).
 // ------------------------------------------------------------------
 $verifiedEmail = '';
 $pendingVerifyToken = null;
 $verifySent = false;
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confirm_verification') {
+if (isset($_GET['verify'])) {
+    $pendingVerifyToken = (string) $_GET['verify'];
+} elseif ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confirm_verification') {
     if (!CSRF::validate($_POST['csrf_token'] ?? '')) {
         die("Invalid CSRF token.");
     }
 
-    $verifiedFor = (new EmailVerificationModel())->consume($form['id'], (string) ($_POST['verify_token'] ?? ''));
+    $verifiedFor = (new EmailVerificationModel())->consume(REIMBURSEMENT_FORM_ID, (string) ($_POST['verify_token'] ?? ''));
 
     if ($verifiedFor) {
-        $_SESSION['verified_emails_reimb'][$form['id']] = $verifiedFor;
+        $_SESSION['verified_email_reimbursement'] = $verifiedFor;
         header('Location: ' . parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH));
         exit;
     }
 
     $errors['verify'] = "That verification link has expired or was already used. Enter your email below to get a new one.";
-} elseif (isset($_GET['verify'])) {
-    $pendingVerifyToken = (string) $_GET['verify'];
 }
 
-$verifiedEmail = $_SESSION['verified_emails_reimb'][$form['id']] ?? '';
+$verifiedEmail = $_SESSION['verified_email_reimbursement'] ?? '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'request_verification') {
     if (!CSRF::validate($_POST['csrf_token'] ?? '')) {
@@ -75,35 +66,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'reque
         $errors['email'] = "Please enter a valid email address.";
     } else {
         try {
-            require_once __DIR__ . '/../../includes/mailer.php';
-            $config = require __DIR__ . '/../../includes/config.php';
+            require_once __DIR__ . '/../includes/mailer.php';
+            $config = require __DIR__ . '/../includes/config.php';
             $email = strtolower($email);
-            $issued = (new EmailVerificationModel())->request($form['id'], $email);
+            $issued = (new EmailVerificationModel())->request(REIMBURSEMENT_FORM_ID, $email);
 
             if ($issued) {
-                $verifyUrl = rtrim($config['app']['url'], '/') . '/reimbursements/' . rawurlencode($formType)
-                    . '?verify=' . urlencode($issued['token']);
-                Mailer::sendReimbursementVerification($email, $schema['title'] ?? $formType, $verifyUrl, $issued['expires_at']);
+                $verifyUrl = rtrim($config['app']['url'], '/') . '/reimbursement?verify=' . urlencode($issued['token']);
+                Mailer::sendReimbursementVerification($email, 'your reimbursement request', $verifyUrl, $issued['expires_at']);
             }
             $verifySent = true;
         } catch (Exception $e) {
-            app_log("Reimbursement verification request failed for form '$formType' <$email>: " . $e->getMessage());
+            app_log("Reimbursement verification request failed for <$email>: " . $e->getMessage());
             $errors['system'] = "Something went wrong sending your verification email. Please try again.";
         }
     }
 } elseif ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'change_email') {
-    unset($_SESSION['verified_emails_reimb'][$form['id']]);
+    unset($_SESSION['verified_email_reimbursement']);
     $verifiedEmail = '';
 }
 
 // ------------------------------------------------------------------
-// Eligibility — only checked once verified, so an ineligible visitor never
-// learns anything about eligibility rules before proving they own the
-// address they're asking about.
+// Eligibility — checked globally now (accepted into ANY event, or on the
+// global eligibility list), only once verified.
 // ------------------------------------------------------------------
 $isEligible = false;
 if ($verifiedEmail !== '') {
-    $isEligible = $reimbursementModel->isEligible($reimbursementForm['id'], $form['id'], $verifiedEmail);
+    $isEligible = $reimbursementModel->isEligible($verifiedEmail);
 }
 
 // ------------------------------------------------------------------
@@ -114,12 +103,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'submi
         die("Invalid CSRF token.");
     }
 
+    $eventName = trim($_POST['event_name'] ?? '');
+
     if ($verifiedEmail === '' || !$isEligible) {
         $errors['system'] = "Please verify your email and confirm eligibility before submitting.";
-    } elseif ($reimbursementModel->hasOpenOrPaidRequest($reimbursementForm['id'], $verifiedEmail)) {
-        $errors['system'] = "You already have a reimbursement request on file for this event.";
+    } elseif ($eventName === '') {
+        $errors['system'] = "Please enter the name of the event.";
+    } elseif ($reimbursementModel->hasOpenOrPaidRequest($verifiedEmail, $eventName)) {
+        $errors['system'] = "You already have a reimbursement request on file for \"" . htmlspecialchars($eventName) . "\".";
     } else {
-        require_once __DIR__ . '/../../models/FileUploader.php';
+        require_once __DIR__ . '/../models/FileUploader.php';
         $fileUploader = new FileUploader();
 
         $categories = $_POST['line_item_category'] ?? [];
@@ -150,7 +143,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'submi
                     throw new \InvalidArgumentException("Row " . ($i + 1) . ": a receipt is required.");
                 }
 
-                $path = $fileUploader->handleUpload($_FILES[$fileKey], $fileKey, $verifiedEmail, $formType . '_reimbursement');
+                $path = $fileUploader->handleUpload($_FILES[$fileKey], $fileKey, $verifiedEmail, 'reimbursement');
                 if ($path) {
                     $uploadedPaths[] = $path;
                 }
@@ -172,12 +165,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'submi
                 'bank_ifsc'                   => $_POST['bank_ifsc'] ?? '',
             ];
 
+            $applicantName = trim($_POST['applicant_name'] ?? '');
+
             $result = $reimbursementModel->createRequest(
-                $reimbursementForm, $form['id'], $verifiedEmail, trim($_POST['applicant_name'] ?? ''), $payment, $lineItems
+                $settings, $verifiedEmail, $applicantName, $eventName, $payment, $lineItems
             );
 
-            require_once __DIR__ . '/../../includes/mailer.php';
-            Mailer::sendReimbursementReceived($verifiedEmail, trim($_POST['applicant_name'] ?? ''), $result['tracking_id'], $schema['title'] ?? $formType);
+            require_once __DIR__ . '/../includes/mailer.php';
+            Mailer::sendReimbursementReceived($verifiedEmail, $applicantName, $result['tracking_id'], $eventName);
 
             $success = $result;
         } catch (\InvalidArgumentException $e) {
@@ -185,7 +180,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'submi
             $errors['system'] = $e->getMessage();
         } catch (Exception $e) {
             cleanupUploadedPaths($uploadedPaths);
-            app_log("Reimbursement submission failed for form '$formType' <$verifiedEmail>: " . $e->getMessage());
+            app_log("Reimbursement submission failed for <$verifiedEmail> (event: $eventName): " . $e->getMessage());
             $errors['system'] = "An error occurred submitting your request. Please try again.";
         }
     }
@@ -194,7 +189,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'submi
 function cleanupUploadedPaths(array $paths) {
     foreach ($paths as $p) {
         if (is_string($p) && strpos($p, 'uploads/') === 0) {
-            $full = __DIR__ . '/../../' . $p;
+            $full = __DIR__ . '/../' . $p;
             if (is_file($full)) {
                 @unlink($full);
             }
@@ -204,7 +199,7 @@ function cleanupUploadedPaths(array $paths) {
 
 $showConfirm = $pendingVerifyToken !== null && $verifiedEmail === '';
 $showGate = $verifiedEmail === '' && !$showConfirm;
-$cashThresholdRupees = $reimbursementForm['cash_threshold_paise'] / 100;
+$cashThresholdRupees = $settings['cash_threshold_paise'] / 100;
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -212,18 +207,18 @@ $cashThresholdRupees = $reimbursementForm['cash_threshold_paise'] / 100;
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Reimbursement — <?= htmlspecialchars($schema['title'] ?? $formType) ?> - DCW Engage</title>
+    <title>Reimbursement Request - DCW Engage</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/assets/css/forms.css?v=2">
 </head>
 
 <body>
     <div class="container">
-        <h1 style="margin-top:0;">Reimbursement — <?= htmlspecialchars($schema['title'] ?? $formType) ?></h1>
+        <h1 style="margin-top:0;">Reimbursement Request</h1>
 
-        <?php if (!empty($reimbursementForm['instructions'])): ?>
+        <?php if (!empty($settings['instructions'])): ?>
             <div style="color:#475569; font-size:15px; margin-bottom:30px; line-height:1.6;">
-                <?= MiniWikiText::render($reimbursementForm['instructions']) ?>
+                <?= MiniWikiText::render($settings['instructions']) ?>
             </div>
         <?php endif; ?>
 
@@ -274,7 +269,7 @@ $cashThresholdRupees = $reimbursementForm['cash_threshold_paise'] / 100;
             <?php elseif (!$isEligible): ?>
                 <div class="alert-error">
                     <strong>Not eligible:</strong> we don't have a record of <?= htmlspecialchars($verifiedEmail) ?>
-                    being eligible for reimbursement on this event. If you believe this is a mistake, contact the organizers.
+                    being eligible for reimbursement. If you believe this is a mistake, contact the organizers.
                 </div>
 
             <?php else: ?>
@@ -294,6 +289,12 @@ $cashThresholdRupees = $reimbursementForm['cash_threshold_paise'] / 100;
                     <div class="form-group" style="margin-bottom:20px;">
                         <label>Your name <span style="color:#ef4444">*</span></label>
                         <input type="text" name="applicant_name" required>
+                    </div>
+
+                    <div class="form-group" style="margin-bottom:20px;">
+                        <label>Event name <span style="color:#ef4444">*</span></label>
+                        <input type="text" name="event_name" required maxlength="255" placeholder="e.g. Wiki Loves Monuments 2026 Workshop">
+                        <span style="font-size:13px; color:#64748b; margin-top:5px; display:block;">Type the name of the event you're claiming expenses for.</span>
                     </div>
 
                     <h3>Expenses</h3>
@@ -352,7 +353,7 @@ $cashThresholdRupees = $reimbursementForm['cash_threshold_paise'] / 100;
             <div class="form-group">
                 <label>Category</label>
                 <select name="line_item_category[]" class="li-category">
-                    <?php foreach ($reimbursementForm['expense_categories'] as $cat): ?>
+                    <?php foreach ($settings['expense_categories'] as $cat): ?>
                         <option value="<?= htmlspecialchars($cat) ?>"><?= htmlspecialchars($cat) ?></option>
                     <?php endforeach; ?>
                 </select>
