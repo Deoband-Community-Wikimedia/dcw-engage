@@ -1,15 +1,16 @@
 <?php
 require_once __DIR__ . '/../../includes/init.php';
+require_once __DIR__ . '/../../includes/auth.php';
+require_once __DIR__ . '/../../includes/audit.php';
 require_once __DIR__ . '/../../includes/require_role.php';
 require_once __DIR__ . '/../../includes/app_log.php';
 require_once __DIR__ . '/../../models/ReimbursementModel.php';
 
-// Finance-only, strictly — this is the payment-execution boundary you asked
-// for. Owners are deliberately NOT included here: you said a separate staff
-// handles payments, so this stays finance-only rather than owners being able
-// to bypass the two-person-integrity control. If you want an owner override
-// for emergencies later, that's a one-line change (requireRole(['finance', 'owner'])).
-requireRole('finance');
+// Finance group, which includes owners per your instruction — this is the
+// payment-execution boundary, and owners are trusted to be part of it here.
+// Organizers are still excluded: they review claim substance
+// (reimbursement_review.php) but don't execute payment.
+requireRole(['finance', 'owner']);
 
 $reimbursementModel = new ReimbursementModel();
 $message = '';
@@ -19,31 +20,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         die('Invalid CSRF token.');
     }
 
+    // Same double-submit guard as team.php — matters more here than almost
+    // anywhere else in this app: a double click on "Mark paid" firing twice
+    // is exactly the kind of bug that turns into a real duplicate transfer
+    // if the underlying markPaid() call weren't also itself idempotent
+    // (it is — see the WHERE status = 'Approved for Payment' guard — but
+    // this stops the second request from even reaching that far).
+    if (!CSRF::consumeSubmitToken($_POST['submit_token'] ?? '')) {
+        header('Location: /finance/reimbursements');
+        exit;
+    }
+
     $requestId = (int) ($_POST['request_id'] ?? 0);
-    $financeIdentifier = currentAdminIdentifier(); // ASSUMPTION: see require_role.php
     $notes = trim($_POST['notes'] ?? '');
 
     if (($_POST['result'] ?? '') === 'paid') {
         $reference = trim($_POST['payment_reference'] ?? '');
-        if ($reimbursementModel->markPaid($requestId, $financeIdentifier, $reference)) {
+        if ($reimbursementModel->markPaid($requestId, Auth::email(), $reference)) {
             $info = $reimbursementModel->getForNotification($requestId);
+            AuditLog::record('reimbursement.paid', Auth::id(), Auth::email(), $info['email'], 'Tracking: ' . $info['tracking_id'] . ($reference ? ' | Ref: ' . $reference : ''));
             require_once __DIR__ . '/../../includes/mailer.php';
             Mailer::sendReimbursementStatusUpdate(
                 $info['email'], $info['applicant_name'], $info['tracking_id'],
-                $info['event_title'], 'Paid'
+                $info['event_name'], 'Paid'
             );
             $message = "Request #$requestId marked paid.";
         }
     } elseif (($_POST['result'] ?? '') === 'failed') {
-        if ($reimbursementModel->markPaymentFailed($requestId, $financeIdentifier, $notes)) {
+        if ($reimbursementModel->markPaymentFailed($requestId, Auth::email(), $notes)) {
             // Deliberately no applicant email here — see the CALLER
             // CONTRACT note on Mailer::sendReimbursementStatusUpdate().
             // This is a finance-to-admin signal, so it needs to be loud
-            // somewhere an admin will actually see it: logged here, and
-            // it now surfaces in reimbursement_review.php's "Payment
-            // Failed — needs attention" section for the admin to act on.
+            // somewhere an admin will actually see it: logged here, in the
+            // audit trail, and it now surfaces in reimbursement_review.php's
+            // "Payment Failed — needs attention" section for the admin to
+            // act on.
             $info = $reimbursementModel->getForNotification($requestId);
-            app_log("Reimbursement payment failed: #{$info['tracking_id']} ({$info['event_title']}) by $financeIdentifier — $notes");
+            AuditLog::record('reimbursement.payment_failed', Auth::id(), Auth::email(), $info['email'], 'Tracking: ' . $info['tracking_id'] . ($notes ? ' | ' . $notes : ''));
+            app_log("Reimbursement payment failed: #{$info['tracking_id']} ({$info['event_name']}) by " . Auth::email() . " — $notes");
             $message = "Request #$requestId marked as payment failed — it now needs admin attention.";
         }
     }
@@ -79,6 +93,9 @@ $queue = $reimbursementModel->listForFinanceQueue();
                 <h3 style="margin-top:0;">
                     <?= htmlspecialchars($req['applicant_name']) ?> — #<?= htmlspecialchars($req['tracking_id']) ?>
                 </h3>
+                <p style="color:#475569; font-size:14px; margin-top:-8px;">
+                    Event: <strong><?= htmlspecialchars($req['event_name']) ?></strong>
+                </p>
                 <p><strong>Amount: ₹<?= number_format($req['total_amount_paise'] / 100, 2) ?></strong></p>
 
                 <?php if ($req['payment_method'] === 'upi'): ?>
@@ -99,6 +116,7 @@ $queue = $reimbursementModel->listForFinanceQueue();
 
                 <form method="POST" style="display:flex; gap:10px; align-items:flex-start;">
                     <?= CSRF::getInputField() ?>
+                    <?= CSRF::getSubmitField() ?>
                     <input type="hidden" name="request_id" value="<?= (int) $req['id'] ?>">
                     <input type="text" name="payment_reference" placeholder="UTR / transaction reference" style="flex:1;">
                     <textarea name="notes" placeholder="Notes (required if marking failed)" style="flex:1; min-height:40px;"></textarea>
