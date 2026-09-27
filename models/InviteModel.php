@@ -60,7 +60,19 @@ class InviteModel {
      * invalidates the previous link instead of leaving two live doors.
      */
     public function create($email, $role, $invitedById, $invitedByEmail) {
-        $role = $role === 'owner' ? 'owner' : 'organizer';
+        // Extended from the original owner/organizer-only validation to add
+        // a third role for reimbursement payment execution (see #71). This
+        // check is the only place role validity is enforced — admin_users.role
+        // is a plain column, not a DB-level enum — so this whitelist IS the
+        // source of truth for what a role can be.
+        //
+        // CALLER CONTRACT: only an 'owner' should be able to invite someone
+        // as 'finance' or as another 'owner'. This method does not enforce
+        // that itself — it only validates that the value is one of the three
+        // known roles — so that check belongs in whatever view collects the
+        // invite form (team.php) before calling this.
+        $allowedRoles = ['owner', 'organizer', 'finance'];
+        $role = in_array($role, $allowedRoles, true) ? $role : 'organizer';
         $token = bin2hex(random_bytes(32));
 
         $this->db->beginTransaction();
