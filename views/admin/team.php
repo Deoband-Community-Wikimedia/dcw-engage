@@ -38,7 +38,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($action === 'invite') {
         $email = trim($_POST['email'] ?? '');
-        $role  = ($_POST['role'] ?? 'organizer') === 'owner' ? 'owner' : 'organizer';
+
+        // Kept in sync with InviteModel::create()'s whitelist. Only an owner
+        // can reach this branch at all (Auth::requireOwner() above), which is
+        // what satisfies the model's "only an owner may assign finance/owner"
+        // caller contract.
+        $allowedRoles = ['organizer', 'finance', 'owner'];
+        $role = in_array($_POST['role'] ?? '', $allowedRoles, true) ? $_POST['role'] : 'organizer';
 
         if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
             team_flash('error', 'That is not a valid email address.');
@@ -163,6 +169,7 @@ $organizers = $invites->listOrganizers();
         .pill { display: inline-block; font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 999px; }
         .pill-owner { background: rgba(16,107,154,0.1); color: var(--primary-color); }
         .pill-organizer { background: #f1f5f9; color: #475569; }
+        .pill-finance { background: #f0f5ff; color: #3730a3; }
         .pill-expired { background: #fef2f2; color: #991b1b; }
 
         .flash { padding: 13px 15px; border-radius: 6px; font-size: 14px; margin-bottom: 24px; line-height: 1.55; }
@@ -213,14 +220,16 @@ $organizers = $invites->listOrganizers();
                         <label for="role">Role</label>
                         <select name="role" id="role">
                             <option value="organizer">Organizer</option>
+                            <option value="finance">Finance</option>
                             <option value="owner">Owner</option>
                         </select>
                     </div>
                 </div>
 
                 <p class="hint">
-                    Organizers manage forms and applications. Owners can additionally
-                    invite people and revoke invitations from this page.
+                    Organizers manage forms and applications. Finance can process
+                    reimbursement payments. Owners can additionally invite people
+                    and revoke invitations from this page.
                 </p>
 
                 <button type="submit" class="primary">Send invitation</button>

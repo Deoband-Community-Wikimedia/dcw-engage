@@ -133,17 +133,27 @@ class Auth {
     }
 
     /**
-     * The signed-in organizer's role. Anything unrecognised is treated as the
-     * lower privilege level, so a session written before roles existed cannot
-     * accidentally grant team management.
+     * The signed-in organizer's role: 'owner', 'organizer', or 'finance'.
+     * Anything unrecognised is treated as the lowest privilege level, so a
+     * session written before a role existed (or one that has since been
+     * retired) cannot accidentally grant elevated access.
      */
     public static function role() {
         $role = $_SESSION['admin_role'] ?? 'organizer';
-        return $role === 'owner' ? 'owner' : 'organizer';
+        $allowedRoles = ['owner', 'organizer', 'finance'];
+        return in_array($role, $allowedRoles, true) ? $role : 'organizer';
     }
 
     public static function isOwner() {
         return self::role() === 'owner';
+    }
+
+    /**
+     * True for accounts that handle reimbursement payment execution (#71).
+     * Mirrors isOwner() so views can gate finance-only screens the same way.
+     */
+    public static function isFinance() {
+        return self::role() === 'finance';
     }
 
     /**
