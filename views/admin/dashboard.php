@@ -7,6 +7,13 @@ Auth::requireLogin();
 
 $formModel = new FormModel();
 $forms = $formModel->getAllForms();
+
+// Mirrors the exact requireRole() calls on each target page, so a link only
+// ever appears for someone who can actually get past its gate:
+//   reimbursement_review.php -> requireRole(['owner', 'organizer'])
+//   reimbursement_queue.php  -> requireRole(['finance', 'owner'])
+$canReviewReimbursements = in_array(Auth::role(), ['owner', 'organizer'], true);
+$canProcessPayments      = in_array(Auth::role(), ['finance', 'owner'], true);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -63,6 +70,8 @@ $forms = $formModel->getAllForms();
         .status-closed { background: #ef4444; }
         
         .card-footer { margin-top: auto; border-top: 1px solid var(--border-color); padding-top: 15px; display: flex; justify-content: space-between; font-size: 13px; color: #64748b; font-weight: 500;}
+
+        .section-label { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: #64748b; margin: 36px 0 14px; }
     </style>
 </head>
 <body>
@@ -72,6 +81,12 @@ $forms = $formModel->getAllForms();
 
             <div style="display: flex; align-items: center; gap: 12px; font-size: 14px; color: #64748b;">
                 <span><?= htmlspecialchars(Auth::email()) ?></span>
+                <?php if ($canReviewReimbursements): ?>
+                    <a href="/admin/reimbursements/review" style="color: #64748b; text-decoration: none; border: 1px solid #e2e8f0; padding: 6px 12px; border-radius: 6px; font-size: 13px;">Reimbursement Review</a>
+                <?php endif; ?>
+                <?php if ($canProcessPayments): ?>
+                    <a href="/finance/reimbursements" style="color: #64748b; text-decoration: none; border: 1px solid #e2e8f0; padding: 6px 12px; border-radius: 6px; font-size: 13px;">Finance Queue</a>
+                <?php endif; ?>
                 <?php if (Auth::isOwner()): ?>
                     <a href="/admin/team" style="color: #64748b; text-decoration: none; border: 1px solid #e2e8f0; padding: 6px 12px; border-radius: 6px; font-size: 13px;">Team</a>
                 <?php endif; ?>
@@ -108,6 +123,24 @@ $forms = $formModel->getAllForms();
                 </a>
             <?php endforeach; ?>
         </div>
+
+        <?php if ($canReviewReimbursements || $canProcessPayments): ?>
+            <div class="section-label">Reimbursements</div>
+            <div class="grid">
+                <?php if ($canReviewReimbursements): ?>
+                    <a href="/admin/reimbursements/review" class="card">
+                        <h3 class="card-title">Reimbursement Review</h3>
+                        <p class="card-meta">Approve or reject claims — line items and receipts, no payment details.</p>
+                    </a>
+                <?php endif; ?>
+                <?php if ($canProcessPayments): ?>
+                    <a href="/finance/reimbursements" class="card">
+                        <h3 class="card-title">Finance Queue</h3>
+                        <p class="card-meta">Execute payment on approved claims — amounts and payment details only.</p>
+                    </a>
+                <?php endif; ?>
+            </div>
+        <?php endif; ?>
     </div>
 </body>
 </html>
