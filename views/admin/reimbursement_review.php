@@ -46,6 +46,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $message = "Request #$requestId approved for payment. It now moves to the finance queue.";
         }
     } elseif (($_POST['decision'] ?? '') === 'reject') {
+        // Substance-based: the applicant plausibly belonged here, the claim
+        // itself didn't hold up. They get an email — see ReimbursementModel::reject().
         if ($reimbursementModel->reject($requestId, Auth::email(), $notes)) {
             $info = $reimbursementModel->getForNotification($requestId);
             AuditLog::record('reimbursement.rejected', Auth::id(), Auth::email(), $info['email'], 'Tracking: ' . $info['tracking_id'] . ($notes ? ' | ' . $notes : ''));
@@ -55,6 +57,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $info['event_name'], 'Rejected', $notes
             );
             $message = "Request #$requestId rejected.";
+        }
+    } elseif (($_POST['decision'] ?? '') === 'discard') {
+        // Never had a real claim to begin with — spam, unrelated email,
+        // no connection to any event. Deliberately silent: no Mailer call,
+        // by design, per ReimbursementModel::discard()'s docblock. $notes
+        // here is internal-only context for the audit trail.
+        if ($reimbursementModel->discard($requestId, Auth::email(), $notes ?: null)) {
+            AuditLog::record('reimbursement.discarded', Auth::id(), Auth::email(), null, 'Request #' . $requestId . ($notes ? ' | ' . $notes : ''));
+            $message = "Request #$requestId discarded. No email was sent.";
         }
     }
 }
@@ -91,6 +102,11 @@ $requests = array_merge($pending, $underReview);
                 <h3 style="margin-top:0;">
                     <?= htmlspecialchars($req['applicant_name']) ?>
                     (<?= htmlspecialchars($req['email']) ?>) — #<?= htmlspecialchars($req['tracking_id']) ?>
+                    <?php if (!$req['previously_eligible']): ?>
+                        <span style="font-size:11px; font-weight:600; color:#92400e; background:#fef3c7; padding:2px 8px; border-radius:50px; vertical-align:middle;">
+                            No prior acceptance or allowlist match
+                        </span>
+                    <?php endif; ?>
                 </h3>
                 <p style="color:#475569; font-size:14px; margin-top:-8px;">
                     Event: <strong><?= htmlspecialchars($req['event_name']) ?></strong>
@@ -118,13 +134,15 @@ $requests = array_merge($pending, $underReview);
                     </tbody>
                 </table>
 
-                <form method="POST" style="display:flex; gap:10px; align-items:flex-start;">
+                <form method="POST" style="display:flex; gap:10px; align-items:flex-start; flex-wrap:wrap;">
                     <?= CSRF::getInputField() ?>
                     <?= CSRF::getSubmitField() ?>
                     <input type="hidden" name="request_id" value="<?= (int) $req['id'] ?>">
-                    <textarea name="notes" placeholder="Notes (required if rejecting)" style="flex:1; min-height:40px;"></textarea>
+                    <textarea name="notes" placeholder="Notes (required if rejecting, optional if discarding)" style="flex:1; min-width:200px; min-height:40px;"></textarea>
                     <button type="submit" name="decision" value="approve" style="width:auto; background:#059669;">Approve for payment</button>
                     <button type="submit" name="decision" value="reject" style="width:auto; background:#dc2626;">Reject</button>
+                    <button type="submit" name="decision" value="discard" style="width:auto; background:#64748b;"
+                            onclick="return confirm('Discard this request? No email will be sent to the applicant.');">Discard</button>
                 </form>
             </div>
         <?php endforeach; ?>
@@ -150,13 +168,15 @@ $requests = array_merge($pending, $underReview);
                         <p><strong>Finance's note:</strong> <?= htmlspecialchars($req['payment_notes']) ?></p>
                     <?php endif; ?>
 
-                    <form method="POST" style="display:flex; gap:10px; align-items:flex-start;">
+                    <form method="POST" style="display:flex; gap:10px; align-items:flex-start; flex-wrap:wrap;">
                         <?= CSRF::getInputField() ?>
                         <?= CSRF::getSubmitField() ?>
                         <input type="hidden" name="request_id" value="<?= (int) $req['id'] ?>">
-                        <textarea name="notes" placeholder="Notes (required if rejecting)" style="flex:1; min-height:40px;"></textarea>
+                        <textarea name="notes" placeholder="Notes (required if rejecting, optional if discarding)" style="flex:1; min-width:200px; min-height:40px;"></textarea>
                         <button type="submit" name="decision" value="approve" style="width:auto; background:#059669;">Re-approve for payment</button>
                         <button type="submit" name="decision" value="reject" style="width:auto; background:#dc2626;">Reject</button>
+                        <button type="submit" name="decision" value="discard" style="width:auto; background:#64748b;"
+                                onclick="return confirm('Discard this request? No email will be sent to the applicant.');">Discard</button>
                     </form>
                 </div>
             <?php endforeach; ?>
