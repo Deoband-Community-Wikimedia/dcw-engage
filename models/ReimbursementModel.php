@@ -7,7 +7,7 @@ require_once __DIR__ . '/../includes/crypto.php';
  * Handles the applicant-facing submission (eligibility, server-computed
  * total, encrypted bank details) and the two-stage approval flow:
  *   - an ADMIN/ORGANIZER decides whether the claim is valid (Approved for
- *     Payment / Rejected)
+ *     Payment / Rejected / Discarded) — see reject() vs discard() below
  *   - FINANCE (which includes owners), a separate role, decides whether the
  *     transfer actually went through (Paid / Payment Failed) — see
  *     listForFinanceQueue(), which deliberately excludes line items and
@@ -19,6 +19,14 @@ require_once __DIR__ . '/../includes/crypto.php';
  * a specific row in `forms`. That's why nothing here takes a $formId or
  * $reimbursementFormId anymore, and why there's no join back to `forms` —
  * event_name lives directly on reimbursement_requests.
+ *
+ * isEligible() is no longer a submission gate — any verified email can
+ * submit a request now. It stays here as an informational signal for the
+ * admin/organizer review queue (see listForAdminReview()'s use of it in
+ * reimbursement_review.php), so a reviewer can see at a glance whether a
+ * request came from someone with a prior accepted application or an
+ * explicit allowlist entry, versus someone with neither — the latter is
+ * exactly the case discard() exists for.
  */
 class ReimbursementModel {
     private $db;
@@ -28,14 +36,15 @@ class ReimbursementModel {
     }
 
     // ------------------------------------------------------------------
-    // Eligibility
+    // Eligibility (informational only — see class docblock)
     // ------------------------------------------------------------------
 
     /**
-     * Eligible if either: accepted into ANY event's application process
-     * (status = 'Accepted' on any form, not a specific one — there's no
-     * specific one to check against anymore), or an owner/organizer
-     * explicitly added this email to the global eligibility list.
+     * True if either: accepted into ANY event's application process
+     * (status = 'Accepted' on any form), or an owner/organizer explicitly
+     * added this email to the global eligibility list. No longer used to
+     * block submission — see class docblock — but still useful context for
+     * whoever is reviewing the claim.
      */
     public function isEligible($email) {
         $email = strtolower(trim($email));
@@ -56,17 +65,18 @@ class ReimbursementModel {
     }
 
     /**
-     * True if this email already has a non-Rejected request for THIS
-     * event name specifically. Scoped per (email, event_name) rather than
-     * globally per email, since the same person can legitimately claim
-     * reimbursement for two different events they attended — the
+     * True if this email already has a non-Rejected, non-Discarded request
+     * for THIS event name specifically. Scoped per (email, event_name)
+     * rather than globally per email, since the same person can legitimately
+     * claim reimbursement for two different events they attended — the
      * duplicate-payment risk this guards against is filing twice for the
      * *same* event, not ever submitting more than once at all.
      */
     public function hasOpenOrPaidRequest($email, $eventName) {
         $stmt = $this->db->prepare(
             "SELECT 1 FROM reimbursement_requests
-             WHERE email = :email AND event_name = :event_name AND status != 'Rejected'"
+             WHERE email = :email AND event_name = :event_name
+               AND status NOT IN ('Rejected', 'Discarded')"
         );
         $stmt->execute(['email' => strtolower(trim($email)), 'event_name' => trim($eventName)]);
         return (bool) $stmt->fetchColumn();
@@ -86,6 +96,10 @@ class ReimbursementModel {
      * client-supplied total field. The cash-threshold check is re-verified
      * here too — the UI hides the cash option client-side once the running
      * total crosses the threshold, but that's a UX hint, not enforcement.
+     *
+     * No eligibility check happens here — any verified email may submit.
+     * A reviewer sorts out legitimacy afterwards via approveForPayment(),
+     * reject(), or discard().
      *
      * @param array $settings The single row from ReimbursementSettingsModel::get()
      * @throws \InvalidArgumentException on any validation failure
@@ -264,6 +278,10 @@ class ReimbursementModel {
 
         foreach ($requests as &$req) {
             $req['line_items'] = $this->getLineItems($req['id']);
+            // Informational only (see isEligible()'s docblock) — helps a
+            // reviewer spot the requests discard() exists for, but never
+            // blocks anything itself.
+            $req['previously_eligible'] = $this->isEligible($req['email']);
         }
 
         return $requests;
@@ -288,10 +306,35 @@ class ReimbursementModel {
         return $stmt->rowCount() === 1;
     }
 
+    /**
+     * The claim was reviewed and found invalid on its substance (wrong
+     * amount, missing receipt, expense not covered, etc). The applicant
+     * DID plausibly belong here, so they're notified — the caller
+     * (reimbursement_review.php) sends the rejection email after this
+     * returns true.
+     */
     public function reject($requestId, $adminIdentifier, $notes) {
         $stmt = $this->db->prepare(
             "UPDATE reimbursement_requests
              SET status = 'Rejected', decided_by = :who, decided_at = NOW(), admin_notes = :notes
+             WHERE id = :id AND status IN ('Submitted', 'Under Review', 'Payment Failed')"
+        );
+        $stmt->execute(['who' => $adminIdentifier, 'notes' => $notes, 'id' => $requestId]);
+        return $stmt->rowCount() === 1;
+    }
+
+    /**
+     * The request never should have counted as a real claim in the first
+     * place — spam, a duplicate, someone with no connection to any event
+     * and no plausible reason to be submitting. Unlike reject(), this is
+     * silent: the caller must NOT send the applicant any notification.
+     * $notes is optional internal context for the audit log, not something
+     * ever shown to the applicant.
+     */
+    public function discard($requestId, $adminIdentifier, $notes = null) {
+        $stmt = $this->db->prepare(
+            "UPDATE reimbursement_requests
+             SET status = 'Discarded', decided_by = :who, decided_at = NOW(), admin_notes = :notes
              WHERE id = :id AND status IN ('Submitted', 'Under Review', 'Payment Failed')"
         );
         $stmt->execute(['who' => $adminIdentifier, 'notes' => $notes, 'id' => $requestId]);
