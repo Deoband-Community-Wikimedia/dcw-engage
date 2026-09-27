@@ -87,13 +87,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'reque
 }
 
 // ------------------------------------------------------------------
-// Eligibility — checked globally now (accepted into ANY event, or on the
-// global eligibility list), only once verified.
+// Eligibility is no longer checked here. Any verified email may submit —
+// see ReimbursementModel's class docblock. isEligible() still exists and
+// is used by reimbursement_review.php as an informational flag for
+// reviewers ("no prior acceptance or allowlist match"), so organizers can
+// discard requests from people with no real connection to any event
+// without an email being sent — see ReimbursementModel::discard().
 // ------------------------------------------------------------------
-$isEligible = false;
-if ($verifiedEmail !== '') {
-    $isEligible = $reimbursementModel->isEligible($verifiedEmail);
-}
 
 // ------------------------------------------------------------------
 // Submission
@@ -105,8 +105,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'submi
 
     $eventName = trim($_POST['event_name'] ?? '');
 
-    if ($verifiedEmail === '' || !$isEligible) {
-        $errors['system'] = "Please verify your email and confirm eligibility before submitting.";
+    if ($verifiedEmail === '') {
+        $errors['system'] = "Please verify your email before submitting.";
     } elseif ($eventName === '') {
         $errors['system'] = "Please enter the name of the event.";
     } elseif ($reimbursementModel->hasOpenOrPaidRequest($verifiedEmail, $eventName)) {
@@ -265,12 +265,6 @@ $cashThresholdRupees = $settings['cash_threshold_paise'] / 100;
                     </div>
                     <button type="submit"><?= $verifySent ? 'Send a new link' : 'Send verification link' ?></button>
                 </form>
-
-            <?php elseif (!$isEligible): ?>
-                <div class="alert-error">
-                    <strong>Not eligible:</strong> we don't have a record of <?= htmlspecialchars($verifiedEmail) ?>
-                    being eligible for reimbursement. If you believe this is a mistake, contact the organizers.
-                </div>
 
             <?php else: ?>
 
