@@ -7,6 +7,19 @@ if (file_exists(__DIR__ . '/../vendor/autoload.php')) {
 }
 
 class Mailer {
+        /**
+     * Formats a database timestamp (stored in UTC) for people in India,
+     * e.g. "28 Sep 2026, 6:55 PM IST". Always labelled, and uses explicit
+     * zones so it doesn't depend on the server's default PHP time zone.
+     */
+    private static function formatExpiryIST($utcDatetime) {
+        try {
+            $dt = new DateTimeImmutable($utcDatetime, new DateTimeZone('UTC'));
+            return $dt->setTimezone(new DateTimeZone('Asia/Kolkata'))->format('j M Y, g:i A') . ' IST';
+        } catch (Exception $e) {
+            return (string) $utcDatetime . ' UTC';
+        }
+    }
     /**
      * Sends a Magic Link to the applicant.
      * Uses plain text for now. Will be swapped with Gauri's HTML templates later.
@@ -487,7 +500,7 @@ class Mailer {
         $mailConfig = $config['mail'];
 
         $resetUrl = $config['app']['url'] . '/admin/reset-password?token=' . urlencode($token);
-        $expiresTime = date('j M Y, H:i', strtotime($expiresAt));
+    $expiresTime = self::formatExpiryIST($expiresAt);
 
         if (!class_exists('PHPMailer\PHPMailer\PHPMailer')) {
             error_log("DEV MODE: Password reset for $email: $resetUrl");
