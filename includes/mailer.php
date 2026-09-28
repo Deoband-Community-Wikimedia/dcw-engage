@@ -7,12 +7,12 @@ if (file_exists(__DIR__ . '/../vendor/autoload.php')) {
 }
 
 class Mailer {
-        /**
+    /**
      * Formats a database timestamp (stored in UTC) for people in India,
      * e.g. "28 Sep 2026, 6:55 PM IST". Always labelled, and uses explicit
      * zones so it doesn't depend on the server's default PHP time zone.
      */
-    private static function formatExpiryIST($utcDatetime) {
+    public static function formatExpiryIST($utcDatetime) {
         try {
             $dt = new DateTimeImmutable($utcDatetime, new DateTimeZone('UTC'));
             return $dt->setTimezone(new DateTimeZone('Asia/Kolkata'))->format('j M Y, g:i A') . ' IST';
@@ -401,7 +401,7 @@ class Mailer {
         $mailConfig = $config['mail'];
 
         $inviteUrl = $config['app']['url'] . '/admin/accept-invite?token=' . urlencode($token);
-        $expiresOn = date('j F Y', strtotime($expiresAt));
+        $expiresTime = self::formatExpiryIST($expiresAt);
 
         // Dev environment without PHPMailer: log it so the link is still
         // reachable from the error log.
@@ -460,7 +460,7 @@ class Mailer {
                             <a href='$inviteUrl' class='btn'>Set My Password</a>
                         </div>
                         <p>If the button doesn't work, copy and paste this link into your browser:<br><br><a href='$inviteUrl' style='color: #106b9a; word-break: break-all;'>$inviteUrl</a></p>
-                        <p style='margin-bottom:0;'>This invitation expires on <strong>$expiresOn</strong> and can only be used once. If you were not expecting it, you can ignore this email — no account is created until the link is opened.</p>
+                        <p style='margin-bottom:0;'>This invitation expires at <strong>$expiresTime</strong> and can only be used once. If you were not expecting it, you can ignore this email — no account is created until the link is opened.</p>
                     </div>
                     <div class='footer'>
                         &copy; " . date('Y') . " Deoband Community Wikimedia. All rights reserved.<br>
@@ -471,7 +471,7 @@ class Mailer {
             </html>
             ";
 
-            $mail->AltBody = "Hello,\n\n$invitedByEmail has invited you to join the DCW Engage organizer workspace.\n\nSet your password here:\n$inviteUrl\n\nThis invitation expires on $expiresOn and can only be used once.\n\nDeoband Community Wikimedia";
+            $mail->AltBody = "Hello,\n\n$invitedByEmail has invited you to join the DCW Engage organizer workspace.\n\nSet your password here:\n$inviteUrl\n\nThis invitation expires at $expiresTime and can only be used once.\n\nDeoband Community Wikimedia";
 
             // Same guard the other senders use: never dispatch with the
             // placeholder credentials from config.example.php.
@@ -601,7 +601,7 @@ Deoband Community Wikimedia";
         $config = require __DIR__ . '/config.php';
         $mailConfig = $config['mail'];
 
-        $expiresTime = date('j M Y, H:i', strtotime($expiresAt));
+        $expiresTime = self::formatExpiryIST($expiresAt);
         // Form titles are organizer-typed; never drop them into HTML raw.
         $safeTitle = htmlspecialchars($formTitle, ENT_QUOTES, 'UTF-8');
 
@@ -707,7 +707,7 @@ Deoband Community Wikimedia";
         $config = require __DIR__ . '/config.php';
         $mailConfig = $config['mail'];
 
-        $expiresTime = date('j M Y, H:i', strtotime($expiresAt));
+        $expiresTime = self::formatExpiryIST($expiresAt);
         $safeTitle = htmlspecialchars($eventTitle, ENT_QUOTES, 'UTF-8');
 
         if (!class_exists('PHPMailer\PHPMailer\PHPMailer')) {
