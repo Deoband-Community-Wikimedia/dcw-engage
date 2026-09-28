@@ -267,7 +267,7 @@ $organizers = $invites->listOrganizers();
                                 <?php if ($invite['is_expired']): ?>
                                     <span class="pill pill-expired">Expired</span>
                                 <?php else: ?>
-                                    <?= htmlspecialchars(date('j M Y', strtotime($invite['expires_at']))) ?>
+                                    <?= htmlspecialchars(Mailer::formatExpiryIST($invite['expires_at'])) ?>
                                 <?php endif; ?>
                             </td>
                             <td class="right">
