@@ -757,17 +757,17 @@ Deoband Community Wikimedia";
                     </div>
                     <div class='body-content'>
                         <p>Hello,</p>
-                        <p>Please confirm this email address to start your reimbursement request for <strong>$safeTitle</strong>.</p>
+                        <p>Please confirm this email address to initiate your reimbursement request.</p>
                         <div class='btn-wrapper'>
                             <a href='$verifyUrl' class='btn'>Verify My Email</a>
                         </div>
                         <p>If the button doesn't work, copy and paste this link into your browser:<br><br><a href='$verifyUrl' style='color: #106b9a; word-break: break-all;'>$verifyUrl</a></p>
                         <p><strong>This link expires at $expiresTime</strong> and can only be used once.</p>
-                        <p style='margin-bottom:0;'>If you did not ask for this, ignore this email. Nothing has been submitted and no request was created.</p>
+                        <p style='margin-bottom:0;'>If you did not ask for this, ignore this email. Nothing has been submitted, and no request was created.</p>
                     </div>
                     <div class='footer'>
                         &copy; " . date('Y') . " Deoband Community Wikimedia. All rights reserved.<br>
-                        This is an automated message, please do not reply.
+                        This is an automated message; please do not reply.
                     </div>
                 </div>
             </body>
@@ -776,7 +776,7 @@ Deoband Community Wikimedia";
 
             $mail->AltBody = "Hello,
 
-Please confirm this email address to start your reimbursement request for $eventTitle.
+Please confirm this email address to initiate your reimbursement request.
 
 Verify your email here:
 $verifyUrl
@@ -854,7 +854,7 @@ Deoband Community Wikimedia";
                     </div>
                     <div class='body-content'>
                         <p>Hello <strong>" . htmlspecialchars($applicantName) . "</strong>,</p>
-                        <p>We've received your reimbursement request for <strong>" . htmlspecialchars($eventTitle) . "</strong>.</p>
+                        <p>We have received your reimbursement request for <strong>" . htmlspecialchars($eventTitle) . "</strong>.</p>
                         <p><strong>Tracking ID:</strong> $trackingId</p>
                         <p style='margin-bottom:0;'>We'll email you again once it's been reviewed. No further action is needed right now.</p>
                     </div>
