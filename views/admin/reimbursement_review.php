@@ -110,6 +110,9 @@ $requests = array_merge($pending, $underReview);
                 </h3>
                 <p style="color:#475569; font-size:14px; margin-top:-8px;">
                     Event: <strong><?= htmlspecialchars($req['event_name']) ?></strong>
+                    <?php if (!empty($req['event_date'])): ?>
+                        &middot; <?= htmlspecialchars(date('j M Y', strtotime($req['event_date']))) ?>
+                    <?php endif; ?>
                 </p>
                 <p><strong>Total: ₹<?= number_format($req['total_amount_paise'] / 100, 2) ?></strong></p>
 
@@ -128,7 +131,13 @@ $requests = array_merge($pending, $underReview);
                                 <td style="padding:6px 0;"><?= htmlspecialchars($item['category']) ?></td>
                                 <td><?= htmlspecialchars($item['description']) ?></td>
                                 <td>₹<?= number_format($item['amount_paise'] / 100, 2) ?></td>
-                                <td><a href="/<?= htmlspecialchars($item['receipt_path']) ?>" target="_blank">View</a></td>
+                                <td>
+                                    <?php if (!empty($item['receipt_path'])): ?>
+                                        <a href="/<?= htmlspecialchars($item['receipt_path']) ?>" target="_blank">View</a>
+                                    <?php else: ?>
+                                        <span style="color:#94a3b8;">None attached</span>
+                                    <?php endif; ?>
+                                </td>
                             </tr>
                         <?php endforeach; ?>
                     </tbody>
@@ -162,6 +171,9 @@ $requests = array_merge($pending, $underReview);
                     </h3>
                     <p style="color:#475569; font-size:14px; margin-top:-8px;">
                         Event: <strong><?= htmlspecialchars($req['event_name']) ?></strong>
+                        <?php if (!empty($req['event_date'])): ?>
+                            &middot; <?= htmlspecialchars(date('j M Y', strtotime($req['event_date']))) ?>
+                        <?php endif; ?>
                     </p>
                     <p><strong>Total: ₹<?= number_format($req['total_amount_paise'] / 100, 2) ?></strong></p>
                     <?php if (!empty($req['payment_notes'])): ?>
