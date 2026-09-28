@@ -104,9 +104,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'submi
     }
 
     $eventName = trim($_POST['event_name'] ?? '');
+    $eventDate = trim($_POST['event_date'] ?? '');
+    $dcwEvent  = $_POST['dcw_event'] ?? '';
 
     if ($verifiedEmail === '') {
         $errors['system'] = "Please verify your email before submitting.";
+    } elseif ($dcwEvent === '') {
+        $errors['system'] = "Please tell us whether this was a DCW-aligned, DCW-organised or DCW-associated event.";
+    } elseif ($dcwEvent !== 'yes') {
+        $errors['system'] = "Reimbursement is only available for events that are DCW-aligned, DCW-organised or DCW-associated.";
     } elseif ($eventName === '') {
         $errors['system'] = "Please enter the name of the event.";
     } elseif ($reimbursementModel->hasOpenOrPaidRequest($verifiedEmail, $eventName)) {
@@ -138,14 +144,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'submi
                     throw new \InvalidArgumentException("Row " . ($i + 1) . ": category, description, and a positive amount are all required.");
                 }
 
+                // Receipts are optional. '' means none was attached; if one
+                // was, it is kept until finance has downloaded it and the
+                // purge cron (bin/purge_receipts.php) removes it.
                 $fileKey = "line_item_receipt_$i";
-                if (empty($_FILES[$fileKey]['name'])) {
-                    throw new \InvalidArgumentException("Row " . ($i + 1) . ": a receipt is required.");
-                }
-
-                $path = $fileUploader->handleUpload($_FILES[$fileKey], $fileKey, $verifiedEmail, 'reimbursement');
-                if ($path) {
-                    $uploadedPaths[] = $path;
+                $path = '';
+                if (!empty($_FILES[$fileKey]['name'])) {
+                    $path = $fileUploader->handleUpload($_FILES[$fileKey], $fileKey, $verifiedEmail, 'reimbursement') ?: '';
+                    if ($path) {
+                        $uploadedPaths[] = $path;
+                    }
                 }
 
                 $lineItems[] = [
@@ -168,7 +176,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'submi
             $applicantName = trim($_POST['applicant_name'] ?? '');
 
             $result = $reimbursementModel->createRequest(
-                $settings, $verifiedEmail, $applicantName, $eventName, $payment, $lineItems
+                $settings, $verifiedEmail, $applicantName, $eventName, $eventDate, $payment, $lineItems
             );
 
             require_once __DIR__ . '/../includes/mailer.php';
@@ -199,7 +207,13 @@ function cleanupUploadedPaths(array $paths) {
 
 $showConfirm = $pendingVerifyToken !== null && $verifiedEmail === '';
 $showGate = $verifiedEmail === '' && !$showConfirm;
-$cashThresholdRupees = $settings['cash_threshold_paise'] / 100;
+
+// Same India-time window the model enforces, used only to bound the date picker.
+$_tz = new DateTimeZone('Asia/Kolkata');
+$_today = new DateTimeImmutable('today', $_tz);
+$maxEventDate = $_today->format('Y-m-d');
+$minEventDate = $_today->modify('-' . ReimbursementModel::CLAIM_WINDOW_DAYS . ' days')->format('Y-m-d');
+$upiMaxRupees = ReimbursementModel::UPI_MAX_PAISE / 100;
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -286,9 +300,30 @@ $cashThresholdRupees = $settings['cash_threshold_paise'] / 100;
                     </div>
 
                     <div class="form-group" style="margin-bottom:20px;">
+                        <label>Was this a DCW-aligned, DCW-organised or DCW-associated event? <span style="color:#ef4444">*</span></label>
+                        <select name="dcw_event" id="dcw-event" required>
+                            <option value="">Select…</option>
+                            <option value="yes">Yes</option>
+                            <option value="no">No</option>
+                        </select>
+                        <div id="dcw-no-notice" class="alert-error" style="display:none; margin-top:10px;">
+                            Reimbursement is only available for DCW-aligned, DCW-organised or DCW-associated events.
+                        </div>
+                    </div>
+
+                    <div class="form-group" style="margin-bottom:20px;">
                         <label>Event name <span style="color:#ef4444">*</span></label>
                         <input type="text" name="event_name" required maxlength="255" placeholder="e.g. Wiki Loves Monuments 2026 Workshop">
                         <span style="font-size:13px; color:#64748b; margin-top:5px; display:block;">Type the name of the event you're claiming expenses for.</span>
+                    </div>
+
+                    <div class="form-group" style="margin-bottom:20px;">
+                        <label>Event date <span style="color:#ef4444">*</span></label>
+                        <input type="date" name="event_date" required
+                               min="<?= htmlspecialchars($minEventDate) ?>" max="<?= htmlspecialchars($maxEventDate) ?>">
+                        <span style="font-size:13px; color:#64748b; margin-top:5px; display:block;">
+                            Requests must be submitted within <?= (int) ReimbursementModel::CLAIM_WINDOW_DAYS ?> days of the event.
+                        </span>
                     </div>
 
                     <h3>Expenses</h3>
@@ -301,12 +336,12 @@ $cashThresholdRupees = $settings['cash_threshold_paise'] / 100;
 
                     <h3>Payment details</h3>
                     <p style="font-size:13px; color:#64748b;">
-                        Cash is only available for totals of ₹<?= number_format($cashThresholdRupees, 2) ?> or less.
+                        UPI is available for claims up to ₹<?= number_format($upiMaxRupees) ?>.
+                        Larger claims are paid by bank transfer.
                     </p>
 
                     <div class="form-group" style="margin-bottom:15px;">
-                        <label><input type="radio" name="payment_method" value="cash" id="method-cash" checked> Cash</label><br>
-                        <label><input type="radio" name="payment_method" value="upi" id="method-upi"> UPI</label><br>
+                        <label><input type="radio" name="payment_method" value="upi" id="method-upi" checked> UPI</label><br>
                         <label><input type="radio" name="payment_method" value="bank" id="method-bank"> Bank transfer</label>
                     </div>
 
@@ -336,7 +371,7 @@ $cashThresholdRupees = $settings['cash_threshold_paise'] / 100;
                         </div>
                     </div>
 
-                    <button type="submit" style="margin-top:10px;">Submit reimbursement request</button>
+                    <button type="submit" id="submit-btn" style="margin-top:10px;">Submit reimbursement request</button>
                 </form>
             <?php endif; ?>
         <?php endif; ?>
@@ -361,7 +396,7 @@ $cashThresholdRupees = $settings['cash_threshold_paise'] / 100;
                 <input type="number" step="0.01" min="0.01" name="line_item_amount[]" class="li-amount">
             </div>
             <div class="form-group">
-                <label>Receipt</label>
+                <label>Receipt <span style="font-weight:400; color:#64748b;">(optional, but recommended)</span></label>
                 <input type="file" name="__RECEIPT_NAME__" accept=".pdf,.jpg,.jpeg,.png">
             </div>
             <button type="button" class="remove-line-item" style="width:auto; background:#fff; color:#991b1b; border:1px solid #f87171;">Remove</button>
@@ -369,45 +404,52 @@ $cashThresholdRupees = $settings['cash_threshold_paise'] / 100;
     </template>
 
     <script>
-        const CASH_THRESHOLD_RUPEES = <?= json_encode($cashThresholdRupees) ?>;
-        let lineItemCount = 0;
+        const UPI_MAX_RUPEES = <?= json_encode($upiMaxRupees) ?>;
 
         function addLineItem() {
             const template = document.getElementById('line-item-template');
             const clone = template.content.cloneNode(true);
-            const receiptInput = clone.querySelector('input[type="file"]');
-            receiptInput.name = 'line_item_receipt_' + lineItemCount;
 
             clone.querySelector('.remove-line-item').addEventListener('click', function (e) {
                 e.target.closest('.line-item').remove();
+                renumberReceipts();
                 recomputeTotal();
             });
             clone.querySelector('.li-amount').addEventListener('input', recomputeTotal);
 
             document.getElementById('line-items').appendChild(clone);
-            lineItemCount++;
+            renumberReceipts();
+        }
+
+        // The server pairs row N with the file field line_item_receipt_N, so the
+        // file inputs must always be numbered by their current position. Without
+        // this, removing an earlier row would silently detach a later row's receipt.
+        function renumberReceipts() {
+            document.querySelectorAll('#line-items .line-item input[type="file"]').forEach(function (el, i) {
+                el.name = 'line_item_receipt_' + i;
+            });
         }
 
         function recomputeTotal() {
-            const amounts = document.querySelectorAll('.li-amount');
             let total = 0;
-            amounts.forEach(input => {
+            document.querySelectorAll('.li-amount').forEach(input => {
                 const val = parseFloat(input.value);
                 if (!isNaN(val)) total += val;
             });
             document.getElementById('running-total').textContent = total.toFixed(2);
 
-            // Client-side hint only — the server re-validates the threshold
-            // against the real computed total regardless of what's shown here.
-            const cashRadio = document.getElementById('method-cash');
-            if (total > CASH_THRESHOLD_RUPEES) {
-                cashRadio.disabled = true;
-                if (cashRadio.checked) {
-                    document.getElementById('method-upi').checked = true;
+            // Client-side convenience only — the server re-checks against the
+            // real computed total. Above the UPI cap, bank transfer is the only option.
+            const upiRadio = document.getElementById('method-upi');
+            const bankRadio = document.getElementById('method-bank');
+            if (total > UPI_MAX_RUPEES) {
+                upiRadio.disabled = true;
+                if (upiRadio.checked) {
+                    bankRadio.checked = true;
                     togglePaymentFields();
                 }
             } else {
-                cashRadio.disabled = false;
+                upiRadio.disabled = false;
             }
         }
 
@@ -417,8 +459,16 @@ $cashThresholdRupees = $settings['cash_threshold_paise'] / 100;
             document.getElementById('bank-fields').style.display = method === 'bank' ? 'block' : 'none';
         }
 
+        function toggleDcwNotice() {
+            const answer = document.getElementById('dcw-event').value;
+            document.getElementById('dcw-no-notice').style.display = answer === 'no' ? 'block' : 'none';
+            document.getElementById('submit-btn').disabled = (answer === 'no');
+        }
+
         document.getElementById('add-line-item')?.addEventListener('click', addLineItem);
         document.querySelectorAll('input[name="payment_method"]').forEach(el => el.addEventListener('change', togglePaymentFields));
+        document.getElementById('dcw-event')?.addEventListener('change', toggleDcwNotice);
+        document.getElementById('reimbursement-form')?.addEventListener('submit', renumberReceipts);
 
         // Start with one line item row.
         if (document.getElementById('line-items')) {
