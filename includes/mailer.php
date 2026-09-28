@@ -877,8 +877,13 @@ Deoband Community Wikimedia";
      * admin that the transfer itself needs fixing, not a message for the
      * applicant, who has done nothing wrong and shouldn't be alarmed by a
      * payment-plumbing problem that isn't theirs to solve.
+     *
+     * $paymentReference is the transaction reference (UTR / transaction ID)
+     * the finance reviewer recorded when marking the request paid. It is only
+     * used for the 'Paid' status, where it is shown to the applicant so they
+     * can match the payment against their own bank or UPI statement.
      */
-    public static function sendReimbursementStatusUpdate($email, $applicantName, $trackingId, $eventTitle, $status, $note = '') {
+    public static function sendReimbursementStatusUpdate($email, $applicantName, $trackingId, $eventTitle, $status, $note = '', $paymentReference = '') {
         $config = require __DIR__ . '/config.php';
         $mailConfig = $config['mail'];
 
@@ -904,11 +909,30 @@ Deoband Community Wikimedia";
             $mail->addAddress($email, $applicantName);
 
             $mail->isHTML(true);
-            $mail->Subject = "Update on your reimbursement request - " . htmlspecialchars($status, ENT_QUOTES, 'UTF-8');
+            $mail->Subject = ($status === 'Paid')
+                ? "Your reimbursement has been paid"
+                : "Update on your reimbursement request - " . htmlspecialchars($status, ENT_QUOTES, 'UTF-8');
 
             $noteHtml = $note !== ''
                 ? "<p><strong>Notes:</strong><br>" . nl2br(htmlspecialchars($note)) . "</p>"
                 : '';
+
+            // 'Paid' gets its own wording, and shows the transaction
+            // reference the finance reviewer entered so the applicant can
+            // find the payment on their own statement. Every other status
+            // keeps the generic "has been marked as ..." sentence.
+            $isPaid = ($status === 'Paid');
+            $safeReference = htmlspecialchars($paymentReference);
+
+            if ($isPaid) {
+                $statusLineHtml = "Your reimbursement for <strong>" . htmlspecialchars($eventTitle) . "</strong> (tracking ID $trackingId) has been <strong>paid</strong>.";
+                $referenceHtml = $paymentReference !== ''
+                    ? "<p><strong>Transaction reference:</strong> $safeReference<br><span style='font-size:14px; color:#64748b;'>You can use this to find the payment in your bank or UPI statement.</span></p>"
+                    : '';
+            } else {
+                $statusLineHtml = "Your reimbursement request for <strong>" . htmlspecialchars($eventTitle) . "</strong>, tracking ID $trackingId, has been marked as <strong>" . htmlspecialchars($status) . "</strong>.";
+                $referenceHtml = '';
+            }
 
             $htmlBody = "
             <!DOCTYPE html>
@@ -931,7 +955,8 @@ Deoband Community Wikimedia";
                     </div>
                     <div class='body-content'>
                         <p>Hello <strong>" . htmlspecialchars($applicantName) . "</strong>,</p>
-                        <p>Your reimbursement request for <strong>" . htmlspecialchars($eventTitle) . "</strong>, tracking ID $trackingId, has been marked as <strong>" . htmlspecialchars($status) . "</strong>.</p>
+                        <p>$statusLineHtml</p>
+                        $referenceHtml
                         $noteHtml
                     </div>
                     <div class='footer'>
@@ -944,7 +969,13 @@ Deoband Community Wikimedia";
             ";
 
             $mail->Body    = $htmlBody;
-            $mail->AltBody = "Hello $applicantName,\n\nYour reimbursement request for $eventTitle (Tracking ID: $trackingId) has been marked as $status." . ($note ? "\n\nNotes:\n$note" : '');
+            if ($isPaid) {
+                $altBody = "Hello $applicantName,\n\nYour reimbursement for $eventTitle (Tracking ID: $trackingId) has been paid."
+                    . ($paymentReference !== '' ? "\n\nTransaction reference: $paymentReference\nYou can use this to find the payment in your bank or UPI statement." : '');
+            } else {
+                $altBody = "Hello $applicantName,\n\nYour reimbursement request for $eventTitle (Tracking ID: $trackingId) has been marked as $status.";
+            }
+            $mail->AltBody = $altBody . ($note ? "\n\nNotes:\n$note" : '');
 
             if ($mailConfig['host'] !== 'smtp.example.com') {
                 $mail->send();
