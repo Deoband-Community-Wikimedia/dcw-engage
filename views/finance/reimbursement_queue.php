@@ -39,18 +39,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $reference = trim($_POST['payment_reference'] ?? '');
         $receiptsDownloaded = !empty($_POST['receipts_downloaded']);
 
+        // Every payment is a UPI or bank transfer (cash isn't an option), so
+        // there is always a UTR / transaction ID to record. It is also emailed
+        // to the applicant so they can find the payment on their statement.
+        if ($reference === '') {
+            $error = "Enter the UTR / transaction reference before marking this paid. It is emailed to the applicant so they can find the payment on their statement.";
+        } elseif (mb_strlen($reference) > 255) {
+            $error = "That transaction reference is too long (255 characters max).";
         // If receipts were attached, finance must confirm they've saved them
         // before this can be marked paid — that confirmation is what allows
         // the purge cron to delete the files afterwards.
-        if ($reimbursementModel->hasReceipts($requestId) && !$receiptsDownloaded) {
+        } elseif ($reimbursementModel->hasReceipts($requestId) && !$receiptsDownloaded) {
             $error = "This request has receipts attached. Download them and tick the confirmation box before marking it paid — they are deleted from the server afterwards.";
         } elseif ($reimbursementModel->markPaid($requestId, Auth::email(), $reference, $receiptsDownloaded)) {
             $info = $reimbursementModel->getForNotification($requestId);
-            AuditLog::record('reimbursement.paid', Auth::id(), Auth::email(), $info['email'], 'Tracking: ' . $info['tracking_id'] . ($reference ? ' | Ref: ' . $reference : '') . ($receiptsDownloaded ? ' | Receipts downloaded' : ''));
+            AuditLog::record('reimbursement.paid', Auth::id(), Auth::email(), $info['email'], 'Tracking: ' . $info['tracking_id'] . ' | Ref: ' . $reference . ($receiptsDownloaded ? ' | Receipts downloaded' : ''));
             require_once __DIR__ . '/../../includes/mailer.php';
             Mailer::sendReimbursementStatusUpdate(
                 $info['email'], $info['applicant_name'], $info['tracking_id'],
-                $info['event_name'], 'Paid'
+                $info['event_name'], 'Paid', '', $reference
             );
             $message = "Request #$requestId marked paid."
                 . ($receiptsDownloaded ? " Its receipts will be removed from the server by the scheduled cleanup." : '');
@@ -140,7 +147,11 @@ $queue = $reimbursementModel->listForFinanceQueue();
                     <?= CSRF::getInputField() ?>
                     <?= CSRF::getSubmitField() ?>
                     <input type="hidden" name="request_id" value="<?= (int) $req['id'] ?>">
-                    <input type="text" name="payment_reference" placeholder="UTR / transaction reference" style="flex:1; min-width:180px;">
+                    <!-- Required for "Mark paid". The "Payment failed" button has
+                         formnovalidate so it can still be submitted without one. -->
+                    <input type="text" name="payment_reference" required maxlength="255"
+                           placeholder="UTR / transaction reference (required to mark paid)"
+                           style="flex:1; min-width:180px;">
                     <textarea name="notes" placeholder="Notes (required if marking failed)" style="flex:1; min-width:180px; min-height:40px;"></textarea>
                     <?php if (!empty($req['receipts'])): ?>
                         <label style="flex-basis:100%; font-size:13px; font-weight:500;">
@@ -149,7 +160,7 @@ $queue = $reimbursementModel->listForFinanceQueue();
                         </label>
                     <?php endif; ?>
                     <button type="submit" name="result" value="paid" style="width:auto; background:#059669;">Mark paid</button>
-                    <button type="submit" name="result" value="failed" style="width:auto; background:#dc2626;">Payment failed</button>
+                    <button type="submit" name="result" value="failed" formnovalidate style="width:auto; background:#dc2626;">Payment failed</button>
                 </form>
             </div>
         <?php endforeach; ?>
