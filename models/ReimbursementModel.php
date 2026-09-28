@@ -380,6 +380,12 @@ class ReimbursementModel {
      * silent: the caller must NOT send the applicant any notification.
      * $notes is optional internal context for the audit log, not something
      * ever shown to the applicant.
+     *
+     * Because this is meant to be invisible to the applicant, it is also
+     * excluded from getStatusForApplicant() below — a discarded request
+     * looks identical to "no record found" from the tracking page, the
+     * same as it looks identical to "no notification sent" from their
+     * inbox. Silent means silent everywhere, not just in email.
      */
     public function discard($requestId, $adminIdentifier, $notes = null) {
         $stmt = $this->db->prepare(
@@ -518,6 +524,39 @@ class ReimbursementModel {
         );
         $stmt->execute(['who' => $financeIdentifier, 'notes' => $notes, 'id' => $requestId]);
         return $stmt->rowCount() === 1;
+    }
+
+    /**
+     * For the public /track lookup. Requires BOTH the tracking ID and the
+     * email it was submitted with — same reasoning as
+     * ApplicationModel::getApplicationByTrackingIdAndEmail(): a tracking ID
+     * alone is unguessable, but an email address often isn't a secret, so
+     * the pair is what keeps a single leaked/guessed value from being
+     * enough to pull up someone's request.
+     *
+     * Status-only, deliberately: no payment_method, upi_id, bank_account_*,
+     * or bank_ifsc. An applicant checking on their own request doesn't need
+     * those echoed back, and payment_reference is only ever surfaced once
+     * Paid — that's on your own successful payment, not a preview of it.
+     *
+     * Excludes 'Discarded' requests on purpose — see discard()'s docblock.
+     * A discarded request must look exactly like "no record found" here,
+     * the same way it never generates a notification.
+     */
+    public function getStatusForApplicant($trackingId, $email) {
+        $stmt = $this->db->prepare(
+            "SELECT tracking_id, event_name, event_date, total_amount_paise, status,
+                    admin_notes, payment_reference, paid_at, created_at
+             FROM reimbursement_requests
+             WHERE tracking_id = :tracking_id AND email = :email
+               AND status <> 'Discarded'"
+        );
+        $stmt->execute([
+            'tracking_id' => $trackingId,
+            'email'       => strtolower(trim($email)),
+        ]);
+
+        return $stmt->fetch() ?: null;
     }
 
     /**
