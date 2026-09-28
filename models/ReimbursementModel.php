@@ -29,6 +29,15 @@ require_once __DIR__ . '/../includes/crypto.php';
  * exactly the case discard() exists for.
  */
 class ReimbursementModel {
+    /** Claims above this total must be paid by bank transfer; at or below, UPI is the default. */
+    public const UPI_MAX_PAISE = 80000; // ₹800
+
+    /** A claim is only valid if filed within this many days of the event. */
+    public const CLAIM_WINDOW_DAYS = 7;
+
+    /** "Today" for the claim window is judged in India time, not server time. */
+    private const CLAIM_TIMEZONE = 'Asia/Kolkata';
+
     private $db;
 
     public function __construct() {
@@ -90,12 +99,18 @@ class ReimbursementModel {
      * Create a request with its line items in one transaction.
      *
      * $lineItems: array of ['category' => ..., 'description' => ..., 'amount_paise' => int, 'receipt_path' => string]
-     * $payment: ['method' => 'cash'|'upi'|'bank', 'upi_id' => ?, 'bank_account_name' => ?, 'bank_account_number' => ?, 'bank_ifsc' => ?]
+     * (receipt_path is optional — '' when the applicant didn't attach one)
+     *
+     * $eventDate: 'YYYY-MM-DD'. Must not be in the future, and the claim must
+     * be filed within CLAIM_WINDOW_DAYS of it.
+     * $payment: ['method' => 'upi'|'bank', 'upi_id' => ?, 'bank_account_name' => ?, 'bank_account_number' => ?, 'bank_ifsc' => ?]
+     * Cash is not an option. UPI is the default up to UPI_MAX_PAISE;
+     * above that, bank transfer is required.
      *
      * The total is summed HERE from the line items, never taken from a
-     * client-supplied total field. The cash-threshold check is re-verified
-     * here too — the UI hides the cash option client-side once the running
-     * total crosses the threshold, but that's a UX hint, not enforcement.
+     * client-supplied total field. The UPI cap is re-verified here too —
+     * the form disables UPI client-side once the running total crosses
+     * it, but that's a UX hint, not enforcement.
      *
      * No eligibility check happens here — any verified email may submit.
      * A reviewer sorts out legitimacy afterwards via approveForPayment(),
@@ -105,7 +120,7 @@ class ReimbursementModel {
      * @throws \InvalidArgumentException on any validation failure
      * @return array ['id' => int, 'tracking_id' => string, 'total_paise' => int]
      */
-    public function createRequest($settings, $email, $applicantName, $eventName, array $payment, array $lineItems) {
+    public function createRequest($settings, $email, $applicantName, $eventName, $eventDate, array $payment, array $lineItems) {
         $eventName = trim($eventName);
         if ($eventName === '') {
             throw new \InvalidArgumentException('Please enter the name of the event.');
@@ -114,14 +129,16 @@ class ReimbursementModel {
             throw new \InvalidArgumentException('Event name is too long (255 characters max).');
         }
 
+        $eventDate = $this->validateEventDate($eventDate);
+
         if (empty($lineItems)) {
             throw new \InvalidArgumentException('At least one expense line item is required.');
         }
 
         $totalPaise = 0;
         foreach ($lineItems as $item) {
-            if (empty($item['category']) || empty($item['description']) || empty($item['receipt_path'])) {
-                throw new \InvalidArgumentException('Every expense needs a category, description, and receipt.');
+            if (empty($item['category']) || empty($item['description'])) {
+                throw new \InvalidArgumentException('Every expense needs a category and a description.');
             }
             $amount = (int) $item['amount_paise'];
             if ($amount <= 0) {
@@ -131,13 +148,16 @@ class ReimbursementModel {
         }
 
         $method = $payment['method'] ?? '';
-        if (!in_array($method, ['cash', 'upi', 'bank'], true)) {
+        if (!in_array($method, ['upi', 'bank'], true)) {
             throw new \InvalidArgumentException('Please select a payment method.');
         }
 
-        if ($method === 'cash' && $totalPaise > (int) $settings['cash_threshold_paise']) {
-            $rupees = number_format($settings['cash_threshold_paise'] / 100, 2);
-            throw new \InvalidArgumentException("Cash isn't available above ₹$rupees. Please choose UPI or bank transfer.");
+        // UPI is the default up to the cap; above it, bank transfer only.
+        // The form disables UPI client-side once the total crosses this,
+        // but this is the check that actually enforces it.
+        if ($method === 'upi' && $totalPaise > self::UPI_MAX_PAISE) {
+            $rupees = number_format(self::UPI_MAX_PAISE / 100);
+            throw new \InvalidArgumentException("For claims above ₹$rupees, please provide bank account details instead of UPI.");
         }
 
         $upiId = null;
@@ -178,11 +198,11 @@ class ReimbursementModel {
         try {
             $stmt = $this->db->prepare(
                 "INSERT INTO reimbursement_requests
-                    (email, applicant_name, event_name, total_amount_paise,
+                    (email, applicant_name, event_name, event_date, total_amount_paise,
                      payment_method, upi_id, bank_account_name, bank_account_number_enc, bank_ifsc,
                      tracking_id)
                  VALUES
-                    (:email, :name, :event_name, :total,
+                    (:email, :name, :event_name, :event_date, :total,
                      :method, :upi_id, :bank_name, :bank_acct_enc, :bank_ifsc,
                      :tracking_id)"
             );
@@ -190,6 +210,7 @@ class ReimbursementModel {
                 'email'         => strtolower(trim($email)),
                 'name'          => $applicantName,
                 'event_name'    => $eventName,
+                'event_date'    => $eventDate,
                 'total'         => $totalPaise,
                 'method'        => $method,
                 'upi_id'        => $upiId,
@@ -210,7 +231,7 @@ class ReimbursementModel {
                     'category'     => $item['category'],
                     'description'  => $item['description'],
                     'amount'       => (int) $item['amount_paise'],
-                    'receipt_path' => $item['receipt_path'],
+                    'receipt_path' => (string) ($item['receipt_path'] ?? ''),
                 ]);
             }
 
@@ -221,6 +242,35 @@ class ReimbursementModel {
         }
 
         return ['id' => $requestId, 'tracking_id' => $trackingId, 'total_paise' => $totalPaise];
+    }
+
+    /**
+     * The event must have already happened, and the claim must be filed
+     * within CLAIM_WINDOW_DAYS of it. Judged in India time so a claim filed
+     * late in the evening isn't affected by the server's own time zone.
+     * Returns the normalised 'YYYY-MM-DD' string.
+     */
+    private function validateEventDate($raw) {
+        $raw = trim((string) $raw);
+        $tz = new \DateTimeZone(self::CLAIM_TIMEZONE);
+
+        $date = \DateTimeImmutable::createFromFormat('!Y-m-d', $raw, $tz);
+        if (!$date || $date->format('Y-m-d') !== $raw) {
+            throw new \InvalidArgumentException('Please enter the date of the event.');
+        }
+
+        $today = new \DateTimeImmutable('today', $tz);
+        if ($date > $today) {
+            throw new \InvalidArgumentException('The event date cannot be in the future.');
+        }
+
+        if ((int) $date->diff($today)->days > self::CLAIM_WINDOW_DAYS) {
+            throw new \InvalidArgumentException(
+                'Reimbursement requests must be submitted within ' . self::CLAIM_WINDOW_DAYS . ' days of the event.'
+            );
+        }
+
+        return $raw;
     }
 
     private function generateTrackingId() {
@@ -258,7 +308,7 @@ class ReimbursementModel {
      * event_name (typed by the applicant) is just another column.
      */
     public function listForAdminReview($status = null) {
-        $sql = "SELECT id, email, applicant_name, event_name,
+        $sql = "SELECT id, email, applicant_name, event_name, event_date,
                        total_amount_paise, status, tracking_id,
                        admin_notes, decided_by, decided_at,
                        payment_notes, created_at
@@ -346,10 +396,13 @@ class ReimbursementModel {
     // ------------------------------------------------------------------
 
     /**
-     * Deliberately narrow: payment details only, no line items, no
-     * receipts, no expense descriptions. Finance needs to know how much
-     * and where to send it, not what it was for. Bank account numbers are
-     * decrypted only here, only for rows finance is actively meant to pay.
+     * Deliberately narrow: payment details, plus the receipt FILES (paths
+     * only) so finance can download them for their records before marking
+     * a request paid. Still no line items, categories or expense
+     * descriptions — finance needs to know how much, where to send it, and
+     * to keep the paperwork, not what each expense was for. Bank account
+     * numbers are decrypted only here, only for rows finance is actively
+     * meant to pay.
      */
     public function listForFinanceQueue() {
         $stmt = $this->db->query(
@@ -367,9 +420,25 @@ class ReimbursementModel {
                 $row['bank_account_number'] = Crypto::decrypt($row['bank_account_number_enc']);
             }
             unset($row['bank_account_number_enc']);
+            $row['receipts'] = $this->getReceiptPaths($row['id']);
         }
 
         return $rows;
+    }
+
+    /** Receipt file paths actually on file for a request ('' means none was attached). */
+    private function getReceiptPaths($requestId) {
+        $stmt = $this->db->prepare(
+            "SELECT receipt_path FROM reimbursement_line_items
+             WHERE request_id = :rid AND receipt_path IS NOT NULL AND receipt_path <> ''
+             ORDER BY id ASC"
+        );
+        $stmt->execute(['rid' => $requestId]);
+        return $stmt->fetchAll(\PDO::FETCH_COLUMN);
+    }
+
+    public function hasReceipts($requestId) {
+        return count($this->getReceiptPaths($requestId)) > 0;
     }
 
     /**
@@ -387,14 +456,52 @@ class ReimbursementModel {
         return $stmt->fetch() ?: null;
     }
 
-    public function markPaid($requestId, $financeIdentifier, $paymentReference) {
+    /**
+     * $receiptsDownloaded: finance confirmed they saved the receipts. That
+     * timestamp is what makes the receipt files eligible for the purge cron
+     * (bin/purge_receipts.php) — nothing is ever deleted without it.
+     */
+    public function markPaid($requestId, $financeIdentifier, $paymentReference, $receiptsDownloaded = false) {
         $stmt = $this->db->prepare(
             "UPDATE reimbursement_requests
-             SET status = 'Paid', paid_by = :who, paid_at = NOW(), payment_reference = :ref
+             SET status = 'Paid', paid_by = :who, paid_at = NOW(), payment_reference = :ref,
+                 receipts_downloaded_at = IF(:dl = 1, NOW(), NULL)
              WHERE id = :id AND status = 'Approved for Payment'"
         );
-        $stmt->execute(['who' => $financeIdentifier, 'ref' => $paymentReference, 'id' => $requestId]);
+        $stmt->execute([
+            'who' => $financeIdentifier,
+            'ref' => $paymentReference,
+            'dl'  => $receiptsDownloaded ? 1 : 0,
+            'id'  => $requestId,
+        ]);
         return $stmt->rowCount() === 1;
+    }
+
+    // ------------------------------------------------------------------
+    // Receipt retention (used by bin/purge_receipts.php)
+    // ------------------------------------------------------------------
+
+    /**
+     * Receipt files that are safe to delete: the request is Paid AND
+     * finance confirmed they downloaded the receipts.
+     */
+    public function listReceiptsReadyForPurge() {
+        return $this->db->query(
+            "SELECT li.id, li.receipt_path
+             FROM reimbursement_line_items li
+             JOIN reimbursement_requests r ON r.id = li.request_id
+             WHERE r.status = 'Paid'
+               AND r.receipts_downloaded_at IS NOT NULL
+               AND li.receipt_path IS NOT NULL AND li.receipt_path <> ''"
+        )->fetchAll();
+    }
+
+    /** Blank the stored path once its file is gone, so it is never retried or linked. */
+    public function markReceiptPurged($lineItemId) {
+        $stmt = $this->db->prepare(
+            "UPDATE reimbursement_line_items SET receipt_path = '' WHERE id = :id"
+        );
+        $stmt->execute(['id' => (int) $lineItemId]);
     }
 
     /**
