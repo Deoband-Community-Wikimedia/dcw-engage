@@ -527,6 +527,48 @@ class ReimbursementModel {
     }
 
     /**
+     * For the payment-confirmation PDF, generated on demand when a finance
+     * officer wants it — never written to disk, streamed straight to the
+     * browser (see views/finance/reimbursement_receipt.php). Scoped to
+     * status = 'Paid' only — there's no "confirmation" for a request that
+     * hasn't actually been paid — and deliberately the same shape as
+     * listForFinanceQueue(): payment details, no line items, no receipts,
+     * no expense descriptions. This is a finance-facing document about how
+     * and where the money went, not an itemised expense report.
+     */
+    public function getPaidRequestForReceipt($requestId) {
+        $stmt = $this->db->prepare(
+            "SELECT id, tracking_id, applicant_name, email, event_name, event_date,
+                    total_amount_paise, payment_method, upi_id, bank_account_name,
+                    bank_account_number_enc, bank_ifsc, payment_reference,
+                    decided_by, decided_at, paid_by, paid_at
+             FROM reimbursement_requests
+             WHERE id = :id AND status = 'Paid'"
+        );
+        $stmt->execute(['id' => (int) $requestId]);
+        $row = $stmt->fetch();
+
+        if (!$row) {
+            return null;
+        }
+
+        // Masked, not full — this becomes a standalone file a finance
+        // officer can save, email, or print outside the app, so it gets the
+        // same "last 4 digits" treatment a bank statement or receipt would
+        // use, even though they already saw the full number once while
+        // processing the payment.
+        if ($row['bank_account_number_enc'] !== null) {
+            $full = Crypto::decrypt($row['bank_account_number_enc']);
+            $row['bank_account_number_masked'] = str_repeat('X', max(0, strlen($full) - 4)) . substr($full, -4);
+        } else {
+            $row['bank_account_number_masked'] = null;
+        }
+        unset($row['bank_account_number_enc']);
+
+        return $row;
+    }
+
+    /**
      * For the public /track lookup. Requires BOTH the tracking ID and the
      * email it was submitted with — same reasoning as
      * ApplicationModel::getApplicationByTrackingIdAndEmail(): a tracking ID

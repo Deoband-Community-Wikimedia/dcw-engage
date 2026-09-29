@@ -15,6 +15,7 @@ requireRole(['finance', 'owner']);
 $reimbursementModel = new ReimbursementModel();
 $message = '';
 $error = '';
+$justPaidRequestId = null;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!CSRF::validate($_POST['csrf_token'] ?? '')) {
@@ -61,6 +62,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             );
             $message = "Request #$requestId marked paid."
                 . ($receiptsDownloaded ? " Its receipts will be removed from the server by the scheduled cleanup." : '');
+            $justPaidRequestId = $requestId;
         }
     } elseif (($_POST['result'] ?? '') === 'failed') {
         if ($reimbursementModel->markPaymentFailed($requestId, Auth::email(), $notes)) {
@@ -98,7 +100,16 @@ $queue = $reimbursementModel->listForFinanceQueue();
         </p>
 
         <?php if ($message): ?>
-            <div class="alert-success"><?= htmlspecialchars($message) ?></div>
+            <div class="alert-success">
+                <?= htmlspecialchars($message) ?>
+                <?php if ($justPaidRequestId): ?>
+                    <br>
+                    <a href="/finance/reimbursements/receipt/<?= (int) $justPaidRequestId ?>" target="_blank"
+                       style="display:inline-block; margin-top:8px; color:#106b9a; font-weight:600; text-decoration:none;">
+                        ⬇ Download payment confirmation (PDF)
+                    </a>
+                <?php endif; ?>
+            </div>
         <?php endif; ?>
         <?php if ($error): ?>
             <div class="alert-error"><?= htmlspecialchars($error) ?></div>
