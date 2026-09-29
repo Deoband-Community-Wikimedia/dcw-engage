@@ -37,6 +37,21 @@ function reimbursement_receipt_logo_data_uri(): ?string {
 }
 
 /**
+ * Formats a UTC timestamp string to Indian Standard Time (Asia/Kolkata).
+ */
+function reimbursement_format_ist(?string $utcDatetime, string $format = 'j F Y, H:i'): string {
+    if (empty($utcDatetime)) {
+        return '—';
+    }
+    try {
+        $dt = new DateTimeImmutable($utcDatetime, new DateTimeZone('UTC'));
+        return $dt->setTimezone(new DateTimeZone('Asia/Kolkata'))->format($format) . ' IST';
+    } catch (Exception $e) {
+        return $utcDatetime;
+    }
+}
+
+/**
  * $data is the array returned by ReimbursementModel::getPaidRequestForReceipt().
  */
 function reimbursement_receipt_html(array $data): string {
@@ -58,9 +73,9 @@ function reimbursement_receipt_html(array $data): string {
           . "<tr><td class='label'>IFSC</td><td>" . htmlspecialchars($data['bank_ifsc']) . "</td></tr>";
 
     $eventDate = !empty($data['event_date']) ? date('j F Y', strtotime($data['event_date'])) : '—';
-    $decidedAt = !empty($data['decided_at']) ? date('j F Y, H:i', strtotime($data['decided_at'])) : '—';
-    $paidAt = !empty($data['paid_at']) ? date('j F Y, H:i', strtotime($data['paid_at'])) : '—';
-    $generatedAt = date('j F Y, H:i');
+    $decidedAt = reimbursement_format_ist($data['decided_at'] ?? null);
+    $paidAt = reimbursement_format_ist($data['paid_at'] ?? null);
+    $generatedAt = (new DateTimeImmutable('now', new DateTimeZone('Asia/Kolkata')))->format('j F Y, H:i') . ' IST';
 
     return "
     <html>
