@@ -79,6 +79,15 @@ if ($route === '/' || $route === '/index.php') {
 } elseif ($route === '/finance/reimbursements') {
     require __DIR__ . '/views/finance/reimbursement_queue.php';
 
+// Payment-confirmation PDF for one Paid request, generated on demand and
+// streamed straight to the browser — nothing is saved to the server. Auth/
+// role check happens inside the view (requireRole(['finance', 'owner'])),
+// same as the queue above.
+} elseif (preg_match('/^\/finance\/reimbursements\/receipt\/(\d+)$/', $route, $matches)) {
+    global $reimbursementReceiptId;
+    $reimbursementReceiptId = (int) $matches[1];
+    require __DIR__ . '/views/finance/reimbursement_receipt.php';
+
 } else {
     // Dynamic form routing
     // Extract the form type from the route (e.g., '/scholarship' -> 'scholarship')
