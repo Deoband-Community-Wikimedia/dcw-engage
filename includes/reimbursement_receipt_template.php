@@ -119,13 +119,13 @@ function reimbursement_receipt_html(array $data): string {
             table.items td { padding: 6px; border-bottom: 1px solid #e2e8f0; vertical-align: top; }
             table.items td.amount, table.items th.amount { text-align: right; white-space: nowrap; }
             table.items tfoot td { border-bottom: none; border-top: 2px solid #106b9a; font-weight: 700; padding-top: 8px; }
-            .footer { margin-top: 30px; padding-top: 14px; border-top: 1px solid #e2e8f0; font-size: 11px; line-height: 1.7; color: #64748b; }
+            .footer { margin-top: 30px; padding-top: 14px; border-top: 1px solid #e2e8f0; font-size: 13px; line-height: 1.7; color: #64748b; }
         </style>
     </head>
     <body>
         <div class='header'>
             <div class='logo-wrap'>$logoHtml</div>
-            <div class='title'>DCW Community Reimbursement Receipt</div>
+            <div class='title'>DCW Reimbursement Receipt</div>
             <div class='subtitle'>Request ID: " . htmlspecialchars($data['tracking_id']) . "</div>
         </div>
 
