@@ -79,6 +79,11 @@ if ($route === '/' || $route === '/index.php') {
 } elseif ($route === '/finance/reimbursements') {
     require __DIR__ . '/views/finance/reimbursement_queue.php';
 
+// Index of closed (Paid) requests, each linking to its own receipt PDF.
+// Same requireRole(['finance', 'owner']) boundary as the queue above.
+} elseif ($route === '/finance/reimbursements/paid') {
+    require __DIR__ . '/views/finance/reimbursement_paid.php';
+
 // Payment-confirmation PDF for one Paid request, generated on demand and
 // streamed straight to the browser — nothing is saved to the server. Auth/
 // role check happens inside the view (requireRole(['finance', 'owner'])),
