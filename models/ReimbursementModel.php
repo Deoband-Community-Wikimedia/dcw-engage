@@ -527,6 +527,23 @@ class ReimbursementModel {
     }
 
     /**
+     * Lightweight list of closed (Paid) requests for the "download receipts"
+     * page — applicant, amount, when it was processed, and enough to link
+     * to getPaidRequestForReceipt()'s PDF for each row. Deliberately doesn't
+     * include payment_method, upi_id, bank details, or line items: this is
+     * an index to click into a receipt from, not a place to read payment
+     * details directly. Most recently paid first.
+     */
+    public function listPaidForFinance() {
+        return $this->db->query(
+            "SELECT id, tracking_id, applicant_name, event_name, total_amount_paise, paid_by, paid_at
+             FROM reimbursement_requests
+             WHERE status = 'Paid'
+             ORDER BY paid_at DESC"
+        )->fetchAll();
+    }
+
+    /**
      * For the payment-confirmation PDF, generated on demand when a finance
      * officer wants it — never written to disk, streamed straight to the
      * browser (see views/finance/reimbursement_receipt.php). Scoped to

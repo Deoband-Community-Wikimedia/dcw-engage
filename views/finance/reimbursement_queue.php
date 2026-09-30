@@ -92,7 +92,10 @@ $queue = $reimbursementModel->listForFinanceQueue();
 </head>
 <body>
     <div class="container">
-        <h1>Reimbursement Payment Queue</h1>
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+            <h1 style="margin:0;">Reimbursement Payment Queue</h1>
+            <a href="/finance/reimbursements/paid" style="color:#106b9a; font-size:14px; font-weight:600; text-decoration:none;">Closed requests &amp; receipts &rarr;</a>
+        </div>
         <p style="color:#64748b; font-size:14px;">
             Approved claims awaiting payment. Expense details aren't shown here — that review
             already happened. If receipts were attached, download them before marking a request
