@@ -527,14 +527,37 @@ class ReimbursementModel {
     }
 
     /**
+     * Lightweight list of closed (Paid) requests for the "download receipts"
+     * page — applicant, amount, when it was processed, and enough to link
+     * to getPaidRequestForReceipt()'s PDF for each row. Deliberately doesn't
+     * include payment_method, upi_id, bank details, or line items: this is
+     * an index to click into a receipt from, not a place to read payment
+     * details directly. Most recently paid first.
+     */
+    public function listPaidForFinance() {
+        return $this->db->query(
+            "SELECT id, tracking_id, applicant_name, event_name, total_amount_paise, paid_by, paid_at
+             FROM reimbursement_requests
+             WHERE status = 'Paid'
+             ORDER BY paid_at DESC"
+        )->fetchAll();
+    }
+
+    /**
      * For the payment-confirmation PDF, generated on demand when a finance
      * officer wants it — never written to disk, streamed straight to the
      * browser (see views/finance/reimbursement_receipt.php). Scoped to
      * status = 'Paid' only — there's no "confirmation" for a request that
-     * hasn't actually been paid — and deliberately the same shape as
-     * listForFinanceQueue(): payment details, no line items, no receipts,
-     * no expense descriptions. This is a finance-facing document about how
-     * and where the money went, not an itemised expense report.
+     * hasn't actually been paid.
+     *
+     * UPDATE: this now includes line items (category, description, amount —
+     * receipt file paths are NOT included, this isn't a place to browse
+     * uploaded files from), unlike listForFinanceQueue(), which stays
+     * itemless. The distinction: listForFinanceQueue() is the *working*
+     * queue finance acts on before a payment exists, where "how much and
+     * where to send it" is genuinely all that's needed; this method backs
+     * the *finished* receipt handed out afterward, where showing what the
+     * payment covered is the point of the document.
      */
     public function getPaidRequestForReceipt($requestId) {
         $stmt = $this->db->prepare(
@@ -564,6 +587,11 @@ class ReimbursementModel {
             $row['bank_account_number_masked'] = null;
         }
         unset($row['bank_account_number_enc']);
+
+        $row['line_items'] = array_map(function ($item) {
+            unset($item['receipt_path']);
+            return $item;
+        }, $this->getLineItems($row['id']));
 
         return $row;
     }
