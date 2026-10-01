@@ -1,9 +1,19 @@
 <?php
 require_once __DIR__ . '/../includes/wikitext.php';
 require_once __DIR__ . '/../models/FormModel.php';
+require_once __DIR__ . '/../models/InternetSupportModel.php';
 
 $formModel = new FormModel();
 $activeForms = $formModel->getActiveForms();
+
+// Show the internet support card only while at least one package is
+// available. Guarded so the public landing page can never break (for
+// example before internet_support.sql has been run).
+try {
+    $internetOpen = !empty((new InternetSupportModel())->listActivePackages());
+} catch (Throwable $e) {
+    $internetOpen = false;
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -130,6 +140,26 @@ $activeForms = $formModel->getActiveForms();
                         <span class="go">Apply now →</span>
                     </a>
                 <?php endforeach; ?>
+            </div>
+        <?php endif; ?>
+
+        <?php if ($internetOpen): ?>
+            <!-- Remove this block to keep internet support unlisted and share /internet-support directly instead. -->
+            <p class="section-label">Volunteer support</p>
+            <div class="grid">
+                <a class="prog" href="/internet-support">
+                    <span class="tick">
+                        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M5 12.55a11 11 0 0 1 14.08 0"></path>
+                            <path d="M1.42 9a16 16 0 0 1 21.16 0"></path>
+                            <path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path>
+                            <line x1="12" y1="20" x2="12.01" y2="20"></line>
+                        </svg>
+                    </span>
+                    <h3>Internet Support</h3>
+                    <p>DCW volunteers can request help with a data pack to keep contributing online.</p>
+                    <span class="go">Request support →</span>
+                </a>
             </div>
         <?php endif; ?>
     </div>
