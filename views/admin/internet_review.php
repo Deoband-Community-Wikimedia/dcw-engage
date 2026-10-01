@@ -77,10 +77,11 @@ function internet_review_card(array $req) {
         <p style="color:#475569; font-size:14px; margin-top:-8px;">
             <?= htmlspecialchars($req['email']) ?> · submitted <?= htmlspecialchars($req['created_at']) ?> UTC
         </p>
-        <p>
+        <p style="margin-bottom:4px;">
             <strong><?= htmlspecialchars($req['operator']) ?> — <?= htmlspecialchars($req['package_name']) ?></strong>
-            (₹<?= number_format($req['package_price_paise'] / 100, 2) ?><?= $req['package_validity_days'] ? ', ' . (int) $req['package_validity_days'] . ' days' : '' ?>)
+            · asking for <strong>₹<?= number_format($req['package_price_paise'] / 100, 2) ?></strong><?= $req['package_validity_days'] ? ' · ' . (int) $req['package_validity_days'] . ' days' : '' ?>
         </p>
+        <p style="font-size:12px; color:#64748b; margin-top:0;">The pack and price are what the applicant typed, not checked against the operator.</p>
         <p style="font-size:14px; margin-bottom:4px;"><strong>Reason</strong></p>
         <p style="font-size:14px; background:#fff; border:1px solid #e2e8f0; border-radius:6px; padding:10px; margin-top:0;">
             <?= nl2br(htmlspecialchars($req['reason'])) ?>
