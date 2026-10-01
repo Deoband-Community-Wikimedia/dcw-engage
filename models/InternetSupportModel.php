@@ -42,24 +42,20 @@ class InternetSupportModel {
     }
 
     // ------------------------------------------------------------------
-    // Packages
+    // Settings (single row, id = 1)
     // ------------------------------------------------------------------
 
-    public function listActivePackages() {
-        return $this->db->query(
-            "SELECT id, operator, name, price_paise, validity_days
-             FROM internet_packages WHERE is_active = 1
-             ORDER BY operator ASC, price_paise ASC"
-        )->fetchAll();
+    public function getSettings() {
+        $row = $this->db->query(
+            "SELECT is_active, max_amount_paise FROM internet_settings WHERE id = 1"
+        )->fetch();
+        return $row ?: null;
     }
 
-    private function getActivePackage($packageId) {
-        $stmt = $this->db->prepare(
-            "SELECT id, operator, name, price_paise, validity_days
-             FROM internet_packages WHERE id = :id AND is_active = 1"
-        );
-        $stmt->execute(['id' => (int) $packageId]);
-        return $stmt->fetch() ?: null;
+    /** True when the programme is switched on. A missing settings row counts as closed. */
+    public function isOpen() {
+        $settings = $this->getSettings();
+        return $settings && (int) $settings['is_active'] === 1;
     }
 
     // ------------------------------------------------------------------
@@ -104,13 +100,27 @@ class InternetSupportModel {
     }
 
     /**
-     * @param string $email  already verified (EmailVerificationModel, form_id NULL)
+     * Organisers can't know in advance which pack a volunteer needs, so the
+     * operator, plan and amount are all stated by the applicant and are
+     * UNVERIFIED. Reviewers judge whether the amount is reasonable; finance
+     * confirms the operator's real price when doing the recharge.
+     *
+     * @param string $email        already verified (EmailVerificationModel, form_id NULL)
+     * @param string $amountRupees e.g. "299" or "299.50"
+     * @param mixed  $validityDays optional whole days, '' for none
      * @throws \InvalidArgumentException on any validation failure
      * @return array ['id' => int, 'tracking_id' => string]
      */
-    public function createRequest($email, $applicantName, $phone, $packageId, $reason) {
+    public function createRequest($email, $applicantName, $phone, $operator, $packageName, $amountRupees, $validityDays, $reason) {
+        $settings = $this->getSettings();
+        if (!$settings || (int) $settings['is_active'] !== 1) {
+            throw new \InvalidArgumentException('Internet support requests are closed right now.');
+        }
+
         $email = strtolower(trim($email));
         $applicantName = trim($applicantName);
+        $operator = trim(preg_replace('/\s+/', ' ', (string) $operator));
+        $packageName = trim(preg_replace('/\s+/', ' ', (string) $packageName));
         $reason = trim($reason);
 
         if ($applicantName === '') {
@@ -125,9 +135,30 @@ class InternetSupportModel {
             throw new \InvalidArgumentException('Please enter a valid 10-digit Indian mobile number.');
         }
 
-        $package = $this->getActivePackage($packageId);
-        if (!$package) {
-            throw new \InvalidArgumentException('Please choose one of the listed packages.');
+        if ($operator === '' || mb_strlen($operator) > 50) {
+            throw new \InvalidArgumentException('Please enter your mobile operator (50 characters max).');
+        }
+        if (mb_strlen($packageName) < 3 || mb_strlen($packageName) > 120) {
+            throw new \InvalidArgumentException('Please describe the pack you need, e.g. "1.5 GB/day, 28 days" (3 to 120 characters).');
+        }
+
+        $amountRupees = trim((string) $amountRupees);
+        if (!preg_match('/^\d{1,6}(\.\d{1,2})?$/', $amountRupees) || (float) $amountRupees <= 0) {
+            throw new \InvalidArgumentException('Please enter the pack price as a positive amount, e.g. 299.');
+        }
+        $amountPaise = (int) round(((float) $amountRupees) * 100);
+        $maxPaise = (int) $settings['max_amount_paise'];
+        if ($amountPaise > $maxPaise) {
+            throw new \InvalidArgumentException('Requests are limited to Rs ' . number_format($maxPaise / 100) . '. Please choose a smaller pack.');
+        }
+
+        $validityDays = trim((string) $validityDays);
+        if ($validityDays === '') {
+            $validity = null;
+        } elseif (ctype_digit($validityDays) && (int) $validityDays >= 1 && (int) $validityDays <= 365) {
+            $validity = (int) $validityDays;
+        } else {
+            throw new \InvalidArgumentException('Validity must be a whole number of days between 1 and 365, or left blank.');
         }
 
         $len = mb_strlen($reason);
@@ -160,10 +191,10 @@ class InternetSupportModel {
             'email'        => $email,
             'name'         => $applicantName,
             'phone_enc'    => Crypto::encrypt($phoneNormalized),
-            'operator'     => $package['operator'],
-            'package_name' => $package['name'],
-            'price'        => (int) $package['price_paise'],
-            'validity'     => $package['validity_days'] !== null ? (int) $package['validity_days'] : null,
+            'operator'     => $operator,
+            'package_name' => $packageName,
+            'price'        => $amountPaise,
+            'validity'     => $validity,
             'reason'       => $reason,
         ]);
 
