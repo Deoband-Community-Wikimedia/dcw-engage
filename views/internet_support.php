@@ -133,10 +133,11 @@ $closed        = $model->listClosedForFinance();
                     <?= htmlspecialchars($req['applicant_name']) ?> — #<?= htmlspecialchars($req['tracking_id']) ?>
                 </h3>
                 <p style="font-size:20px; margin:6px 0;"><strong><?= htmlspecialchars($req['phone']) ?></strong></p>
-                <p>
+                <p style="margin-bottom:4px;">
                     <?= htmlspecialchars($req['operator']) ?> — <strong><?= htmlspecialchars($req['package_name']) ?></strong><br>
-                    <strong>₹<?= number_format($req['package_price_paise'] / 100, 2) ?></strong><?= $req['package_validity_days'] ? ' · ' . (int) $req['package_validity_days'] . ' days' : '' ?>
+                    Approved amount: <strong>₹<?= number_format($req['package_price_paise'] / 100, 2) ?></strong><?= $req['package_validity_days'] ? ' · ' . (int) $req['package_validity_days'] . ' days' : '' ?>
                 </p>
+                <p style="font-size:12px; color:#64748b; margin-top:0;">The applicant stated this pack and price. Confirm the operator's actual price before recharging, and don't pay more than the approved amount.</p>
                 <p style="font-size:13px; color:#64748b;">
                     Approved by <?= htmlspecialchars($req['decided_by']) ?> on <?= htmlspecialchars($req['decided_at']) ?> UTC
                 </p>
@@ -168,7 +169,7 @@ $closed        = $model->listClosedForFinance();
                 <p>
                     <?= htmlspecialchars($req['phone']) ?> ·
                     <?= htmlspecialchars($req['operator']) ?> — <?= htmlspecialchars($req['package_name']) ?>
-                    (₹<?= number_format($req['package_price_paise'] / 100, 2) ?>)<br>
+                    (approved ₹<?= number_format($req['package_price_paise'] / 100, 2) ?>)<br>
                     Recharge reference: <strong><?= htmlspecialchars((string) $req['recharge_reference']) ?></strong>
                 </p>
                 <p style="font-size:14px;">
