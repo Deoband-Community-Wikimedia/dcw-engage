@@ -1,7 +1,8 @@
 <?php
 /**
- * Public "check my status" lookup (see #32) — covers both applications
- * (tracking IDs start "DCW-") and reimbursement requests (start "RB-").
+ * Public "check my status" lookup (see #32) — covers applications
+ * (tracking IDs start "DCW-"), reimbursement requests (start "RB-") and
+ * internet support requests (start "IS-").
  *
  * Deliberately requires BOTH the tracking ID and the email an application
  * was submitted with — a tracking ID alone is unguessable (see
@@ -12,15 +13,20 @@
  *
  * Because an email is not a secret, the reimbursement result is limited to
  * status information: event, amount, status, dates, and the transaction
- * reference once paid. It never shows UPI / bank details.
+ * reference once paid. It never shows UPI / bank details. The internet
+ * support result follows the same rule: it never shows the phone number or
+ * the reason, and the only write it allows is attaching a receipt while a
+ * request is in 'Awaiting Receipt'.
  *
  * Session-based lockout mirrors Auth::attempt()'s login cooldown, so a
  * script trying to brute-force the tracking ID space (or spam this page)
  * gets slowed to a crawl the same way a login-guessing attempt would.
  */
 require_once __DIR__ . '/../includes/init.php';
+require_once __DIR__ . '/../includes/app_log.php';
 require_once __DIR__ . '/../models/ApplicationModel.php';
 require_once __DIR__ . '/../models/ReimbursementModel.php';
+require_once __DIR__ . '/../models/InternetSupportModel.php';
 
 const TRACK_MAX_ATTEMPTS = 5;
 const TRACK_LOCKOUT_SECONDS = 900;
@@ -36,11 +42,24 @@ function trackLockoutRemaining() {
     return $until - time();
 }
 
+/** Remove a just-uploaded file whose database write didn't go through. */
+function trackDiscardUpload($path) {
+    if (is_string($path) && strpos($path, 'uploads/') === 0 && strpos($path, '..') === false) {
+        $full = __DIR__ . '/../' . $path;
+        if (is_file($full)) {
+            @unlink($full);
+        }
+    }
+}
+
 $application = null;
 $reimbursement = null;
+$internet = null;
+$uploadMessage = '';
 $error = '';
 $trackingId = trim($_POST['tracking_id'] ?? '');
 $email = trim($_POST['email'] ?? '');
+$action = $_POST['action'] ?? 'lookup';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!CSRF::validate($_POST['csrf_token'] ?? '')) {
@@ -61,11 +80,50 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if (strpos($trackingKey, 'RB-') === 0) {
             $reimbursement = (new ReimbursementModel())->getStatusForApplicant($trackingKey, $email);
+        } elseif (strpos($trackingKey, 'IS-') === 0) {
+            $internetModel = new InternetSupportModel();
+            // The pair must match before anything else happens, including an upload.
+            $internet = $internetModel->getStatusForApplicant($trackingKey, $email);
+
+            if ($internet && $action === 'upload_receipt') {
+                if ($internet['status'] !== 'Awaiting Receipt') {
+                    $error = "This request isn't waiting for a receipt right now.";
+                } else {
+                    $path = null;
+                    try {
+                        require_once __DIR__ . '/../models/FileUploader.php';
+                        // The tracking ID goes in the filename instead of a name: unique, and no personal data in the URL.
+                        $path = (new FileUploader())->handleUpload($_FILES['receipt'] ?? [], 'receipt', $trackingKey, 'internet');
+                        if (!$path) {
+                            $error = "Please choose a file to upload.";
+                        }
+                    } catch (Exception $e) {
+                        // FileUploader messages are written for the user (size, type, etc).
+                        $error = $e->getMessage();
+                    }
+
+                    if ($path) {
+                        try {
+                            if ($internetModel->submitReceipt($trackingKey, $email, $path)) {
+                                $uploadMessage = "Thank you. Your receipt has been uploaded and our finance team will check it.";
+                                $internet = $internetModel->getStatusForApplicant($trackingKey, $email);
+                            } else {
+                                trackDiscardUpload($path);
+                                $error = "This request isn't waiting for a receipt right now.";
+                            }
+                        } catch (Exception $e) {
+                            trackDiscardUpload($path);
+                            app_log("Internet support receipt save failed for $trackingKey: " . $e->getMessage());
+                            $error = "Something went wrong saving your receipt. Please try again.";
+                        }
+                    }
+                }
+            }
         } else {
             $application = (new ApplicationModel())->getApplicationByTrackingIdAndEmail($trackingKey, $email);
         }
 
-        if ($application || $reimbursement) {
+        if ($application || $reimbursement || $internet) {
             unset($_SESSION['track_failures'], $_SESSION['track_locked_until']);
         } else {
             // Same message either way — never reveal whether the tracking
@@ -90,14 +148,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 </head>
 <body>
     <div class="container">
-        <h1>Track Your Application or Reimbursement</h1>
+        <h1>Track Your Application, Reimbursement or Internet Support</h1>
         <p style="margin-top:-20px; color:#64748b; font-size:14.5px;">
             Enter the tracking ID you were given, along with the email address you used, to check the current status.
-            Application IDs start with <strong>DCW-</strong> and reimbursement IDs start with <strong>RB-</strong>.
+            Application IDs start with <strong>DCW-</strong>, reimbursement IDs with <strong>RB-</strong>
+            and internet support IDs with <strong>IS-</strong>.
         </p>
 
         <?php if ($error): ?>
             <div class="alert-error"><strong>Notice:</strong> <?= htmlspecialchars($error) ?></div>
+        <?php endif; ?>
+
+        <?php if ($uploadMessage): ?>
+            <div class="alert-success"><?= htmlspecialchars($uploadMessage) ?></div>
         <?php endif; ?>
 
         <?php if ($application): ?>
@@ -130,11 +193,55 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             </div>
         <?php endif; ?>
 
+        <?php if ($internet): ?>
+            <div class="alert-success">
+                <strong>Internet support — <?= htmlspecialchars($internet['operator']) ?>, <?= htmlspecialchars($internet['package_name']) ?></strong><br>
+                Tracking ID: <?= htmlspecialchars($internet['tracking_id']) ?><br>
+                Pack value: ₹<?= number_format($internet['package_price_paise'] / 100, 2) ?><br>
+                Status: <strong><?= htmlspecialchars($internet['status']) ?></strong><br>
+                <?php if ($internet['status'] === 'Rejected' && !empty($internet['admin_notes'])): ?>
+                    Reviewer notes: <?= nl2br(htmlspecialchars($internet['admin_notes'])) ?><br>
+                <?php endif; ?>
+                <?php if (!empty($internet['recharge_reference']) && in_array($internet['status'], ['Awaiting Receipt', 'Receipt Submitted', 'Closed'], true)): ?>
+                    Recharge reference: <strong><?= htmlspecialchars($internet['recharge_reference']) ?></strong><br>
+                <?php endif; ?>
+                Submitted: <?= htmlspecialchars(date('F j, Y', strtotime($internet['created_at']))) ?>
+            </div>
+
+            <?php if ($internet['status'] === 'Awaiting Receipt'): ?>
+                <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:20px; margin-bottom:20px;">
+                    <h3 style="margin-top:0;">Upload your recharge receipt</h3>
+                    <?php if (!empty($internet['finance_notes'])): ?>
+                        <div class="alert-error" style="margin-bottom:15px;">
+                            <strong>Your last receipt wasn't accepted:</strong><br>
+                            <?= nl2br(htmlspecialchars($internet['finance_notes'])) ?>
+                        </div>
+                    <?php endif; ?>
+                    <p style="font-size:14px; color:#475569; margin-top:0;">
+                        Your number has been recharged. Please upload the operator's receipt or confirmation
+                        (PDF, JPG or PNG, up to 10 MB) so we can close the request.
+                    </p>
+                    <form method="POST" enctype="multipart/form-data">
+                        <?= CSRF::getInputField() ?>
+                        <input type="hidden" name="action" value="upload_receipt">
+                        <input type="hidden" name="tracking_id" value="<?= htmlspecialchars($internet['tracking_id']) ?>">
+                        <input type="hidden" name="email" value="<?= htmlspecialchars($email) ?>">
+                        <div class="form-group">
+                            <input type="file" name="receipt" accept=".pdf,.jpg,.jpeg,.png" required>
+                        </div>
+                        <button type="submit">Upload receipt</button>
+                    </form>
+                </div>
+            <?php elseif ($internet['status'] === 'Receipt Submitted'): ?>
+                <p style="font-size:14px; color:#475569;">Your receipt is with our finance team. Nothing more is needed from you.</p>
+            <?php endif; ?>
+        <?php endif; ?>
+
         <form method="POST">
             <?= CSRF::getInputField() ?>
             <div class="form-group">
                 <label>Tracking ID</label>
-                <input type="text" name="tracking_id" placeholder="DCW-XXXXXXXX or RB-XXXXXXXX" value="<?= htmlspecialchars($trackingId) ?>" required>
+                <input type="text" name="tracking_id" placeholder="DCW-XXXXXXXX, RB-XXXXXXXX or IS-XXXXXXXX" value="<?= htmlspecialchars($trackingId) ?>" required>
             </div>
             <div class="form-group">
                 <label>Email Address</label>
