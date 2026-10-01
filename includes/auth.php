@@ -140,7 +140,7 @@ class Auth {
      */
     public static function role() {
         $role = $_SESSION['admin_role'] ?? 'organizer';
-        $allowedRoles = ['owner', 'organizer', 'finance'];
+        $allowedRoles = ['owner', 'organizer', 'finance', 'support_reviewer'];
         return in_array($role, $allowedRoles, true) ? $role : 'organizer';
     }
 

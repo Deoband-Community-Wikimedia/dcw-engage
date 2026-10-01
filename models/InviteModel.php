@@ -71,7 +71,7 @@ class InviteModel {
         // that itself — it only validates that the value is one of the three
         // known roles — so that check belongs in whatever view collects the
         // invite form (team.php) before calling this.
-        $allowedRoles = ['owner', 'organizer', 'finance'];
+        $allowedRoles = ['owner', 'organizer', 'finance', 'support_reviewer'];
         $role = in_array($role, $allowedRoles, true) ? $role : 'organizer';
         $token = bin2hex(random_bytes(32));
 
