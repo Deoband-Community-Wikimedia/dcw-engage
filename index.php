@@ -93,6 +93,20 @@ if ($route === '/' || $route === '/index.php') {
     $reimbursementReceiptId = (int) $matches[1];
     require __DIR__ . '/views/finance/reimbursement_receipt.php';
 
+// --- Internet Support ---------------------------------------------------
+// Public request form. Same reasoning as '/reimbursement' above: a literal
+// route that must come before the catch-all dynamic form route below, or
+// 'internet-support' would be looked up as a form slug instead (which is
+// exactly what was happening before this route existed — it fell through
+// to the catch-all and 404'd via forms/not_found.php).
+} elseif ($route === '/internet-support') {
+    require __DIR__ . '/views/internet_support.php';
+
+// Finance recharge + receipt-verification queue. Deliberately NOT under
+// /admin, same reasoning as the reimbursement finance queue above.
+} elseif ($route === '/finance/internet-support') {
+    require __DIR__ . '/views/finance/internet_support.php';
+
 } else {
     // Dynamic form routing
     // Extract the form type from the route (e.g., '/scholarship' -> 'scholarship')
