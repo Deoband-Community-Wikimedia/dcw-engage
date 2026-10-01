@@ -6,11 +6,11 @@ require_once __DIR__ . '/../models/InternetSupportModel.php';
 $formModel = new FormModel();
 $activeForms = $formModel->getActiveForms();
 
-// Show the internet support card only while at least one package is
-// available. Guarded so the public landing page can never break (for
-// example before internet_support.sql has been run).
+// Show the internet support card only while the programme is switched on
+// (internet_settings.is_active). Guarded so the public landing page can
+// never break, for example before internet_support.sql has been run.
 try {
-    $internetOpen = !empty((new InternetSupportModel())->listActivePackages());
+    $internetOpen = (new InternetSupportModel())->isOpen();
 } catch (Throwable $e) {
     $internetOpen = false;
 }
