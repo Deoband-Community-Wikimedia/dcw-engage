@@ -18,6 +18,17 @@ function team_flash($type, $message, $link = null) {
     $_SESSION['team_flash'] = ['type' => $type, 'message' => $message, 'link' => $link];
 }
 
+/** Human label for a stored role value ('support_reviewer' -> 'Support reviewer'). */
+function team_role_label($role) {
+    $labels = [
+        'owner'            => 'Owner',
+        'organizer'        => 'Organizer',
+        'finance'          => 'Finance',
+        'support_reviewer' => 'Support reviewer',
+    ];
+    return $labels[$role] ?? ucfirst($role);
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!CSRF::validate($_POST['csrf_token'] ?? '')) {
         team_flash('error', 'Your session expired. Please try again.');
@@ -43,7 +54,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // can reach this branch at all (Auth::requireOwner() above), which is
         // what satisfies the model's "only an owner may assign finance/owner"
         // caller contract.
-        $allowedRoles = ['organizer', 'finance', 'owner'];
+        $allowedRoles = ['organizer', 'finance', 'support_reviewer', 'owner'];
         $role = in_array($_POST['role'] ?? '', $allowedRoles, true) ? $_POST['role'] : 'organizer';
 
         if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
@@ -170,6 +181,7 @@ $organizers = $invites->listOrganizers();
         .pill-owner { background: rgba(16,107,154,0.1); color: var(--primary-color); }
         .pill-organizer { background: #f1f5f9; color: #475569; }
         .pill-finance { background: #f0f5ff; color: #3730a3; }
+        .pill-support_reviewer { background: #fffbeb; color: #92400e; }
         .pill-expired { background: #fef2f2; color: #991b1b; }
 
         .flash { padding: 13px 15px; border-radius: 6px; font-size: 14px; margin-bottom: 24px; line-height: 1.55; }
@@ -221,6 +233,7 @@ $organizers = $invites->listOrganizers();
                         <select name="role" id="role">
                             <option value="organizer">Organizer</option>
                             <option value="finance">Finance</option>
+                            <option value="support_reviewer">Support reviewer</option>
                             <option value="owner">Owner</option>
                         </select>
                     </div>
@@ -228,8 +241,9 @@ $organizers = $invites->listOrganizers();
 
                 <p class="hint">
                     Organizers manage forms and applications. Finance can process
-                    reimbursement payments. Owners can additionally invite people
-                    and revoke invitations from this page.
+                    reimbursement payments and internet support recharges. Support
+                    reviewers decide internet support requests. Owners can additionally
+                    invite people and revoke invitations from this page.
                 </p>
 
                 <button type="submit" class="primary">Send invitation</button>
@@ -259,7 +273,7 @@ $organizers = $invites->listOrganizers();
                             <td><?= htmlspecialchars($invite['email']) ?></td>
                             <td>
                                 <span class="pill pill-<?= htmlspecialchars($invite['role']) ?>">
-                                    <?= htmlspecialchars(ucfirst($invite['role'])) ?>
+                                    <?= htmlspecialchars(team_role_label($invite['role'])) ?>
                                 </span>
                             </td>
                             <td><?= htmlspecialchars($invite['invited_by_email']) ?></td>
@@ -310,7 +324,7 @@ $organizers = $invites->listOrganizers();
                         </td>
                         <td>
                             <span class="pill pill-<?= htmlspecialchars($person['role']) ?>">
-                                <?= htmlspecialchars(ucfirst($person['role'])) ?>
+                                <?= htmlspecialchars(team_role_label($person['role'])) ?>
                             </span>
                         </td>
                         <td>
