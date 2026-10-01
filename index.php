@@ -102,6 +102,12 @@ if ($route === '/' || $route === '/index.php') {
 } elseif ($route === '/internet-support') {
     require __DIR__ . '/views/internet_support.php';
 
+// Admin/organizer substance review — same boundary and reasoning as
+// '/admin/reimbursements/review' above (requireRole(['owner','organizer'])
+// expected inside the view itself).
+} elseif ($route === '/admin/internet-review') {
+    require __DIR__ . '/views/admin/internet_review.php';
+
 // Finance recharge + receipt-verification queue. Deliberately NOT under
 // /admin, same reasoning as the reimbursement finance queue above.
 } elseif ($route === '/finance/internet-support') {
