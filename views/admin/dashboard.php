@@ -12,8 +12,12 @@ $forms = $formModel->getAllForms();
 // ever appears for someone who can actually get past its gate:
 //   reimbursement_review.php -> requireRole(['owner', 'organizer'])
 //   reimbursement_queue.php  -> requireRole(['finance', 'owner'])
+//   internet_review.php      -> requireRole(['support_reviewer', 'owner'])
+//   internet_support.php     -> requireRole(['finance', 'owner'])   (views/finance/)
 $canReviewReimbursements = in_array(Auth::role(), ['owner', 'organizer'], true);
 $canProcessPayments      = in_array(Auth::role(), ['finance', 'owner'], true);
+$canReviewInternet       = in_array(Auth::role(), ['support_reviewer', 'owner'], true);
+$canProcessInternet      = in_array(Auth::role(), ['finance', 'owner'], true);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -79,13 +83,19 @@ $canProcessPayments      = in_array(Auth::role(), ['finance', 'owner'], true);
         <div class="header" style="display: flex; align-items: center; justify-content: space-between; gap: 16px;">
             <h1>Workspace</h1>
 
-            <div style="display: flex; align-items: center; gap: 12px; font-size: 14px; color: #64748b;">
+            <div style="display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 12px; font-size: 14px; color: #64748b;">
                 <span><?= htmlspecialchars(Auth::email()) ?></span>
                 <?php if ($canReviewReimbursements): ?>
                     <a href="/admin/reimbursements/review" style="color: #64748b; text-decoration: none; border: 1px solid #e2e8f0; padding: 6px 12px; border-radius: 6px; font-size: 13px;">Reimbursement Review</a>
                 <?php endif; ?>
                 <?php if ($canProcessPayments): ?>
                     <a href="/finance/reimbursements" style="color: #64748b; text-decoration: none; border: 1px solid #e2e8f0; padding: 6px 12px; border-radius: 6px; font-size: 13px;">Finance Queue</a>
+                <?php endif; ?>
+                <?php if ($canReviewInternet): ?>
+                    <a href="/admin/internet-review" style="color: #64748b; text-decoration: none; border: 1px solid #e2e8f0; padding: 6px 12px; border-radius: 6px; font-size: 13px;">Internet Review</a>
+                <?php endif; ?>
+                <?php if ($canProcessInternet): ?>
+                    <a href="/finance/internet-support" style="color: #64748b; text-decoration: none; border: 1px solid #e2e8f0; padding: 6px 12px; border-radius: 6px; font-size: 13px;">Internet Finance</a>
                 <?php endif; ?>
                 <?php if (Auth::isOwner()): ?>
                     <a href="/admin/team" style="color: #64748b; text-decoration: none; border: 1px solid #e2e8f0; padding: 6px 12px; border-radius: 6px; font-size: 13px;">Team</a>
@@ -137,6 +147,24 @@ $canProcessPayments      = in_array(Auth::role(), ['finance', 'owner'], true);
                     <a href="/finance/reimbursements" class="card">
                         <h3 class="card-title">Finance Queue</h3>
                         <p class="card-meta">Execute payment on approved claims — amounts and payment details only.</p>
+                    </a>
+                <?php endif; ?>
+            </div>
+        <?php endif; ?>
+
+        <?php if ($canReviewInternet || $canProcessInternet): ?>
+            <div class="section-label">Internet support</div>
+            <div class="grid">
+                <?php if ($canReviewInternet): ?>
+                    <a href="/admin/internet-review" class="card">
+                        <h3 class="card-title">Internet Support Review</h3>
+                        <p class="card-meta">Decide whether volunteer requests are reasonable — reasons and packages, no phone numbers.</p>
+                    </a>
+                <?php endif; ?>
+                <?php if ($canProcessInternet): ?>
+                    <a href="/finance/internet-support" class="card">
+                        <h3 class="card-title">Internet Support Finance</h3>
+                        <p class="card-meta">Recharge approved numbers, then check the receipts volunteers upload.</p>
                     </a>
                 <?php endif; ?>
             </div>
