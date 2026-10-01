@@ -999,4 +999,196 @@ Deoband Community Wikimedia";
             return false;
         }
     }
+
+    // ------------------------------------------------------------------
+    // Internet support
+    // ------------------------------------------------------------------
+
+    /**
+     * Shared transport. Same dev-mode guards as the other senders: no
+     * PHPMailer, or the placeholder smtp.example.com host, logs instead of
+     * sending and returns false. Callers must not let the result change what
+     * the visitor sees.
+     */
+    private static function sendInternetMail($email, $name, $subject, $innerHtml, $altBody) {
+        $config = require __DIR__ . '/config.php';
+        $mailConfig = $config['mail'];
+
+        if (!class_exists('PHPMailer\PHPMailer\PHPMailer')) {
+            error_log("DEV MODE: Internet support email to $email — $subject");
+            return false;
+        }
+        if ($mailConfig['host'] === 'smtp.example.com') {
+            error_log("DEV MODE: Internet support email to $email — $subject\n$altBody");
+            return false;
+        }
+
+        $mail = new PHPMailer\PHPMailer\PHPMailer(true);
+        try {
+            $mail->isSMTP();
+            $mail->Host       = $mailConfig['host'];
+            $mail->SMTPAuth   = true;
+            $mail->Username   = $mailConfig['user'];
+            $mail->Password   = $mailConfig['pass'];
+            $mail->Port       = $mailConfig['port'];
+            $secure = $mailConfig['secure'] ?? ((int)$mailConfig['port'] === 465 ? 'ssl' : 'tls');
+            if (!empty($secure)) {
+                $mail->SMTPSecure = $secure;
+            }
+
+            $mail->setFrom($mailConfig['user'], 'DCW Engage');
+            $mail->addAddress($email, (string) $name);
+
+            $mail->isHTML(true);
+            $mail->Subject = $subject; // plain text: never HTML-escape a subject line
+            $mail->Body    = self::internetTemplate($innerHtml);
+            $mail->AltBody = $altBody;
+
+            $mail->send();
+            return true;
+        } catch (Exception $e) {
+            error_log("Internet support email could not be sent. Mailer Error: {$mail->ErrorInfo}");
+            return false;
+        }
+    }
+
+    /** Same look as the other emails. $innerHtml must already be escaped by the caller. */
+    private static function internetTemplate($innerHtml) {
+        return "
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <style>
+                body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background-color: #f4f6f8; margin: 0; padding: 0; color: #1e293b; }
+                .email-container { max-width: 600px; margin: 40px auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; }
+                .header { background-color: #106b9a; padding: 30px 20px; text-align: center; color: #ffffff; }
+                .header h1 { margin: 0; font-size: 24px; font-weight: 600; letter-spacing: -0.5px; }
+                .body-content { padding: 40px 30px; }
+                .body-content p { font-size: 16px; line-height: 1.6; margin-bottom: 20px; }
+                .btn-wrapper { text-align: center; margin: 30px 0; }
+                .btn { display: inline-block; background-color: #106b9a; color: #ffffff !important; text-decoration: none; padding: 14px 28px; border-radius: 6px; font-size: 16px; font-weight: 600; }
+                .footer { background-color: #f8fafc; padding: 20px; text-align: center; font-size: 13px; color: #64748b; border-top: 1px solid #e2e8f0; }
+            </style>
+        </head>
+        <body>
+            <div class='email-container'>
+                <div class='header'><h1>DCW Engage</h1></div>
+                <div class='body-content'>$innerHtml</div>
+                <div class='footer'>
+                    &copy; " . date('Y') . " Deoband Community Wikimedia. All rights reserved.<br>
+                    This is an automated message; please do not reply.
+                </div>
+            </div>
+        </body>
+        </html>";
+    }
+
+    /** "Verify your email" for the internet support form (uses form_id NULL verification). */
+    public static function sendInternetVerification($email, $verifyUrl, $expiresAt) {
+        $expiresTime = self::formatExpiryIST($expiresAt);
+        $url = htmlspecialchars($verifyUrl, ENT_QUOTES, 'UTF-8');
+
+        $inner = "
+            <p>Hello,</p>
+            <p>Please confirm this email address to start your internet support request.</p>
+            <div class='btn-wrapper'><a href='$url' class='btn'>Verify My Email</a></div>
+            <p>If the button doesn't work, copy and paste this link into your browser:<br><br>
+               <a href='$url' style='color: #106b9a; word-break: break-all;'>$url</a></p>
+            <p><strong>This link expires at $expiresTime</strong> and can only be used once.</p>
+            <p style='margin-bottom:0;'>If you did not ask for this, ignore this email. Nothing has been submitted.</p>";
+
+        $alt = "Hello,\n\nPlease confirm this email address to start your internet support request.\n\n"
+             . "Verify your email here:\n$verifyUrl\n\nThis link expires at $expiresTime and can only be used once.\n\n"
+             . "If you did not ask for this, ignore this email. Nothing has been submitted.\n\nDeoband Community Wikimedia";
+
+        return self::sendInternetMail($email, '', 'Verify your email to start your internet support request', $inner, $alt);
+    }
+
+    public static function sendInternetReceived($email, $applicantName, $trackingId) {
+        $name = htmlspecialchars($applicantName, ENT_QUOTES, 'UTF-8');
+        $tid  = htmlspecialchars($trackingId, ENT_QUOTES, 'UTF-8');
+
+        $inner = "
+            <p>Hello <strong>$name</strong>,</p>
+            <p>We have received your internet support request.</p>
+            <p><strong>Tracking ID:</strong> $tid</p>
+            <p style='margin-bottom:0;'>We'll email you as it moves forward. No action is needed right now.</p>";
+
+        $alt = "Hello $applicantName,\n\nWe've received your internet support request.\nTracking ID: $trackingId\n\nWe'll email you as it moves forward.";
+
+        return self::sendInternetMail($email, $applicantName, 'Internet support request received', $inner, $alt);
+    }
+
+    /**
+     * Applicant-facing status changes only. $status is one of:
+     *   'Approved for Support' - reviewers approved; finance is next
+     *   'Rejected'             - not approved ($note shown)
+     *   'Awaiting Receipt'     - recharge done; asks for the receipt ($reference shown)
+     *   'Receipt Rejected'     - notification-only pseudo-status: finance bounced
+     *                            the uploaded receipt ($note says why)
+     *   'Closed'               - all done
+     *
+     * CALLER CONTRACT: never call this for 'Recharge Failed' or 'Discarded'.
+     * The first is finance-to-reviewer plumbing; the second must be silent.
+     */
+    public static function sendInternetStatusUpdate($email, $applicantName, $trackingId, $status, $note = '', $reference = '') {
+        $config = require __DIR__ . '/config.php';
+        $trackUrl = $config['app']['url'] . '/track';
+
+        $name = htmlspecialchars($applicantName, ENT_QUOTES, 'UTF-8');
+        $tid  = htmlspecialchars($trackingId, ENT_QUOTES, 'UTF-8');
+        $safeNote = $note !== '' ? "<p><strong>Notes:</strong><br>" . nl2br(htmlspecialchars($note, ENT_QUOTES, 'UTF-8')) . "</p>" : '';
+        $altNote  = $note !== '' ? "\n\nNotes:\n$note" : '';
+        $button   = "<div class='btn-wrapper'><a href='" . htmlspecialchars($trackUrl, ENT_QUOTES, 'UTF-8') . "' class='btn'>Open tracking page</a></div>";
+
+        switch ($status) {
+            case 'Approved for Support':
+                $subject = 'Your internet support request was approved';
+                $line = "Good news: your internet support request (tracking ID $tid) has been approved and passed to our finance team for the recharge. We'll email you once it's done.";
+                $alt  = "Your internet support request ($trackingId) has been approved and passed to our finance team for the recharge. We'll email you once it's done.";
+                $extra = '';
+                break;
+
+            case 'Rejected':
+                $subject = 'Update on your internet support request';
+                $line = "Your internet support request (tracking ID $tid) was not approved.";
+                $alt  = "Your internet support request ($trackingId) was not approved.";
+                $extra = '';
+                break;
+
+            case 'Awaiting Receipt':
+                $subject = 'Your recharge is done - please upload the receipt';
+                $refHtml = $reference !== ''
+                    ? "<p><strong>Recharge reference:</strong> " . htmlspecialchars($reference, ENT_QUOTES, 'UTF-8') . "</p>" : '';
+                $line = "Your recharge for request <strong>$tid</strong> has been done. Please upload the operator's receipt or confirmation so we can close the request. Open the tracking page and enter your tracking ID and this email address.";
+                $alt  = "Your recharge for request $trackingId has been done. Please upload the operator's receipt on the tracking page ($trackUrl) using your tracking ID and this email address."
+                      . ($reference !== '' ? "\nRecharge reference: $reference" : '');
+                $extra = $refHtml . $button;
+                break;
+
+            case 'Receipt Rejected':
+                $subject = 'Please re-upload your internet recharge receipt';
+                $line = "We couldn't accept the receipt you uploaded for request <strong>$tid</strong>. Please upload a new one on the tracking page.";
+                $alt  = "We couldn't accept the receipt you uploaded for request $trackingId. Please upload a new one on the tracking page: $trackUrl";
+                $extra = $button;
+                break;
+
+            case 'Closed':
+                $subject = 'Your internet support request is complete';
+                $line = "Your internet support request (tracking ID $tid) is now complete. Thank you!";
+                $alt  = "Your internet support request ($trackingId) is now complete. Thank you!";
+                $extra = '';
+                break;
+
+            default:
+                $subject = 'Update on your internet support request';
+                $line = "Your internet support request (tracking ID $tid) is now: <strong>" . htmlspecialchars($status, ENT_QUOTES, 'UTF-8') . "</strong>.";
+                $alt  = "Your internet support request ($trackingId) is now: $status.";
+                $extra = '';
+        }
+
+        $inner = "<p>Hello <strong>$name</strong>,</p><p>$line</p>$safeNote$extra";
+
+        return self::sendInternetMail($email, $applicantName, $subject, $inner, "Hello $applicantName,\n\n$alt$altNote");
+    }
 }
