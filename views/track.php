@@ -197,7 +197,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <div class="alert-success">
                 <strong>Internet support — <?= htmlspecialchars($internet['operator']) ?>, <?= htmlspecialchars($internet['package_name']) ?></strong><br>
                 Tracking ID: <?= htmlspecialchars($internet['tracking_id']) ?><br>
-                Pack value: ₹<?= number_format($internet['package_price_paise'] / 100, 2) ?><br>
+                Amount requested: ₹<?= number_format($internet['package_price_paise'] / 100, 2) ?><br>
                 Status: <strong><?= htmlspecialchars($internet['status']) ?></strong><br>
                 <?php if ($internet['status'] === 'Rejected' && !empty($internet['admin_notes'])): ?>
                     Reviewer notes: <?= nl2br(htmlspecialchars($internet['admin_notes'])) ?><br>
