@@ -10,6 +10,8 @@ require_once __DIR__ . '/../includes/crypto.php';
  *   Submitted --(support reviewer)--> Approved for Support | Rejected | Discarded
  *   Approved for Support --(finance)--> Awaiting Receipt | Recharge Failed
  *   Recharge Failed --(support reviewer)--> Approved for Support | Rejected | Discarded
+ *   Submitted --(support reviewer)--> Info Requested --(applicant, via /track)--> Submitted
+ *   Info Requested --(support reviewer)--> Rejected | Discarded (applicant never replied)
  *   Awaiting Receipt --(applicant, via /track)--> Receipt Submitted
  *   Receipt Submitted --(finance)--> Closed | Awaiting Receipt (receipt bounced)
  *
@@ -35,6 +37,10 @@ class InternetSupportModel {
     /** Bounds for the "contributions" and "plans" answers. */
     public const MIN_NARRATIVE_LENGTH = 30;
     public const MAX_NARRATIVE_LENGTH = 2000;
+
+    /** Bounds for reviewer questions and applicant replies. */
+    public const MIN_MESSAGE_LENGTH = 5;
+    public const MAX_MESSAGE_LENGTH = 1000;
 
     /** One request per email per this many days (rejected/discarded ones don't count). Policy default: change freely. */
     public const MIN_DAYS_BETWEEN_REQUESTS = 30;
@@ -306,7 +312,7 @@ class InternetSupportModel {
             $sql .= " WHERE r.status = :status";
             $params['status'] = $status;
         } else {
-            $sql .= " WHERE r.status IN ('Submitted', 'Recharge Failed')";
+            $sql .= " WHERE r.status IN ('Submitted', 'Info Requested', 'Recharge Failed')";
         }
 
         $sql .= " ORDER BY r.created_at ASC";
@@ -331,7 +337,7 @@ class InternetSupportModel {
         $stmt = $this->db->prepare(
             "UPDATE internet_requests
              SET status = 'Rejected', decided_by = :who, decided_at = NOW(), admin_notes = :notes
-             WHERE id = :id AND status IN ('Submitted', 'Recharge Failed')"
+             WHERE id = :id AND status IN ('Submitted', 'Info Requested', 'Recharge Failed')"
         );
         $stmt->execute(['who' => $adminIdentifier, 'notes' => $notes, 'id' => (int) $requestId]);
         return $stmt->rowCount() === 1;
@@ -342,10 +348,151 @@ class InternetSupportModel {
         $stmt = $this->db->prepare(
             "UPDATE internet_requests
              SET status = 'Discarded', decided_by = :who, decided_at = NOW(), admin_notes = :notes
-             WHERE id = :id AND status IN ('Submitted', 'Recharge Failed')"
+             WHERE id = :id AND status IN ('Submitted', 'Info Requested', 'Recharge Failed')"
         );
         $stmt->execute(['who' => $adminIdentifier, 'notes' => $notes, 'id' => (int) $requestId]);
         return $stmt->rowCount() === 1;
+    }
+
+    // ------------------------------------------------------------------
+    // Reviewer <-> applicant messages ("Info Requested")
+    //
+    // The applicant only ever sees "DCW reviewer". The reviewer's identifier
+    // is stored for audit and is deliberately NOT in any applicant-facing
+    // SELECT.
+    // ------------------------------------------------------------------
+
+    private function cleanMessage($message) {
+        $message = trim((string) $message);
+        $len = mb_strlen($message);
+        if ($len < self::MIN_MESSAGE_LENGTH) {
+            throw new \InvalidArgumentException('Please write a little more.');
+        }
+        if ($len > self::MAX_MESSAGE_LENGTH) {
+            throw new \InvalidArgumentException('Message is too long (' . self::MAX_MESSAGE_LENGTH . ' characters max).');
+        }
+        return $message;
+    }
+
+    private function insertMessage($requestId, $sender, $author, $body) {
+        $stmt = $this->db->prepare(
+            "INSERT INTO internet_request_messages (request_id, sender, author, body)
+             VALUES (:rid, :sender, :author, :body)"
+        );
+        $stmt->execute([
+            'rid'    => (int) $requestId,
+            'sender' => $sender,
+            'author' => $author,
+            'body'   => $body,
+        ]);
+    }
+
+    /**
+     * Reviewer needs more input. Moves Submitted -> Info Requested and stores
+     * the question in one transaction. Returns false if the request wasn't
+     * 'Submitted' (someone else got there first). The caller should email the
+     * applicant a "please check your request" nudge WITHOUT the message text.
+     *
+     * @throws \InvalidArgumentException if the message is too short or long
+     */
+    public function requestInfo($requestId, $reviewerIdentifier, $message) {
+        $message = $this->cleanMessage($message);
+
+        $this->db->beginTransaction();
+        try {
+            $stmt = $this->db->prepare(
+                "UPDATE internet_requests SET status = 'Info Requested'
+                 WHERE id = :id AND status = 'Submitted'"
+            );
+            $stmt->execute(['id' => (int) $requestId]);
+            if ($stmt->rowCount() !== 1) {
+                $this->db->rollBack();
+                return false;
+            }
+
+            $this->insertMessage($requestId, 'reviewer', $reviewerIdentifier, $message);
+            $this->db->commit();
+            return true;
+        } catch (\Throwable $e) {
+            if ($this->db->inTransaction()) {
+                $this->db->rollBack();
+            }
+            throw $e;
+        }
+    }
+
+    /**
+     * Applicant answers via /track (tracking ID + email pair). Moves Info
+     * Requested -> Submitted so it returns to the reviewers' queue. Returns
+     * false if the pair doesn't match or the request isn't waiting on them.
+     *
+     * @throws \InvalidArgumentException if the message is too short or long
+     */
+    public function replyToInfoRequest($trackingId, $email, $message) {
+        $message = $this->cleanMessage($message);
+
+        $this->db->beginTransaction();
+        try {
+            $find = $this->db->prepare(
+                "SELECT id FROM internet_requests
+                 WHERE tracking_id = :t AND email = :email AND status = 'Info Requested'
+                 FOR UPDATE"
+            );
+            $find->execute(['t' => $trackingId, 'email' => strtolower(trim($email))]);
+            $id = $find->fetchColumn();
+            if ($id === false) {
+                $this->db->rollBack();
+                return false;
+            }
+
+            $update = $this->db->prepare(
+                "UPDATE internet_requests SET status = 'Submitted'
+                 WHERE id = :id AND status = 'Info Requested'"
+            );
+            $update->execute(['id' => (int) $id]);
+            if ($update->rowCount() !== 1) {
+                $this->db->rollBack();
+                return false;
+            }
+
+            $this->insertMessage($id, 'applicant', null, $message);
+            $this->db->commit();
+            return true;
+        } catch (\Throwable $e) {
+            if ($this->db->inTransaction()) {
+                $this->db->rollBack();
+            }
+            throw $e;
+        }
+    }
+
+    /** Full thread for the reviewer screen, oldest first. Includes who asked, for audit. */
+    public function getMessagesForReview($requestId) {
+        $stmt = $this->db->prepare(
+            "SELECT sender, author, body, created_at
+             FROM internet_request_messages
+             WHERE request_id = :id
+             ORDER BY id ASC"
+        );
+        $stmt->execute(['id' => (int) $requestId]);
+        return $stmt->fetchAll();
+    }
+
+    /**
+     * Thread for /track. No author column: reviewers stay anonymous.
+     * Same tracking ID + email pairing as getStatusForApplicant, and
+     * Discarded requests look like "no record".
+     */
+    public function getMessagesForApplicant($trackingId, $email) {
+        $stmt = $this->db->prepare(
+            "SELECT m.sender, m.body, m.created_at
+             FROM internet_request_messages m
+             JOIN internet_requests r ON r.id = m.request_id
+             WHERE r.tracking_id = :t AND r.email = :email AND r.status <> 'Discarded'
+             ORDER BY m.id ASC"
+        );
+        $stmt->execute(['t' => $trackingId, 'email' => strtolower(trim($email))]);
+        return $stmt->fetchAll();
     }
 
     // ------------------------------------------------------------------
