@@ -20,8 +20,8 @@ require_once __DIR__ . '/../includes/crypto.php';
  * there first".
  *
  * What each role may see is enforced in the SELECT lists, not the markup:
- *   - reviewers: reason and package, never the phone number
- *   - finance:   phone and package, never the reason
+ *   - reviewers: reason, eligibility answers and package, never the phone number
+ *   - finance:   phone and package, never the reason or eligibility answers
  * A column that is fetched but not printed can still leak through a later
  * template change or an error trace.
  *
@@ -31,6 +31,10 @@ require_once __DIR__ . '/../includes/crypto.php';
 class InternetSupportModel {
     public const MIN_REASON_LENGTH = 15;
     public const MAX_REASON_LENGTH = 1000;
+
+    /** Bounds for the "contributions" and "plans" answers. */
+    public const MIN_NARRATIVE_LENGTH = 30;
+    public const MAX_NARRATIVE_LENGTH = 2000;
 
     /** One request per email per this many days (rejected/discarded ones don't count). Policy default: change freely. */
     public const MIN_DAYS_BETWEEN_REQUESTS = 30;
@@ -105,13 +109,20 @@ class InternetSupportModel {
      * UNVERIFIED. Reviewers judge whether the amount is reasonable; finance
      * confirms the operator's real price when doing the recharge.
      *
+     * Eligibility answers are self-declared too. Rule: an applicant who is
+     * actively contributing to DCW technical projects is eligible outright;
+     * everyone else needs BOTH 80+ manual edits in the past month AND
+     * attendance at the last 3 Conversation Hours.
+     *
      * @param string $email        already verified (EmailVerificationModel, form_id NULL)
      * @param string $amountRupees e.g. "299" or "299.50"
      * @param mixed  $validityDays optional whole days, '' for none
+     * @param array  $eligibility  keys: wikimedia_username, edits_80, attended_ch, tech_contributor ('yes'|'no'),
+     *                             contributions, plans (free text)
      * @throws \InvalidArgumentException on any validation failure
      * @return array ['id' => int, 'tracking_id' => string]
      */
-    public function createRequest($email, $applicantName, $phone, $operator, $packageName, $amountRupees, $validityDays, $reason) {
+    public function createRequest($email, $applicantName, $phone, $operator, $packageName, $amountRupees, $validityDays, $reason, array $eligibility = []) {
         $settings = $this->getSettings();
         if (!$settings || (int) $settings['is_active'] !== 1) {
             throw new \InvalidArgumentException('Internet support requests are closed right now.');
@@ -169,6 +180,50 @@ class InternetSupportModel {
             throw new \InvalidArgumentException('Reason is too long (' . self::MAX_REASON_LENGTH . ' characters max).');
         }
 
+        // --- Wikimedia username (lets reviewers check edits on XTools etc.) ---
+        $wikiUser = trim(preg_replace('/\s+/', ' ', str_replace('_', ' ', (string) ($eligibility['wikimedia_username'] ?? ''))));
+        $wikiUser = preg_replace('/^User:\s*/i', '', $wikiUser);
+        if ($wikiUser === '') {
+            throw new \InvalidArgumentException('Please enter your Wikimedia username.');
+        }
+        if (strlen($wikiUser) > 255 || preg_match('/[#<>\[\]|{}\/@]/', $wikiUser)) {
+            throw new \InvalidArgumentException('That doesn\'t look like a valid Wikimedia username. Enter the username only, without "User:" or a link.');
+        }
+
+        // --- Eligibility (self-declared; reviewers can spot-check) ---
+        $yesNo = function ($key) use ($eligibility) {
+            $v = $eligibility[$key] ?? '';
+            return in_array($v, ['yes', 'no'], true) ? $v : null;
+        };
+        $edits80     = $yesNo('edits_80');
+        $attendedCH  = $yesNo('attended_ch');
+        $techContrib = $yesNo('tech_contributor');
+
+        if ($edits80 === null || $attendedCH === null || $techContrib === null) {
+            throw new \InvalidArgumentException('Please answer all the eligibility questions.');
+        }
+
+        // Active technical contributors skip the edit-count and Conversation Hour criteria.
+        if ($techContrib !== 'yes' && !($edits80 === 'yes' && $attendedCH === 'yes')) {
+            throw new \InvalidArgumentException(
+                "Sorry, you're not eligible for internet support right now. To qualify you need 80+ manual edits "
+                . "in the past month and attendance at the last 3 DCW Conversation Hours, "
+                . "or be actively contributing to DCW technical projects."
+            );
+        }
+
+        $contributions = trim((string) ($eligibility['contributions'] ?? ''));
+        $plans         = trim((string) ($eligibility['plans'] ?? ''));
+        foreach ([$contributions, $plans] as $text) {
+            $n = mb_strlen($text);
+            if ($n < self::MIN_NARRATIVE_LENGTH || $n > self::MAX_NARRATIVE_LENGTH) {
+                throw new \InvalidArgumentException(
+                    'Please answer both questions about your contributions and plans ('
+                    . self::MIN_NARRATIVE_LENGTH . ' to ' . self::MAX_NARRATIVE_LENGTH . ' characters each).'
+                );
+            }
+        }
+
         if ($this->hasOpenRequest($email)) {
             throw new \InvalidArgumentException('You already have an internet support request in progress. You can follow it on the tracking page.');
         }
@@ -181,21 +236,29 @@ class InternetSupportModel {
         $stmt = $this->db->prepare(
             "INSERT INTO internet_requests
                 (tracking_id, email, applicant_name, phone_enc,
-                 operator, package_name, package_price_paise, package_validity_days, reason)
+                 operator, package_name, package_price_paise, package_validity_days, reason,
+                 wikimedia_username, edits_80, attended_ch, tech_contributor, contributions, plans)
              VALUES
                 (:tracking_id, :email, :name, :phone_enc,
-                 :operator, :package_name, :price, :validity, :reason)"
+                 :operator, :package_name, :price, :validity, :reason,
+                 :wikimedia_username, :edits_80, :attended_ch, :tech_contributor, :contributions, :plans)"
         );
         $stmt->execute([
-            'tracking_id'  => $trackingId,
-            'email'        => $email,
-            'name'         => $applicantName,
-            'phone_enc'    => Crypto::encrypt($phoneNormalized),
-            'operator'     => $operator,
-            'package_name' => $packageName,
-            'price'        => $amountPaise,
-            'validity'     => $validity,
-            'reason'       => $reason,
+            'tracking_id'      => $trackingId,
+            'email'            => $email,
+            'name'             => $applicantName,
+            'phone_enc'        => Crypto::encrypt($phoneNormalized),
+            'operator'         => $operator,
+            'package_name'     => $packageName,
+            'price'            => $amountPaise,
+            'validity'         => $validity,
+            'reason'           => $reason,
+            'wikimedia_username' => $wikiUser,
+            'edits_80'         => $edits80 === 'yes' ? 1 : 0,
+            'attended_ch'      => $attendedCH === 'yes' ? 1 : 0,
+            'tech_contributor' => $techContrib === 'yes' ? 1 : 0,
+            'contributions'    => $contributions,
+            'plans'            => $plans,
         ]);
 
         return ['id' => (int) $this->db->lastInsertId(), 'tracking_id' => $trackingId];
@@ -223,11 +286,15 @@ class InternetSupportModel {
      * the reviewer can see why finance sent it back.
      * prior_recharges counts earlier requests from the same email that were
      * actually paid for, to help spot repeat asks.
+     * edits_80 / attended_ch / tech_contributor are NULL on requests made
+     * before the eligibility questions existed.
      */
     public function listForReview($status = null) {
         $sql = "SELECT r.id, r.tracking_id, r.email, r.applicant_name,
                        r.operator, r.package_name, r.package_price_paise, r.package_validity_days,
-                       r.reason, r.status, r.admin_notes, r.decided_by, r.decided_at,
+                       r.reason, r.wikimedia_username, r.edits_80, r.attended_ch, r.tech_contributor,
+                       r.contributions, r.plans,
+                       r.status, r.admin_notes, r.decided_by, r.decided_at,
                        r.recharge_notes, r.created_at,
                        (SELECT COUNT(*) FROM internet_requests p
                          WHERE p.email = r.email AND p.id <> r.id
@@ -434,8 +501,8 @@ class InternetSupportModel {
      * The phone number is masked to its last four digits, because this
      * becomes a standalone file that can be saved or emailed outside the app
      * (same treatment as the masked bank account on the reimbursement
-     * receipt). The reason and the receipt file the volunteer uploaded are
-     * deliberately not included.
+     * receipt). The reason, eligibility answers and the receipt file the
+     * volunteer uploaded are deliberately not included.
      */
     public function getClosedRequestForReceipt($requestId) {
         $stmt = $this->db->prepare(
