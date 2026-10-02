@@ -132,7 +132,15 @@ $closed        = $model->listClosedForFinance();
                 <h3 style="margin-top:0;">
                     <?= htmlspecialchars($req['applicant_name']) ?> — #<?= htmlspecialchars($req['tracking_id']) ?>
                 </h3>
-                <p style="font-size:20px; margin:6px 0;"><strong><?= htmlspecialchars($req['phone']) ?></strong></p>
+                <?php if ($req['phone_error']): ?>
+                    <div class="alert-error" style="margin:8px 0;">
+                        <strong>The phone number on this request can't be read</strong> (it was stored damaged),
+                        so it can't be recharged. Mark it as failed with a note. A reviewer can then reject it,
+                        and the volunteer can submit a new request straight away.
+                    </div>
+                <?php else: ?>
+                    <p style="font-size:20px; margin:6px 0;"><strong><?= htmlspecialchars($req['phone']) ?></strong></p>
+                <?php endif; ?>
                 <p style="margin-bottom:4px;">
                     <?= htmlspecialchars($req['operator']) ?> — <strong><?= htmlspecialchars($req['package_name']) ?></strong><br>
                     Approved amount: <strong>₹<?= number_format($req['package_price_paise'] / 100, 2) ?></strong><?= $req['package_validity_days'] ? ' · ' . (int) $req['package_validity_days'] . ' days' : '' ?>
@@ -146,12 +154,16 @@ $closed        = $model->listClosedForFinance();
                     <?= CSRF::getInputField() ?>
                     <?= CSRF::getSubmitField() ?>
                     <input type="hidden" name="request_id" value="<?= (int) $req['id'] ?>">
-                    <!-- Required for "Recharge done"; "Recharge failed" has formnovalidate. -->
-                    <input type="text" name="recharge_reference" required maxlength="255"
-                           placeholder="Operator reference / transaction ID (required when done)"
-                           style="flex:1; min-width:180px;">
+                    <?php if (!$req['phone_error']): ?>
+                        <!-- Required for "Recharge done"; "Recharge failed" has formnovalidate. -->
+                        <input type="text" name="recharge_reference" required maxlength="255"
+                               placeholder="Operator reference / transaction ID (required when done)"
+                               style="flex:1; min-width:180px;">
+                    <?php endif; ?>
                     <textarea name="notes" placeholder="Notes (required if recharge failed)" style="flex:1; min-width:180px; min-height:40px;"></textarea>
-                    <button type="submit" name="result" value="done" style="width:auto; background:#059669;">Recharge done</button>
+                    <?php if (!$req['phone_error']): ?>
+                        <button type="submit" name="result" value="done" style="width:auto; background:#059669;">Recharge done</button>
+                    <?php endif; ?>
                     <button type="submit" name="result" value="failed" formnovalidate style="width:auto; background:#dc2626;">Recharge failed</button>
                 </form>
             </div>
@@ -167,7 +179,7 @@ $closed        = $model->listClosedForFinance();
                     <?= htmlspecialchars($req['applicant_name']) ?> — #<?= htmlspecialchars($req['tracking_id']) ?>
                 </h3>
                 <p>
-                    <?= htmlspecialchars($req['phone']) ?> ·
+                    <?= $req['phone_error'] ? '(phone unreadable)' : htmlspecialchars($req['phone']) ?> ·
                     <?= htmlspecialchars($req['operator']) ?> — <?= htmlspecialchars($req['package_name']) ?>
                     (approved ₹<?= number_format($req['package_price_paise'] / 100, 2) ?>)<br>
                     Recharge reference: <strong><?= htmlspecialchars((string) $req['recharge_reference']) ?></strong>
