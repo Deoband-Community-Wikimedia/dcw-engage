@@ -307,17 +307,13 @@ if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['a
     }
 }
 
-// Determine the favicon URL: use banner_image if available, otherwise fall back to DCW logo
-$faviconUrl = !empty($schema['banner_image'])
-    ? htmlspecialchars($schema['banner_image'])
-    : 'https://dcwwiki.org/dcwwiki/images/5/56/DCW_logo.png';
 ?>
 <!DOCTYPE html>
 <html lang="en">
 
 <head>
     <meta charset="UTF-8">
-    <link rel="icon" type="image/png" href="<?= $faviconUrl ?>">
+    <?php require __DIR__ . '/../../includes/favicon.php'; ?>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title><?= htmlspecialchars($schema['title']) ?> - DCW Engage</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">

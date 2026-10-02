@@ -14,6 +14,7 @@ $paid = $reimbursementModel->listPaidForFinance();
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <?php require __DIR__ . '/../../includes/favicon.php'; ?>
     <title>Closed Reimbursement Requests</title>
     <link rel="stylesheet" href="/assets/css/forms.css?v=2">
 </head>

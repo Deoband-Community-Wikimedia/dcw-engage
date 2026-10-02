@@ -87,6 +87,7 @@ $queue = $reimbursementModel->listForFinanceQueue();
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <?php require __DIR__ . '/../../includes/favicon.php'; ?>
     <title>Reimbursement Payment Queue</title>
     <link rel="stylesheet" href="/assets/css/forms.css?v=2">
 </head>
