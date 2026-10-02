@@ -28,7 +28,7 @@ $canSeeSupport = $canReviewAny || $canProcessFinance;
     <?php require __DIR__ . '/../../includes/favicon.php'; ?>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Organizer Workspace - DCW Engage</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" rel="stylesheet">
     <style>
         :root {
             --primary-color: #106b9a;
@@ -52,7 +52,11 @@ $canSeeSupport = $canReviewAny || $canProcessFinance;
         }
         .btn-outline:hover { border-color: #cbd5e1; color: var(--text-color); }
 
-        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 24px; }
+        :root { --heading-font: 'Plus Jakarta Sans', 'Inter', sans-serif; }
+        h1, .card-title { font-family: var(--heading-font); }
+
+        /* Cards keep a fixed max width and sit in the middle of the page. */
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 340px)); justify-content: center; gap: 24px; }
 
         .card {
             background: var(--card-bg);
@@ -86,9 +90,22 @@ $canSeeSupport = $canReviewAny || $canProcessFinance;
 
         .card-footer { margin-top: auto; border-top: 1px solid var(--border-color); padding-top: 15px; display: flex; justify-content: space-between; font-size: 13px; color: #64748b; font-weight: 500;}
 
-        .section-label { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: #64748b; margin: 36px 0 14px; }
-        .section-intro { font-size: 14px; color: #64748b; margin: -6px 0 18px; }
-        .group-label { font-size: 13px; font-weight: 600; color: var(--text-color); margin: 22px 0 10px; }
+        .section-head { text-align: center; margin: 56px auto 28px; max-width: 640px; }
+        .section-title {
+            font-family: var(--heading-font);
+            font-size: 28px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.2;
+            color: var(--text-color); margin: 0 0 10px;
+        }
+        .section-title::after {
+            content: ''; display: block; width: 44px; height: 3px; border-radius: 2px;
+            background: var(--primary-color); margin: 12px auto 0;
+        }
+        .section-intro { font-size: 15px; line-height: 1.6; color: #64748b; margin: 0; }
+        .group-label {
+            font-family: var(--heading-font);
+            text-align: center; font-size: 15px; font-weight: 700; letter-spacing: 0.02em;
+            color: var(--primary-color); margin: 32px 0 16px;
+        }
     </style>
 </head>
 <body>
@@ -109,7 +126,10 @@ $canSeeSupport = $canReviewAny || $canProcessFinance;
             </div>
         </div>
 
-        <div class="section-label" style="margin-top: 0;">Application forms</div>
+        <div class="section-head" style="margin-top: 16px;">
+            <h2 class="section-title">Application forms</h2>
+            <p class="section-intro">Create, open, and close the forms volunteers apply through, and review their responses.</p>
+        </div>
         <div class="grid">
             <!-- Create New Form Card -->
             <a href="/admin/builder" class="card card-new">
@@ -138,10 +158,12 @@ $canSeeSupport = $canReviewAny || $canProcessFinance;
         </div>
 
         <?php if ($canSeeSupport): ?>
-            <div class="section-label">Volunteer Support Ecosystem</div>
-            <p class="section-intro">
-                Reimbursements and internet support, from the public <a href="/support" style="color: var(--primary-color);">/support</a> page through review to payment.
-            </p>
+            <div class="section-head">
+                <h2 class="section-title">Volunteer Support Ecosystem</h2>
+                <p class="section-intro">
+                    Reimbursements and internet support through review to payment.
+                </p>
+            </div>
 
             <?php if ($canReviewAny): ?>
                 <div class="group-label" style="margin-top: 0;">Review</div>
