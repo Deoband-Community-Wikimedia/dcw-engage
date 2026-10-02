@@ -8,22 +8,24 @@ Auth::requireLogin();
 $formModel = new FormModel();
 $forms = $formModel->getAllForms();
 
-// Mirrors the exact requireRole() calls on each target page, so a link only
-// ever appears for someone who can actually get past its gate:
+// Each flag mirrors the exact requireRole() call on the page it links to, so
+// a link only ever appears for someone who can actually get past its gate:
 //   reimbursement_review.php -> requireRole(['owner', 'organizer'])
-//   reimbursement_queue.php  -> requireRole(['finance', 'owner'])
 //   internet_review.php      -> requireRole(['support_reviewer', 'owner'])
-//   internet_support.php     -> requireRole(['finance', 'owner'])   (views/finance/)
+//   finance/queue.php        -> requireRole(['finance', 'owner'])   (combined: reimbursements + internet support)
+//   finance/closed.php       -> requireRole(['finance', 'owner'])
 $canReviewReimbursements = in_array(Auth::role(), ['owner', 'organizer'], true);
-$canProcessPayments      = in_array(Auth::role(), ['finance', 'owner'], true);
 $canReviewInternet       = in_array(Auth::role(), ['support_reviewer', 'owner'], true);
-$canProcessInternet      = in_array(Auth::role(), ['finance', 'owner'], true);
+$canProcessFinance       = in_array(Auth::role(), ['finance', 'owner'], true);
+
+$canReviewAny  = $canReviewReimbursements || $canReviewInternet;
+$canSeeSupport = $canReviewAny || $canProcessFinance;
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <link rel="icon" type="image/png" href="https://dcwwiki.org/dcwwiki/images/5/56/DCW_logo.png">
+    <?php require __DIR__ . '/../../includes/favicon.php'; ?>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Organizer Workspace - DCW Engage</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -37,16 +39,25 @@ $canProcessInternet      = in_array(Auth::role(), ['finance', 'owner'], true);
         }
         body { font-family: 'Inter', sans-serif; background: var(--background); padding: 40px; color: var(--text-color); margin: 0;}
         .container { max-width: 1200px; margin: auto; }
-        
-        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px;}
+
+        .header { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 30px; }
         h1 { margin: 0; color: var(--primary-color); font-size: 28px;}
-        
+
+        .toolbar { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 12px; font-size: 14px; color: #64748b; }
+        .toolbar form { margin: 0; }
+        .btn-outline {
+            background: none; color: #64748b; text-decoration: none;
+            border: 1px solid var(--border-color); padding: 6px 12px; border-radius: 6px;
+            font-family: inherit; font-size: 13px; cursor: pointer;
+        }
+        .btn-outline:hover { border-color: #cbd5e1; color: var(--text-color); }
+
         .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 24px; }
-        
-        .card { 
-            background: var(--card-bg); 
-            border-radius: 12px; 
-            border: 1px solid var(--border-color); 
+
+        .card {
+            background: var(--card-bg);
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
             padding: 24px;
             transition: all 0.2s ease;
             text-decoration: none;
@@ -56,57 +67,49 @@ $canProcessInternet      = in_array(Auth::role(), ['finance', 'owner'], true);
             position: relative;
         }
         .card:hover { transform: translateY(-4px); box-shadow: 0 10px 15px -3px rgba(0,0,0,0.05); border-color: #cbd5e1;}
-        
-        .card-new { 
-            border: 2px dashed #cbd5e1; 
-            background: transparent; 
-            align-items: center; 
+
+        .card-new {
+            border: 2px dashed #cbd5e1;
+            background: transparent;
+            align-items: center;
             justify-content: center;
             color: var(--primary-color);
         }
         .card-new:hover { border-color: var(--primary-color); background: rgba(16, 107, 154, 0.02);}
-        
+
         .card-title { font-size: 18px; font-weight: 600; margin: 0 0 10px 0; line-height: 1.3;}
         .card-meta { font-size: 13px; color: #64748b; margin: 0 0 15px 0;}
-        
+
         .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px;}
         .status-active { background: #10b981; }
         .status-closed { background: #ef4444; }
-        
+
         .card-footer { margin-top: auto; border-top: 1px solid var(--border-color); padding-top: 15px; display: flex; justify-content: space-between; font-size: 13px; color: #64748b; font-weight: 500;}
 
         .section-label { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: #64748b; margin: 36px 0 14px; }
+        .section-intro { font-size: 14px; color: #64748b; margin: -6px 0 18px; }
+        .group-label { font-size: 13px; font-weight: 600; color: var(--text-color); margin: 22px 0 10px; }
     </style>
 </head>
 <body>
     <div class="container">
-        <div class="header" style="display: flex; align-items: center; justify-content: space-between; gap: 16px;">
+        <div class="header">
             <h1>Workspace</h1>
 
-            <div style="display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 12px; font-size: 14px; color: #64748b;">
+            <div class="toolbar">
                 <span><?= htmlspecialchars(Auth::email()) ?></span>
-                <?php if ($canReviewReimbursements): ?>
-                    <a href="/admin/reimbursements/review" style="color: #64748b; text-decoration: none; border: 1px solid #e2e8f0; padding: 6px 12px; border-radius: 6px; font-size: 13px;">Reimbursement Review</a>
-                <?php endif; ?>
-                <?php if ($canProcessPayments): ?>
-                    <a href="/finance/reimbursements" style="color: #64748b; text-decoration: none; border: 1px solid #e2e8f0; padding: 6px 12px; border-radius: 6px; font-size: 13px;">Finance Queue</a>
-                <?php endif; ?>
-                <?php if ($canReviewInternet): ?>
-                    <a href="/admin/internet-review" style="color: #64748b; text-decoration: none; border: 1px solid #e2e8f0; padding: 6px 12px; border-radius: 6px; font-size: 13px;">Internet Review</a>
-                <?php endif; ?>
-                <?php if ($canProcessInternet): ?>
-                    <a href="/finance/internet-support" style="color: #64748b; text-decoration: none; border: 1px solid #e2e8f0; padding: 6px 12px; border-radius: 6px; font-size: 13px;">Internet Finance</a>
-                <?php endif; ?>
                 <?php if (Auth::isOwner()): ?>
-                    <a href="/admin/team" style="color: #64748b; text-decoration: none; border: 1px solid #e2e8f0; padding: 6px 12px; border-radius: 6px; font-size: 13px;">Team</a>
+                    <a href="/admin/team" class="btn-outline">Team</a>
+                    <a href="/admin/audit" class="btn-outline">Audit Log</a>
                 <?php endif; ?>
-                <form method="POST" action="/admin/logout" style="margin: 0;">
+                <form method="POST" action="/admin/logout">
                     <?= CSRF::getInputField() ?>
-                    <button type="submit" style="background: none; border: 1px solid #e2e8f0; color: #64748b; padding: 6px 12px; border-radius: 6px; font-family: inherit; font-size: 13px; cursor: pointer;">Sign Out</button>
+                    <button type="submit" class="btn-outline">Sign Out</button>
                 </form>
             </div>
         </div>
 
+        <div class="section-label" style="margin-top: 0;">Application forms</div>
         <div class="grid">
             <!-- Create New Form Card -->
             <a href="/admin/builder" class="card card-new">
@@ -119,7 +122,7 @@ $canProcessInternet      = in_array(Auth::role(), ['finance', 'owner'], true);
                 <a href="/admin/form_manager?id=<?= $form['id'] ?>" class="card">
                     <h3 class="card-title"><?= htmlspecialchars($form['title']) ?></h3>
                     <p class="card-meta">Slug: /<?= htmlspecialchars($form['form_type']) ?></p>
-                    
+
                     <div class="card-footer">
                         <div>
                             <?php if ($form['is_active']): ?>
@@ -134,40 +137,43 @@ $canProcessInternet      = in_array(Auth::role(), ['finance', 'owner'], true);
             <?php endforeach; ?>
         </div>
 
-        <?php if ($canReviewReimbursements || $canProcessPayments): ?>
-            <div class="section-label">Reimbursements</div>
-            <div class="grid">
-                <?php if ($canReviewReimbursements): ?>
-                    <a href="/admin/reimbursements/review" class="card">
-                        <h3 class="card-title">Reimbursement Review</h3>
-                        <p class="card-meta">Approve or reject claims — line items and receipts, no payment details.</p>
-                    </a>
-                <?php endif; ?>
-                <?php if ($canProcessPayments): ?>
-                    <a href="/finance/reimbursements" class="card">
-                        <h3 class="card-title">Finance Queue</h3>
-                        <p class="card-meta">Execute payment on approved claims — amounts and payment details only.</p>
-                    </a>
-                <?php endif; ?>
-            </div>
-        <?php endif; ?>
+        <?php if ($canSeeSupport): ?>
+            <div class="section-label">Volunteer Support Ecosystem</div>
+            <p class="section-intro">
+                Reimbursements and internet support, from the public <a href="/support" style="color: var(--primary-color);">/support</a> page through review to payment.
+            </p>
 
-        <?php if ($canReviewInternet || $canProcessInternet): ?>
-            <div class="section-label">Internet support</div>
-            <div class="grid">
-                <?php if ($canReviewInternet): ?>
-                    <a href="/admin/internet-review" class="card">
-                        <h3 class="card-title">Internet Support Review</h3>
-                        <p class="card-meta">Decide whether volunteer requests are reasonable — reasons and packages, no phone numbers.</p>
+            <?php if ($canReviewAny): ?>
+                <div class="group-label" style="margin-top: 0;">Review</div>
+                <div class="grid">
+                    <?php if ($canReviewReimbursements): ?>
+                        <a href="/admin/reimbursements/review" class="card">
+                            <h3 class="card-title">Reimbursement Review</h3>
+                            <p class="card-meta">Approve or reject claims — line items and receipts, no payment details.</p>
+                        </a>
+                    <?php endif; ?>
+                    <?php if ($canReviewInternet): ?>
+                        <a href="/admin/internet-review" class="card">
+                            <h3 class="card-title">Internet Support Review</h3>
+                            <p class="card-meta">Decide whether volunteer requests are reasonable — reasons and packages, no phone numbers.</p>
+                        </a>
+                    <?php endif; ?>
+                </div>
+            <?php endif; ?>
+
+            <?php if ($canProcessFinance): ?>
+                <div class="group-label">Finance</div>
+                <div class="grid">
+                    <a href="/finance" class="card">
+                        <h3 class="card-title">Finance Queue</h3>
+                        <p class="card-meta">Pay approved reimbursements, recharge approved numbers, and check uploaded receipts — one queue, a tab for each.</p>
                     </a>
-                <?php endif; ?>
-                <?php if ($canProcessInternet): ?>
-                    <a href="/finance/internet-support" class="card">
-                        <h3 class="card-title">Internet Support Finance</h3>
-                        <p class="card-meta">Recharge approved numbers, then check the receipts volunteers upload.</p>
+                    <a href="/finance/closed" class="card">
+                        <h3 class="card-title">Closed Requests</h3>
+                        <p class="card-meta">Paid reimbursements and closed internet support requests, with a receipt PDF for each.</p>
                     </a>
-                <?php endif; ?>
-            </div>
+                </div>
+            <?php endif; ?>
         <?php endif; ?>
     </div>
 </body>
