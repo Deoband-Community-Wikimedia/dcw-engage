@@ -50,6 +50,7 @@ if ($route === '/' || $route === '/index.php') {
 } elseif ($route === '/track') {
     // Public "check my application status" lookup (see #32) — a form's
     // slug is matched by the catch-all below, so this has to come before it.
+    // Handles application (DCW-), reimbursement (RB-) and internet support (IS-) IDs.
     require __DIR__ . '/views/track.php';
 } elseif (preg_match('/^\/resume\/([a-zA-Z0-9_-]+)$/', $route, $matches)) {
     $token = $matches[1];
@@ -57,15 +58,28 @@ if ($route === '/' || $route === '/index.php') {
     $resumeToken = $token;
     require __DIR__ . '/views/forms/resume.php';
 
-// --- Reimbursements ---------------------------------------------------
-// One global form now, not one per event — the applicant types the event
-// name themselves inside the form. A literal route, so it must come before
-// the catch-all dynamic form route below or '/reimbursement' would be
+// --- Unified support (public) -----------------------------------------
+// One entry point for participants to ask for support: reimbursement and
+// internet support today, more types later. The kind of support is chosen
+// with ?type=internet|reimbursement (see views/support.php). Email
+// verification happens once, inside the view. A literal route, so it must
+// come before the catch-all dynamic form route below or '/support' would be
 // treated as a form type of its own.
-} elseif ($route === '/reimbursement') {
-    require __DIR__ . '/views/reimbursement.php';
+} elseif ($route === '/support') {
+    require __DIR__ . '/views/support.php';
 
-// Admin/organizer substance review — global too, not per event. Auth/role
+// Legacy public URLs. They no longer have pages of their own: send people to
+// /support with the right type preselected. The query string is carried over
+// so verification links already sitting in inboxes (?verify=...) keep working.
+// 302 while rolling out; switch to 301 once everything has been confirmed.
+} elseif ($route === '/reimbursement' || $route === '/internet-support') {
+    $query = $_GET;
+    $query['type'] = ($route === '/internet-support') ? 'internet' : 'reimbursement';
+    header('Location: /support?' . http_build_query($query), true, 302);
+    exit;
+
+// --- Reimbursements (staff) -------------------------------------------
+// Admin/organizer substance review — global, not per event. Auth/role
 // check happens inside the view itself (requireRole(['owner','organizer'])),
 // same pattern as the rest of /admin.
 } elseif ($route === '/admin/reimbursements/review') {
@@ -101,13 +115,7 @@ if ($route === '/' || $route === '/index.php') {
     $reimbursementReceiptId = (int) $matches[1];
     require __DIR__ . '/views/finance/reimbursement_receipt.php';
 
-// --- Internet support -------------------------------------------------
-// Volunteer request form (public, email-verified inside the view). A
-// literal route, so like '/reimbursement' it has to come before the
-// catch-all below or it would be treated as a form type.
-} elseif ($route === '/internet-support') {
-    require __DIR__ . '/views/internet_support.php';
-
+// --- Internet support (staff) -----------------------------------------
 // Support reviewers decide whether a request is reasonable. Auth/role check
 // is inside the view: requireRole(['support_reviewer', 'owner']). Under
 // /admin so Auth::isSafeNext() lets the login redirect bring people back.
