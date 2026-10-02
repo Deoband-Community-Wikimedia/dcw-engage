@@ -1,235 +1,271 @@
 <?php
-require_once __DIR__ . '/../../includes/init.php';
-require_once __DIR__ . '/../../includes/auth.php';
-require_once __DIR__ . '/../../includes/audit.php';
-require_once __DIR__ . '/../../includes/require_role.php';
-require_once __DIR__ . '/../../includes/app_log.php';
-require_once __DIR__ . '/../../includes/mailer.php';
-require_once __DIR__ . '/../../models/InternetSupportModel.php';
+require_once __DIR__ . '/../includes/init.php';
+require_once __DIR__ . '/../includes/app_log.php';
+require_once __DIR__ . '/../models/InternetSupportModel.php';
+require_once __DIR__ . '/../models/EmailVerificationModel.php';
 
-// Finance group, which includes owners (same boundary as the reimbursement queue).
-requireRole(['finance', 'owner']);
+// Like the global reimbursement form, email verification isn't tied to any
+// specific form row, so form_id is NULL (see EmailVerificationModel's note
+// on the NULL-safe <=> comparisons).
+const INTERNET_FORM_ID = null;
 
 $model = new InternetSupportModel();
-$message = '';
-$error = '';
+$settings = $model->getSettings();
 
-/** Delete an uploaded receipt that is no longer wanted. */
-function finance_discard_file($path) {
-    if (is_string($path) && strpos($path, 'uploads/') === 0 && strpos($path, '..') === false) {
-        $full = __DIR__ . '/../../' . $path;
-        if (is_file($full)) {
-            @unlink($full);
-        }
-    }
+// Switched off (internet_settings.is_active = 0) or not set up yet.
+if (!$model->isOpen()) {
+    http_response_code(404);
+    require __DIR__ . '/forms/not_found.php';
+    die();
 }
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+$errors = [];
+$success = null;
+
+// ------------------------------------------------------------------
+// Email verification: GET stages the token, POST confirms it
+// (scanner-prefetch safe, same as reimbursement.php).
+// ------------------------------------------------------------------
+$verifiedEmail = '';
+$pendingVerifyToken = null;
+$verifySent = false;
+
+if (isset($_GET['verify'])) {
+    $pendingVerifyToken = (string) $_GET['verify'];
+} elseif ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confirm_verification') {
     if (!CSRF::validate($_POST['csrf_token'] ?? '')) {
-        die('Invalid CSRF token.');
+        die("Invalid CSRF token.");
     }
 
-    // A double click on "Recharge done" must never fire twice.
-    if (!CSRF::consumeSubmitToken($_POST['submit_token'] ?? '')) {
-        header('Location: /finance/internet-support');
+    $verifiedFor = (new EmailVerificationModel())->consume(INTERNET_FORM_ID, (string) ($_POST['verify_token'] ?? ''));
+
+    if ($verifiedFor) {
+        $_SESSION['verified_email_internet'] = $verifiedFor;
+        header('Location: ' . parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH));
         exit;
     }
 
-    $requestId = (int) ($_POST['request_id'] ?? 0);
-    $notes = trim($_POST['notes'] ?? '');
-    $result = $_POST['result'] ?? '';
+    $errors['verify'] = "That verification link has expired or was already used. Enter your email below to get a new one.";
+}
 
-    if ($result === 'done') {
-        $reference = trim($_POST['recharge_reference'] ?? '');
+$verifiedEmail = $_SESSION['verified_email_internet'] ?? '';
 
-        if ($reference === '') {
-            $error = "Enter the operator's recharge reference or transaction ID before marking this done. It is emailed to the applicant.";
-        } elseif (mb_strlen($reference) > 255) {
-            $error = "That reference is too long (255 characters max).";
-        } elseif ($model->markRechargeDone($requestId, Auth::email(), $reference)) {
-            $info = $model->getForNotification($requestId);
-            AuditLog::record('internet.recharge_done', Auth::id(), Auth::email(), $info['email'], 'Tracking: ' . $info['tracking_id'] . ' | Ref: ' . $reference);
-            Mailer::sendInternetStatusUpdate($info['email'], $info['applicant_name'], $info['tracking_id'], 'Awaiting Receipt', '', $reference);
-            $message = "Request {$info['tracking_id']} marked recharged. The applicant has been asked for the receipt.";
-        } else {
-            $error = "That request was already handled by someone else.";
-        }
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'request_verification') {
+    if (!CSRF::validate($_POST['csrf_token'] ?? '')) {
+        die("Invalid CSRF token.");
+    }
 
-    } elseif ($result === 'failed') {
-        if ($notes === '') {
-            $error = "Add a note saying why the recharge failed. The reviewers will see it.";
-        } elseif ($model->markRechargeFailed($requestId, Auth::email(), $notes)) {
-            // No applicant email: this goes back to the reviewers (see Mailer::sendInternetStatusUpdate's contract).
-            $info = $model->getForNotification($requestId);
-            AuditLog::record('internet.recharge_failed', Auth::id(), Auth::email(), $info['email'], 'Tracking: ' . $info['tracking_id'] . ' | ' . $notes);
-            app_log("Internet recharge failed: {$info['tracking_id']} by " . Auth::email() . " — $notes");
-            $message = "Request {$info['tracking_id']} sent back to the support reviewers.";
-        } else {
-            $error = "That request was already handled by someone else.";
-        }
+    $email = trim($_POST['email'] ?? '');
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        $errors['email'] = "Please enter a valid email address.";
+    } else {
+        try {
+            require_once __DIR__ . '/../includes/mailer.php';
+            $config = require __DIR__ . '/../includes/config.php';
+            $email = strtolower($email);
+            $issued = (new EmailVerificationModel())->request(INTERNET_FORM_ID, $email);
 
-    } elseif ($result === 'close') {
-        if (empty($_POST['receipt_downloaded'])) {
-            $error = "Download the receipt and tick the confirmation box before closing. It is deleted from the server afterwards.";
-        } elseif ($model->close($requestId, Auth::email(), true)) {
-            $info = $model->getForNotification($requestId);
-            AuditLog::record('internet.closed', Auth::id(), Auth::email(), $info['email'], 'Tracking: ' . $info['tracking_id'] . ' | Receipt downloaded');
-            Mailer::sendInternetStatusUpdate($info['email'], $info['applicant_name'], $info['tracking_id'], 'Closed');
-            $message = "Request {$info['tracking_id']} closed. Its receipt will be removed from the server by the scheduled cleanup.";
-        } else {
-            $error = "That request was already handled by someone else.";
-        }
-
-    } elseif ($result === 'bounce') {
-        if ($notes === '') {
-            $error = "Add a note saying what is wrong with the receipt. The applicant will see it.";
-        } else {
-            $oldPath = $model->sendBackForReceipt($requestId, Auth::email(), $notes);
-            if ($oldPath === false) {
-                $error = "That request was already handled by someone else.";
-            } else {
-                finance_discard_file($oldPath);
-                $info = $model->getForNotification($requestId);
-                AuditLog::record('internet.receipt_bounced', Auth::id(), Auth::email(), $info['email'], 'Tracking: ' . $info['tracking_id'] . ' | ' . $notes);
-                Mailer::sendInternetStatusUpdate($info['email'], $info['applicant_name'], $info['tracking_id'], 'Receipt Rejected', $notes);
-                $message = "Receipt for {$info['tracking_id']} sent back to the applicant.";
+            if ($issued) {
+                $verifyUrl = rtrim($config['app']['url'], '/') . '/internet-support?verify=' . urlencode($issued['token']);
+                Mailer::sendInternetVerification($email, $verifyUrl, $issued['expires_at']);
             }
+            // Same response whether or not a link was issued.
+            $verifySent = true;
+        } catch (Exception $e) {
+            app_log("Internet support verification request failed for <$email>: " . $e->getMessage());
+            $errors['system'] = "Something went wrong sending your verification email. Please try again.";
+        }
+    }
+} elseif ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'change_email') {
+    unset($_SESSION['verified_email_internet']);
+    $verifiedEmail = '';
+}
+
+// ------------------------------------------------------------------
+// Submission
+// ------------------------------------------------------------------
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'submit_internet_request') {
+    if (!CSRF::validate($_POST['csrf_token'] ?? '')) {
+        die("Invalid CSRF token.");
+    }
+
+    if ($verifiedEmail === '') {
+        $errors['system'] = "Please verify your email before submitting.";
+    } else {
+        try {
+            $applicantName = trim($_POST['applicant_name'] ?? '');
+
+            $result = $model->createRequest(
+                $verifiedEmail,
+                $applicantName,
+                $_POST['phone'] ?? '',
+                $_POST['operator'] ?? '',
+                $_POST['package_name'] ?? '',
+                $_POST['amount'] ?? '',
+                $_POST['validity_days'] ?? '',
+                $_POST['reason'] ?? ''
+            );
+
+            require_once __DIR__ . '/../includes/mailer.php';
+            Mailer::sendInternetReceived($verifiedEmail, $applicantName, $result['tracking_id']);
+
+            $success = $result;
+        } catch (\InvalidArgumentException $e) {
+            $errors['system'] = $e->getMessage();
+        } catch (Exception $e) {
+            app_log("Internet support submission failed for <$verifiedEmail>: " . $e->getMessage());
+            $errors['system'] = "An error occurred submitting your request. Please try again.";
         }
     }
 }
 
-$rechargeQueue = $model->listForRechargeQueue();
-$receiptQueue  = $model->listForReceiptVerification();
-$closed        = $model->listClosedForFinance();
+$showConfirm = $pendingVerifyToken !== null && $verifiedEmail === '';
+$showGate = $verifiedEmail === '' && !$showConfirm;
+
+$old = function ($key) {
+    return htmlspecialchars((string) ($_POST[$key] ?? ''));
+};
+
+$maxAmountRupees = (int) ($settings['max_amount_paise'] / 100);
 ?>
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
-    <title>Internet Support — Finance</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Internet Support Request - DCW Engage</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/assets/css/forms.css?v=2">
 </head>
+
 <body>
     <div class="container">
-        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
-            <h1 style="margin:0;">Internet Support</h1>
-            <a href="/finance/reimbursements" style="color:#106b9a; font-size:14px; font-weight:600; text-decoration:none;">Reimbursements &rarr;</a>
-        </div>
-        <p style="color:#64748b; font-size:14px;">
-            Approved requests waiting for a recharge, then receipts waiting to be checked.
-            The reason for a request isn't shown here; the review already happened.
+        <h1 style="margin-top:0;">Internet Support Request</h1>
+        <p style="color:#475569; font-size:15px; line-height:1.6; margin-bottom:30px;">
+            DCW volunteers can request help with a data pack. A reviewer checks the request, our finance team
+            does the recharge, and you then upload the operator's receipt here so we can close it.
+            One request can be made every <?= (int) InternetSupportModel::MIN_DAYS_BETWEEN_REQUESTS ?> days.
         </p>
 
-        <?php if ($message): ?><div class="alert-success"><?= htmlspecialchars($message) ?></div><?php endif; ?>
-        <?php if ($error): ?><div class="alert-error"><?= htmlspecialchars($error) ?></div><?php endif; ?>
-
-        <!-- ============ 1. Recharge queue ============ -->
-        <h2 style="font-size:17px;">1. To recharge (<?= count($rechargeQueue) ?>)</h2>
-        <?php if (empty($rechargeQueue)): ?><p>Nothing awaiting recharge.</p><?php endif; ?>
-
-        <?php foreach ($rechargeQueue as $req): ?>
-            <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:20px; margin-bottom:20px;">
-                <h3 style="margin-top:0;">
-                    <?= htmlspecialchars($req['applicant_name']) ?> — #<?= htmlspecialchars($req['tracking_id']) ?>
-                </h3>
-                <p style="font-size:20px; margin:6px 0;"><strong><?= htmlspecialchars($req['phone']) ?></strong></p>
-                <p style="margin-bottom:4px;">
-                    <?= htmlspecialchars($req['operator']) ?> — <strong><?= htmlspecialchars($req['package_name']) ?></strong><br>
-                    Approved amount: <strong>₹<?= number_format($req['package_price_paise'] / 100, 2) ?></strong><?= $req['package_validity_days'] ? ' · ' . (int) $req['package_validity_days'] . ' days' : '' ?>
-                </p>
-                <p style="font-size:12px; color:#64748b; margin-top:0;">The applicant stated this pack and price. Confirm the operator's actual price before recharging, and don't pay more than the approved amount.</p>
-                <p style="font-size:13px; color:#64748b;">
-                    Approved by <?= htmlspecialchars($req['decided_by']) ?> on <?= htmlspecialchars($req['decided_at']) ?> UTC
-                </p>
-
-                <form method="POST" style="display:flex; gap:10px; align-items:flex-start; flex-wrap:wrap;">
-                    <?= CSRF::getInputField() ?>
-                    <?= CSRF::getSubmitField() ?>
-                    <input type="hidden" name="request_id" value="<?= (int) $req['id'] ?>">
-                    <!-- Required for "Recharge done"; "Recharge failed" has formnovalidate. -->
-                    <input type="text" name="recharge_reference" required maxlength="255"
-                           placeholder="Operator reference / transaction ID (required when done)"
-                           style="flex:1; min-width:180px;">
-                    <textarea name="notes" placeholder="Notes (required if recharge failed)" style="flex:1; min-width:180px; min-height:40px;"></textarea>
-                    <button type="submit" name="result" value="done" style="width:auto; background:#059669;">Recharge done</button>
-                    <button type="submit" name="result" value="failed" formnovalidate style="width:auto; background:#dc2626;">Recharge failed</button>
-                </form>
+        <?php if ($success): ?>
+            <div class="alert-success">
+                <h3 style="margin-top:0">Request submitted</h3>
+                Your tracking ID is <strong><?= htmlspecialchars($success['tracking_id']) ?></strong>.
+                We've emailed you a confirmation. Use the
+                <a href="/track" style="color:#106b9a;">tracking page</a> with this ID and your email to follow it.
             </div>
-        <?php endforeach; ?>
 
-        <!-- ============ 2. Receipt verification ============ -->
-        <h2 style="font-size:17px; margin-top:40px;">2. Receipts to check (<?= count($receiptQueue) ?>)</h2>
-        <?php if (empty($receiptQueue)): ?><p>No receipts waiting.</p><?php endif; ?>
+        <?php else: ?>
 
-        <?php foreach ($receiptQueue as $req): ?>
-            <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:20px; margin-bottom:20px;">
-                <h3 style="margin-top:0;">
-                    <?= htmlspecialchars($req['applicant_name']) ?> — #<?= htmlspecialchars($req['tracking_id']) ?>
-                </h3>
-                <p>
-                    <?= htmlspecialchars($req['phone']) ?> ·
-                    <?= htmlspecialchars($req['operator']) ?> — <?= htmlspecialchars($req['package_name']) ?>
-                    (approved ₹<?= number_format($req['package_price_paise'] / 100, 2) ?>)<br>
-                    Recharge reference: <strong><?= htmlspecialchars((string) $req['recharge_reference']) ?></strong>
-                </p>
-                <p style="font-size:14px;">
-                    <?php if ($req['receipt_path'] !== ''): ?>
-                        <a href="/<?= htmlspecialchars($req['receipt_path']) ?>" target="_blank" download>⬇ Download receipt</a>
-                    <?php else: ?>
-                        <span style="color:#94a3b8;">Receipt file is missing.</span>
-                    <?php endif; ?>
-                    <span style="color:#64748b;"> — uploaded <?= htmlspecialchars((string) $req['receipt_submitted_at']) ?> UTC</span>
-                </p>
-
-                <form method="POST" style="display:flex; gap:10px; align-items:flex-start; flex-wrap:wrap;">
-                    <?= CSRF::getInputField() ?>
-                    <?= CSRF::getSubmitField() ?>
-                    <input type="hidden" name="request_id" value="<?= (int) $req['id'] ?>">
-                    <textarea name="notes" placeholder="Notes (required to send the receipt back — the applicant sees them)" style="flex:1; min-width:220px; min-height:40px;"></textarea>
-                    <label style="flex-basis:100%; font-size:13px; font-weight:500;">
-                        <input type="checkbox" name="receipt_downloaded" value="1">
-                        I have downloaded the receipt — OK to delete it from the server
-                    </label>
-                    <button type="submit" name="result" value="close" style="width:auto; background:#059669;">Verify &amp; close</button>
-                    <button type="submit" name="result" value="bounce" style="width:auto; background:#dc2626;">Send receipt back</button>
-                </form>
-            </div>
-        <?php endforeach; ?>
-
-        <!-- ============ 3. Closed ============ -->
-        <details style="margin-top:40px;">
-            <summary style="cursor:pointer; font-weight:600;">Closed requests (<?= count($closed) ?>)</summary>
-            <?php if (empty($closed)): ?>
-                <p>None yet.</p>
-            <?php else: ?>
-                <div style="overflow-x:auto;">
-                    <table style="width:100%; border-collapse:collapse; font-size:14px; margin-top:10px;">
-                        <thead>
-                            <tr style="text-align:left; border-bottom:2px solid #cbd5e1;">
-                                <th style="padding:6px;">Tracking</th>
-                                <th style="padding:6px;">Applicant</th>
-                                <th style="padding:6px;">Package</th>
-                                <th style="padding:6px;">Amount</th>
-                                <th style="padding:6px;">Reference</th>
-                                <th style="padding:6px;">Closed</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php foreach ($closed as $c): ?>
-                                <tr style="border-bottom:1px solid #e2e8f0;">
-                                    <td style="padding:6px;"><?= htmlspecialchars($c['tracking_id']) ?></td>
-                                    <td style="padding:6px;"><?= htmlspecialchars($c['applicant_name']) ?></td>
-                                    <td style="padding:6px;"><?= htmlspecialchars($c['operator']) ?> — <?= htmlspecialchars($c['package_name']) ?></td>
-                                    <td style="padding:6px;">₹<?= number_format($c['package_price_paise'] / 100, 2) ?></td>
-                                    <td style="padding:6px;"><?= htmlspecialchars((string) $c['recharge_reference']) ?></td>
-                                    <td style="padding:6px;"><?= htmlspecialchars((string) $c['closed_at']) ?> UTC</td>
-                                </tr>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
+            <?php if (!empty($errors['system']) || !empty($errors['email']) || !empty($errors['verify'])): ?>
+                <div class="alert-error">
+                    <strong>Notice:</strong> <?= htmlspecialchars($errors['system'] ?? $errors['email'] ?? $errors['verify']) ?>
                 </div>
             <?php endif; ?>
-        </details>
+
+            <?php if ($showConfirm): ?>
+                <div class="alert-success" style="margin-bottom:20px;">
+                    <h3 style="margin-top:0">Confirm your email</h3>
+                    Click below to finish verifying and continue to your request.
+                </div>
+                <form method="POST" action="<?= htmlspecialchars(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH)) ?>" style="margin-bottom:30px;">
+                    <?= CSRF::getInputField() ?>
+                    <input type="hidden" name="action" value="confirm_verification">
+                    <input type="hidden" name="verify_token" value="<?= htmlspecialchars($pendingVerifyToken) ?>">
+                    <button type="submit">Continue to internet support request</button>
+                </form>
+
+            <?php elseif ($showGate): ?>
+                <?php if ($verifySent): ?>
+                    <div class="alert-success">
+                        <h3 style="margin-top:0">Check your inbox</h3>
+                        If <strong><?= htmlspecialchars($email ?? '') ?></strong> can receive email, a verification link is on its way.
+                    </div>
+                <?php endif; ?>
+                <form method="POST" style="background:#f8fafc; padding:20px; border-radius:8px; margin-bottom:30px; border:1px solid #e2e8f0;">
+                    <?= CSRF::getInputField() ?>
+                    <input type="hidden" name="action" value="request_verification">
+                    <div class="form-group" style="margin-bottom:15px;">
+                        <label>Verify your email to begin <span style="color:#ef4444">*</span></label>
+                        <input type="email" name="email" value="<?= htmlspecialchars($email ?? '') ?>" required>
+                    </div>
+                    <button type="submit"><?= $verifySent ? 'Send a new link' : 'Send verification link' ?></button>
+                </form>
+
+            <?php else: ?>
+
+                <form method="POST" style="margin:0 0 20px; font-size:14px; color:#475569;">
+                    <?= CSRF::getInputField() ?>
+                    <input type="hidden" name="action" value="change_email">
+                    Verified as <strong><?= htmlspecialchars($verifiedEmail) ?></strong> ✓
+                    <button type="submit" formnovalidate
+                        style="background:none; border:none; color:#106b9a; padding:0 0 0 6px; width:auto; font-size:14px; font-weight:500; text-decoration:underline; cursor:pointer;">Use a different email</button>
+                </form>
+
+                <form method="POST">
+                    <?= CSRF::getInputField() ?>
+                    <input type="hidden" name="action" value="submit_internet_request">
+
+                    <div class="form-group" style="margin-bottom:20px;">
+                        <label>Your name <span style="color:#ef4444">*</span></label>
+                        <input type="text" name="applicant_name" required maxlength="255" value="<?= $old('applicant_name') ?>">
+                    </div>
+
+                    <div class="form-group" style="margin-bottom:20px;">
+                        <label>Mobile number to be recharged <span style="color:#ef4444">*</span></label>
+                        <input type="tel" name="phone" required maxlength="20" placeholder="10-digit mobile number" value="<?= $old('phone') ?>">
+                        <span style="font-size:13px; color:#64748b; margin-top:5px; display:block;">
+                            Only the finance team can see this number.
+                        </span>
+                    </div>
+
+                    <div class="form-group" style="margin-bottom:20px;">
+                        <label>Mobile operator <span style="color:#ef4444">*</span></label>
+                        <input type="text" name="operator" required maxlength="50" list="operator-list" placeholder="e.g. Jio" value="<?= $old('operator') ?>">
+                        <datalist id="operator-list">
+                            <option value="Jio">
+                            <option value="Airtel">
+                            <option value="Vi">
+                            <option value="BSNL">
+                        </datalist>
+                    </div>
+
+                    <div class="form-group" style="margin-bottom:20px;">
+                        <label>The pack you need <span style="color:#ef4444">*</span></label>
+                        <input type="text" name="package_name" required minlength="3" maxlength="120" placeholder="e.g. 1.5 GB/day recharge" value="<?= $old('package_name') ?>">
+                        <span style="font-size:13px; color:#64748b; margin-top:5px; display:block;">
+                            Describe the plan as your operator lists it.
+                        </span>
+                    </div>
+
+                    <div style="display:flex; gap:14px; flex-wrap:wrap;">
+                        <div class="form-group" style="margin-bottom:20px; flex:1 1 160px;">
+                            <label>Price of the pack (₹) <span style="color:#ef4444">*</span></label>
+                            <input type="number" name="amount" required min="1" max="<?= (int) $maxAmountRupees ?>" step="0.01" value="<?= $old('amount') ?>">
+                            <span style="font-size:13px; color:#64748b; margin-top:5px; display:block;">
+                                Up to ₹<?= number_format($maxAmountRupees) ?>.
+                            </span>
+                        </div>
+                        <div class="form-group" style="margin-bottom:20px; flex:1 1 160px;">
+                            <label>Validity (days)</label>
+                            <input type="number" name="validity_days" min="1" max="365" step="1" placeholder="optional" value="<?= $old('validity_days') ?>">
+                        </div>
+                    </div>
+
+                    <div class="form-group" style="margin-bottom:20px;">
+                        <label>Why do you need this? <span style="color:#ef4444">*</span></label>
+                        <textarea name="reason" required minlength="<?= (int) InternetSupportModel::MIN_REASON_LENGTH ?>" maxlength="<?= (int) InternetSupportModel::MAX_REASON_LENGTH ?>" rows="5"><?= $old('reason') ?></textarea>
+                        <span style="font-size:13px; color:#64748b; margin-top:5px; display:block;">
+                            For example, the DCW work you'll do online with it.
+                        </span>
+                    </div>
+
+                    <button type="submit">Submit request</button>
+                </form>
+            <?php endif; ?>
+        <?php endif; ?>
     </div>
 </body>
+
 </html>
