@@ -29,7 +29,7 @@ try {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <link rel="icon" type="image/png" href="https://dcwwiki.org/dcwwiki/images/5/56/DCW_logo.png">
+        <?php require __DIR__ . '/../includes/favicon.php'; ?>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DCW Engage — Applications &amp; Forms</title>
     <meta name="description" content="The engagement hub for Deoband Community Wikimedia — scholarships, fellowships, volunteering, and more, all in one place.">
