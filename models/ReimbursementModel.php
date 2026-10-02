@@ -33,7 +33,7 @@ class ReimbursementModel {
     public const UPI_MAX_PAISE = 80000; // ₹800
 
     /** A claim is only valid if filed within this many days of the event. */
-    public const CLAIM_WINDOW_DAYS = 7;
+    public const CLAIM_WINDOW_DAYS = 5;
 
     /** "Today" for the claim window is judged in India time, not server time. */
     private const CLAIM_TIMEZONE = 'Asia/Kolkata';
