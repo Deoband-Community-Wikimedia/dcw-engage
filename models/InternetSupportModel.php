@@ -300,12 +300,7 @@ class InternetSupportModel {
              ORDER BY decided_at ASC"
         )->fetchAll();
 
-        foreach ($rows as &$row) {
-            $row['phone'] = Crypto::decrypt($row['phone_enc']);
-            unset($row['phone_enc']);
-        }
-
-        return $rows;
+        return $this->attachDecryptedPhones($rows);
     }
 
     /** Receipts the applicant has uploaded, waiting for finance to check them. */
@@ -319,10 +314,30 @@ class InternetSupportModel {
              ORDER BY receipt_submitted_at ASC"
         )->fetchAll();
 
+        return $this->attachDecryptedPhones($rows);
+    }
+
+    /**
+     * Decrypts each row's phone number. A row that can't be decrypted (a
+     * damaged value, or the encryption key having changed) gets phone = null
+     * and phone_error = true instead of throwing, so one bad row can't take
+     * the whole queue down. Views must check phone_error and must NOT offer
+     * a recharge for such a row: we never guess at a number to pay.
+     */
+    private function attachDecryptedPhones(array $rows) {
         foreach ($rows as &$row) {
-            $row['phone'] = Crypto::decrypt($row['phone_enc']);
+            try {
+                $row['phone'] = Crypto::decrypt($row['phone_enc']);
+                $row['phone_error'] = false;
+            } catch (\RuntimeException $e) {
+                $row['phone'] = null;
+                $row['phone_error'] = true;
+                // Tracking ID only: never log the number or the ciphertext.
+                error_log('Internet support: could not decrypt phone for ' . ($row['tracking_id'] ?? '?') . ' - ' . $e->getMessage());
+            }
             unset($row['phone_enc']);
         }
+        unset($row);
 
         return $rows;
     }
