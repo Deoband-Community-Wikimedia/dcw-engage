@@ -93,25 +93,36 @@ if ($route === '/' || $route === '/index.php') {
     $reimbursementReceiptId = (int) $matches[1];
     require __DIR__ . '/views/finance/reimbursement_receipt.php';
 
-// --- Internet Support ---------------------------------------------------
-// Public request form. Same reasoning as '/reimbursement' above: a literal
-// route that must come before the catch-all dynamic form route below, or
-// 'internet-support' would be looked up as a form slug instead (which is
-// exactly what was happening before this route existed — it fell through
-// to the catch-all and 404'd via forms/not_found.php).
+// --- Internet support -------------------------------------------------
+// Volunteer request form (public, email-verified inside the view). A
+// literal route, so like '/reimbursement' it has to come before the
+// catch-all below or it would be treated as a form type.
 } elseif ($route === '/internet-support') {
     require __DIR__ . '/views/internet_support.php';
 
-// Admin/organizer substance review — same boundary and reasoning as
-// '/admin/reimbursements/review' above (requireRole(['owner','organizer'])
-// expected inside the view itself).
+// Support reviewers decide whether a request is reasonable. Auth/role check
+// is inside the view: requireRole(['support_reviewer', 'owner']). Under
+// /admin so Auth::isSafeNext() lets the login redirect bring people back.
 } elseif ($route === '/admin/internet-review') {
     require __DIR__ . '/views/admin/internet_review.php';
 
-// Finance recharge + receipt-verification queue. Deliberately NOT under
-// /admin, same reasoning as the reimbursement finance queue above.
+// Finance: recharge queue, receipt verification and closed list on one
+// page. Not under /admin, same as the reimbursement queue. Role check is
+// inside the view: requireRole(['finance', 'owner']).
 } elseif ($route === '/finance/internet-support') {
     require __DIR__ . '/views/finance/internet_support.php';
+
+// Index of closed internet support requests, each linking to its own receipt
+// PDF. Same requireRole(['finance', 'owner']) boundary as the page above.
+} elseif ($route === '/finance/internet-support/closed') {
+    require __DIR__ . '/views/finance/internet_closed.php';
+
+// Receipt PDF for one Closed request, generated on demand and streamed to
+// the browser; nothing is saved to the server. Role check is inside the view.
+} elseif (preg_match('/^\/finance\/internet-support\/receipt\/(\d+)$/', $route, $matches)) {
+    global $internetReceiptId;
+    $internetReceiptId = (int) $matches[1];
+    require __DIR__ . '/views/finance/internet_receipt.php';
 
 } else {
     // Dynamic form routing
