@@ -95,6 +95,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'submi
         try {
             $applicantName = trim($_POST['applicant_name'] ?? '');
 
+            // Eligibility and narrative answers are validated inside the model,
+            // so the rules live in one place.
             $result = $model->createRequest(
                 $verifiedEmail,
                 $applicantName,
@@ -103,7 +105,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'submi
                 $_POST['package_name'] ?? '',
                 $_POST['amount'] ?? '',
                 $_POST['validity_days'] ?? '',
-                $_POST['reason'] ?? ''
+                $_POST['reason'] ?? '',
+                [
+                    'wikimedia_username' => $_POST['wikimedia_username'] ?? '',
+                    'edits_80'         => $_POST['edits_80'] ?? '',
+                    'attended_ch'      => $_POST['attended_ch'] ?? '',
+                    'tech_contributor' => $_POST['tech_contributor'] ?? '',
+                    'contributions'    => $_POST['contributions'] ?? '',
+                    'plans'            => $_POST['plans'] ?? '',
+                ]
             );
 
             require_once __DIR__ . '/../includes/mailer.php';
@@ -126,7 +136,17 @@ $old = function ($key) {
     return htmlspecialchars((string) ($_POST[$key] ?? ''));
 };
 
+$checked = function ($key, $value) {
+    return (($_POST[$key] ?? '') === $value) ? 'checked' : '';
+};
+
 $maxAmountRupees = (int) ($settings['max_amount_paise'] / 100);
+
+$eligibilityQuestions = [
+    'edits_80'         => 'Have you made 80+ edits to Wikimedia projects in the past month, without using automated tools like Depictor?',
+    'attended_ch'      => 'Have you attended the past 3 DCW Conversation Hours?',
+    'tech_contributor' => 'Are you actively contributing to DCW technical projects?',
+];
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -207,9 +227,39 @@ $maxAmountRupees = (int) ($settings['max_amount_paise'] / 100);
                     <?= CSRF::getInputField() ?>
                     <input type="hidden" name="action" value="submit_internet_request">
 
+                    <fieldset style="border:1px solid #e2e8f0; border-radius:8px; padding:16px 20px; margin:0 0 24px;">
+                        <legend style="font-weight:600; padding:0 6px;">Eligibility</legend>
+
+                        <?php foreach ($eligibilityQuestions as $name => $label): ?>
+                            <div class="form-group" style="margin-bottom:16px;">
+                                <label><?= htmlspecialchars($label) ?> <span style="color:#ef4444">*</span></label>
+                                <label style="font-weight:400; display:inline-block; margin-right:18px;">
+                                    <input type="radio" name="<?= $name ?>" value="yes" required <?= $checked($name, 'yes') ?>> Yes
+                                </label>
+                                <label style="font-weight:400; display:inline-block;">
+                                    <input type="radio" name="<?= $name ?>" value="no" <?= $checked($name, 'no') ?>> No
+                                </label>
+                            </div>
+                        <?php endforeach; ?>
+
+                        <div id="ineligible-note" class="alert-error" style="display:none; margin:0;">
+                            Based on your answers you're not eligible for support right now. You need 80+ manual edits
+                            in the past month and attendance at the last 3 Conversation Hours, or active contribution
+                            to DCW technical projects.
+                        </div>
+                    </fieldset>
+
                     <div class="form-group" style="margin-bottom:20px;">
                         <label>Your name <span style="color:#ef4444">*</span></label>
                         <input type="text" name="applicant_name" required maxlength="255" value="<?= $old('applicant_name') ?>">
+                    </div>
+
+                    <div class="form-group" style="margin-bottom:20px;">
+                        <label>Your Wikimedia username <span style="color:#ef4444">*</span></label>
+                        <input type="text" name="wikimedia_username" required maxlength="255" value="<?= $old('wikimedia_username') ?>">
+                        <span style="font-size:13px; color:#64748b; margin-top:5px; display:block;">
+                            The username only, without "User:" or a link.
+                        </span>
                     </div>
 
                     <div class="form-group" style="margin-bottom:20px;">
@@ -261,8 +311,46 @@ $maxAmountRupees = (int) ($settings['max_amount_paise'] / 100);
                         </span>
                     </div>
 
+                    <div class="form-group" style="margin-bottom:20px;">
+                        <label>Tell us about your contributions in the last three months which are relevant to the growth of DCW <span style="color:#ef4444">*</span></label>
+                        <textarea name="contributions" required minlength="<?= (int) InternetSupportModel::MIN_NARRATIVE_LENGTH ?>" maxlength="<?= (int) InternetSupportModel::MAX_NARRATIVE_LENGTH ?>" rows="5"><?= $old('contributions') ?></textarea>
+                    </div>
+
+                    <div class="form-group" style="margin-bottom:20px;">
+                        <label>Tell us about your prospective plans for the period you are seeking internet support for <span style="color:#ef4444">*</span></label>
+                        <textarea name="plans" required minlength="<?= (int) InternetSupportModel::MIN_NARRATIVE_LENGTH ?>" maxlength="<?= (int) InternetSupportModel::MAX_NARRATIVE_LENGTH ?>" rows="5"><?= $old('plans') ?></textarea>
+                    </div>
+
                     <button type="submit">Submit request</button>
                 </form>
+
+                <script>
+                    // Convenience only: the server (InternetSupportModel::createRequest) is the real gate.
+                    (function () {
+                        var first = document.querySelector('input[name="edits_80"]');
+                        if (!first) return;
+                        var form = first.form;
+                        var note = document.getElementById('ineligible-note');
+                        var submit = form.querySelector('button[type="submit"]');
+
+                        function val(name) {
+                            var el = form.querySelector('input[name="' + name + '"]:checked');
+                            return el ? el.value : '';
+                        }
+
+                        function update() {
+                            var e = val('edits_80'), a = val('attended_ch'), t = val('tech_contributor');
+                            var answered = e && a && t;
+                            var eligible = t === 'yes' || (e === 'yes' && a === 'yes');
+                            var blocked = answered && !eligible;
+                            note.style.display = blocked ? 'block' : 'none';
+                            submit.disabled = blocked;
+                        }
+
+                        form.addEventListener('change', update);
+                        update();
+                    })();
+                </script>
             <?php endif; ?>
         <?php endif; ?>
     </div>
