@@ -165,7 +165,7 @@ $eligibilityQuestions = [
         <p style="color:#475569; font-size:15px; line-height:1.6; margin-bottom:30px;">
             DCW volunteers can request help with a data pack. A reviewer checks the request, our finance team
             does the recharge, and you then upload the operator's receipt here so we can close it.
-            One request can be made every <?= (int) InternetSupportModel::MIN_DAYS_BETWEEN_REQUESTS ?> days.
+            You can submit one request every <?= (int) InternetSupportModel::MIN_DAYS_BETWEEN_REQUESTS ?> days.
         </p>
 
         <?php if ($success): ?>
@@ -243,7 +243,7 @@ $eligibilityQuestions = [
                         <?php endforeach; ?>
 
                         <div id="ineligible-note" class="alert-error" style="display:none; margin:0;">
-                            Based on your answers you're not eligible for support right now. You need 80+ manual edits
+                            Based on your answers, you're not eligible for support right now. You need 80+ manual edits
                             in the past month and attendance at the last 3 Conversation Hours, or active contribution
                             to DCW technical projects.
                         </div>
@@ -304,10 +304,10 @@ $eligibilityQuestions = [
                     </div>
 
                     <div class="form-group" style="margin-bottom:20px;">
-                        <label>Why do you need this? <span style="color:#ef4444">*</span></label>
+                        <label>Why do you need support with internet access? <span style="color:#ef4444">*</span></label>
                         <textarea name="reason" required minlength="<?= (int) InternetSupportModel::MIN_REASON_LENGTH ?>" maxlength="<?= (int) InternetSupportModel::MAX_REASON_LENGTH ?>" rows="5"><?= $old('reason') ?></textarea>
                         <span style="font-size:13px; color:#64748b; margin-top:5px; display:block;">
-                            For example, the DCW work you'll do online with it.
+                            We are particularly interested in understanding the motivation behind the request. For example, the support will help you contribute in an xyz way. 
                         </span>
                     </div>
 
