@@ -1123,6 +1123,11 @@ Deoband Community Wikimedia";
      * Applicant-facing status changes only. $status is one of:
      *   'Approved for Support' - reviewers approved; finance is next
      *   'Rejected'             - not approved ($note shown)
+     *   'Info Requested'       - a reviewer has a question; asks the applicant to
+     *                            reply on the tracking page. The question itself is
+     *                            NEVER put in the email: it stays behind the
+     *                            tracking ID + email pair, and the reviewer stays
+     *                            anonymous.
      *   'Awaiting Receipt'     - recharge done; asks for the receipt ($reference shown)
      *   'Receipt Rejected'     - notification-only pseudo-status: finance bounced
      *                            the uploaded receipt ($note says why)
@@ -1154,6 +1159,13 @@ Deoband Community Wikimedia";
                 $line = "Your internet support request (tracking ID $tid) was not approved.";
                 $alt  = "Your internet support request ($trackingId) was not approved.";
                 $extra = '';
+                break;
+
+            case 'Info Requested':
+                $subject = 'We need a little more information on your internet support request';
+                $line = "A reviewer has a question about your internet support request (tracking ID $tid). Please open the tracking page, enter your tracking ID and this email address, and reply there. Your request can't move forward until you do.";
+                $alt  = "A reviewer has a question about your internet support request ($trackingId). Please reply on the tracking page ($trackUrl) using your tracking ID and this email address. Your request can't move forward until you do.";
+                $extra = $button;
                 break;
 
             case 'Awaiting Receipt':
