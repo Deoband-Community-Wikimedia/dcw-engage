@@ -366,12 +366,8 @@ $pageHeading = $type ? $typeMeta[$type]['title'] . ' request' : 'Request support
             <div class="alert-success">
                 <h3 style="margin-top:0">Request submitted</h3>
                 Your tracking ID is <strong><?= htmlspecialchars($success['tracking_id']) ?></strong>.
-                We've emailed you a confirmation.
-                <?php if ($successType === 'internet'): ?>
-                    Use the <a href="/track" style="color:#106b9a;">tracking page</a> with this ID and your email to follow it.
-                <?php else: ?>
-                    You'll be notified by email once it's reviewed.
-                <?php endif; ?>
+                We've emailed you a confirmation. Use the
+                <a href="/track" style="color:#106b9a;">tracking page</a> with this ID and your email to follow it<?= $successType === 'reimbursement' ? " (we'll also email you once it's reviewed)." : '.' ?>
             </div>
 
         <?php else: ?>
