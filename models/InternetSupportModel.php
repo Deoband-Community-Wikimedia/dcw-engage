@@ -300,12 +300,7 @@ class InternetSupportModel {
              ORDER BY decided_at ASC"
         )->fetchAll();
 
-        foreach ($rows as &$row) {
-            $row['phone'] = Crypto::decrypt($row['phone_enc']);
-            unset($row['phone_enc']);
-        }
-
-        return $rows;
+        return $this->attachDecryptedPhones($rows);
     }
 
     /** Receipts the applicant has uploaded, waiting for finance to check them. */
@@ -319,10 +314,30 @@ class InternetSupportModel {
              ORDER BY receipt_submitted_at ASC"
         )->fetchAll();
 
+        return $this->attachDecryptedPhones($rows);
+    }
+
+    /**
+     * Decrypts each row's phone number. A row that can't be decrypted (a
+     * damaged value, or the encryption key having changed) gets phone = null
+     * and phone_error = true instead of throwing, so one bad row can't take
+     * the whole queue down. Views must check phone_error and must NOT offer
+     * a recharge for such a row: we never guess at a number to pay.
+     */
+    private function attachDecryptedPhones(array $rows) {
         foreach ($rows as &$row) {
-            $row['phone'] = Crypto::decrypt($row['phone_enc']);
+            try {
+                $row['phone'] = Crypto::decrypt($row['phone_enc']);
+                $row['phone_error'] = false;
+            } catch (\RuntimeException $e) {
+                $row['phone'] = null;
+                $row['phone_error'] = true;
+                // Tracking ID only: never log the number or the ciphertext.
+                error_log('Internet support: could not decrypt phone for ' . ($row['tracking_id'] ?? '?') . ' - ' . $e->getMessage());
+            }
             unset($row['phone_enc']);
         }
+        unset($row);
 
         return $rows;
     }
@@ -400,15 +415,54 @@ class InternetSupportModel {
         return $stmt->rowCount() === 1;
     }
 
-    /** Index for the "closed requests" page. No phone, no reason. */
+    /** Index for the closed-requests page (links to each receipt PDF). No phone, no reason. */
     public function listClosedForFinance() {
         return $this->db->query(
-            "SELECT id, tracking_id, applicant_name, operator, package_name, package_price_paise,
+            "SELECT id, tracking_id, applicant_name, email, operator, package_name, package_price_paise,
                     recharge_reference, closed_by, closed_at
              FROM internet_requests
              WHERE status = 'Closed'
              ORDER BY closed_at DESC"
         )->fetchAll();
+    }
+
+    /**
+     * For the receipt PDF, generated on demand and streamed to the browser,
+     * never stored. Scoped to status = 'Closed': there is no receipt for a
+     * request that hasn't completed.
+     *
+     * The phone number is masked to its last four digits, because this
+     * becomes a standalone file that can be saved or emailed outside the app
+     * (same treatment as the masked bank account on the reimbursement
+     * receipt). The reason and the receipt file the volunteer uploaded are
+     * deliberately not included.
+     */
+    public function getClosedRequestForReceipt($requestId) {
+        $stmt = $this->db->prepare(
+            "SELECT id, tracking_id, applicant_name, email, phone_enc,
+                    operator, package_name, package_price_paise, package_validity_days,
+                    created_at, decided_by, decided_at,
+                    recharged_by, recharged_at, recharge_reference,
+                    closed_by, closed_at
+             FROM internet_requests
+             WHERE id = :id AND status = 'Closed'"
+        );
+        $stmt->execute(['id' => (int) $requestId]);
+        $row = $stmt->fetch();
+
+        if (!$row) {
+            return null;
+        }
+
+        try {
+            $phone = Crypto::decrypt($row['phone_enc']);
+            $row['phone_masked'] = str_repeat('X', max(0, strlen($phone) - 4)) . substr($phone, -4);
+        } catch (\RuntimeException $e) {
+            $row['phone_masked'] = null;
+        }
+        unset($row['phone_enc']);
+
+        return $row;
     }
 
     // ------------------------------------------------------------------
