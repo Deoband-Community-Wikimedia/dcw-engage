@@ -313,7 +313,21 @@ if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['a
 
 <head>
     <meta charset="UTF-8">
-    <?php require __DIR__ . '/../../includes/favicon.php'; ?>
+
+    <!-- Browser Tab Icon: Use custom banner if present, else fallback to DCW logo -->
+    <?php if (!empty($schema['banner_image'])): ?>
+        <link rel="icon" href="<?= htmlspecialchars($schema['banner_image']) ?>">
+    <?php else: ?>
+        <?php require __DIR__ . '/../../includes/favicon.php'; ?>
+    <?php endif; ?>
+
+    <!-- Social / Link Preview Thumbnail -->
+    <?php if (!empty($schema['banner_image'])): ?>
+        <meta property="og:image" content="<?= htmlspecialchars($schema['banner_image']) ?>">
+        <meta name="twitter:card" content="summary_large_image">
+        <meta name="twitter:image" content="<?= htmlspecialchars($schema['banner_image']) ?>">
+    <?php endif; ?>
+
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title><?= htmlspecialchars($schema['title']) ?> - DCW Engage</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
