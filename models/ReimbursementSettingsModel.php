@@ -8,6 +8,16 @@
  * scoped to a specific one. There is exactly one settings row (id = 1,
  * enforced by a CHECK constraint in the migration), and one global
  * eligibility allowlist rather than one per event.
+ *
+ * What lives here: whether the form is open, the expense categories, and
+ * the instructions text.
+ *
+ * What does NOT live here: the UPI limit. Cash isn't an accepted payment
+ * method, and the UPI-or-bank cutoff is fixed at Rs 800 in
+ * ReimbursementModel::UPI_MAX_PAISE, which is what both the form and the
+ * server-side validation use. An earlier version of this model also saved
+ * a "cash threshold" setting; nothing ever read it, so it has been removed
+ * rather than left as a setting that appears to do something and doesn't.
  */
 class ReimbursementSettingsModel {
     private $db;
@@ -28,7 +38,6 @@ class ReimbursementSettingsModel {
     }
 
     public function save(array $data) {
-        $cashThresholdPaise = (int) round(($data['cash_threshold_rupees'] ?? 800) * 100);
         $categories = array_values(array_filter(array_map('trim', $data['expense_categories'] ?? [])));
 
         if (empty($categories)) {
@@ -37,13 +46,11 @@ class ReimbursementSettingsModel {
 
         $stmt = $this->db->prepare(
             "UPDATE reimbursement_settings
-             SET is_active = :active, cash_threshold_paise = :threshold,
-                 expense_categories = :categories, instructions = :instructions
+             SET is_active = :active, expense_categories = :categories, instructions = :instructions
              WHERE id = 1"
         );
         $stmt->execute([
             'active'       => !empty($data['is_active']) ? 1 : 0,
-            'threshold'    => $cashThresholdPaise,
             'categories'   => json_encode($categories),
             'instructions' => $data['instructions'] ?? null,
         ]);

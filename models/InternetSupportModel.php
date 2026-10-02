@@ -415,15 +415,54 @@ class InternetSupportModel {
         return $stmt->rowCount() === 1;
     }
 
-    /** Index for the "closed requests" page. No phone, no reason. */
+    /** Index for the closed-requests page (links to each receipt PDF). No phone, no reason. */
     public function listClosedForFinance() {
         return $this->db->query(
-            "SELECT id, tracking_id, applicant_name, operator, package_name, package_price_paise,
+            "SELECT id, tracking_id, applicant_name, email, operator, package_name, package_price_paise,
                     recharge_reference, closed_by, closed_at
              FROM internet_requests
              WHERE status = 'Closed'
              ORDER BY closed_at DESC"
         )->fetchAll();
+    }
+
+    /**
+     * For the receipt PDF, generated on demand and streamed to the browser,
+     * never stored. Scoped to status = 'Closed': there is no receipt for a
+     * request that hasn't completed.
+     *
+     * The phone number is masked to its last four digits, because this
+     * becomes a standalone file that can be saved or emailed outside the app
+     * (same treatment as the masked bank account on the reimbursement
+     * receipt). The reason and the receipt file the volunteer uploaded are
+     * deliberately not included.
+     */
+    public function getClosedRequestForReceipt($requestId) {
+        $stmt = $this->db->prepare(
+            "SELECT id, tracking_id, applicant_name, email, phone_enc,
+                    operator, package_name, package_price_paise, package_validity_days,
+                    created_at, decided_by, decided_at,
+                    recharged_by, recharged_at, recharge_reference,
+                    closed_by, closed_at
+             FROM internet_requests
+             WHERE id = :id AND status = 'Closed'"
+        );
+        $stmt->execute(['id' => (int) $requestId]);
+        $row = $stmt->fetch();
+
+        if (!$row) {
+            return null;
+        }
+
+        try {
+            $phone = Crypto::decrypt($row['phone_enc']);
+            $row['phone_masked'] = str_repeat('X', max(0, strlen($phone) - 4)) . substr($phone, -4);
+        } catch (\RuntimeException $e) {
+            $row['phone_masked'] = null;
+        }
+        unset($row['phone_enc']);
+
+        return $row;
     }
 
     // ------------------------------------------------------------------
