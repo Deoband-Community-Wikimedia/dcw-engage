@@ -71,23 +71,31 @@ if ($route === '/' || $route === '/index.php') {
 } elseif ($route === '/admin/reimbursements/review') {
     require __DIR__ . '/views/admin/reimbursement_review.php';
 
-// Finance payment queue. Deliberately NOT under /admin — see the note in
-// require_role.php about keeping this off any admin-facing navigation.
-// Global rather than per-event: finance pays across all events from one
-// queue, since payment execution doesn't need per-event context the way
-// substance review does.
+// --- Finance (combined) -----------------------------------------------
+// One queue for reimbursement payments AND internet support recharges /
+// receipt checks, with a tab for each. Deliberately NOT under /admin — see
+// the note in require_role.php about keeping this off any admin-facing
+// navigation. Role check is inside the views: requireRole(['finance', 'owner']).
+} elseif ($route === '/finance') {
+    require __DIR__ . '/views/finance/queue.php';
+
+// Combined index of closed requests (reimbursements paid + internet support
+// closed), each linking to its own receipt PDF.
+} elseif ($route === '/finance/closed') {
+    require __DIR__ . '/views/finance/closed.php';
+
+// Legacy finance URLs. The view files behind these are now thin stubs that
+// set $financeDefaultTab and include queue.php / closed.php, so old
+// bookmarks and links keep landing on the right tab.
 } elseif ($route === '/finance/reimbursements') {
     require __DIR__ . '/views/finance/reimbursement_queue.php';
 
-// Index of closed (Paid) requests, each linking to its own receipt PDF.
-// Same requireRole(['finance', 'owner']) boundary as the queue above.
 } elseif ($route === '/finance/reimbursements/paid') {
     require __DIR__ . '/views/finance/reimbursement_paid.php';
 
 // Payment-confirmation PDF for one Paid request, generated on demand and
 // streamed straight to the browser — nothing is saved to the server. Auth/
-// role check happens inside the view (requireRole(['finance', 'owner'])),
-// same as the queue above.
+// role check happens inside the view (requireRole(['finance', 'owner'])).
 } elseif (preg_match('/^\/finance\/reimbursements\/receipt\/(\d+)$/', $route, $matches)) {
     global $reimbursementReceiptId;
     $reimbursementReceiptId = (int) $matches[1];
@@ -106,14 +114,13 @@ if ($route === '/' || $route === '/index.php') {
 } elseif ($route === '/admin/internet-review') {
     require __DIR__ . '/views/admin/internet_review.php';
 
-// Finance: recharge queue, receipt verification and closed list on one
-// page. Not under /admin, same as the reimbursement queue. Role check is
-// inside the view: requireRole(['finance', 'owner']).
+// Legacy finance URL for internet support: now a stub that opens the
+// combined queue on the Internet support tab.
 } elseif ($route === '/finance/internet-support') {
     require __DIR__ . '/views/finance/internet_support.php';
 
-// Index of closed internet support requests, each linking to its own receipt
-// PDF. Same requireRole(['finance', 'owner']) boundary as the page above.
+// Legacy closed-requests URL: stub that opens /finance/closed on the
+// Internet support tab.
 } elseif ($route === '/finance/internet-support/closed') {
     require __DIR__ . '/views/finance/internet_closed.php';
 
