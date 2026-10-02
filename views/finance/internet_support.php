@@ -13,6 +13,7 @@ requireRole(['finance', 'owner']);
 $model = new InternetSupportModel();
 $message = '';
 $error = '';
+$justClosedId = null;
 
 /** Delete an uploaded receipt that is no longer wanted. */
 function finance_discard_file($path) {
@@ -76,6 +77,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             AuditLog::record('internet.closed', Auth::id(), Auth::email(), $info['email'], 'Tracking: ' . $info['tracking_id'] . ' | Receipt downloaded');
             Mailer::sendInternetStatusUpdate($info['email'], $info['applicant_name'], $info['tracking_id'], 'Closed');
             $message = "Request {$info['tracking_id']} closed. Its receipt will be removed from the server by the scheduled cleanup.";
+            $justClosedId = $requestId;
         } else {
             $error = "That request was already handled by someone else.";
         }
@@ -100,7 +102,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $rechargeQueue = $model->listForRechargeQueue();
 $receiptQueue  = $model->listForReceiptVerification();
-$closed        = $model->listClosedForFinance();
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -113,14 +114,28 @@ $closed        = $model->listClosedForFinance();
     <div class="container">
         <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
             <h1 style="margin:0;">Internet Support</h1>
-            <a href="/finance/reimbursements" style="color:#106b9a; font-size:14px; font-weight:600; text-decoration:none;">Reimbursements &rarr;</a>
+            <span style="display:flex; gap:18px; flex-wrap:wrap;">
+                <a href="/finance/internet-support/closed" style="color:#106b9a; font-size:14px; font-weight:600; text-decoration:none;">Closed requests &amp; receipts &rarr;</a>
+                <a href="/finance/reimbursements" style="color:#106b9a; font-size:14px; font-weight:600; text-decoration:none;">Reimbursements &rarr;</a>
+            </span>
         </div>
         <p style="color:#64748b; font-size:14px;">
             Approved requests waiting for a recharge, then receipts waiting to be checked.
             The reason for a request isn't shown here; the review already happened.
         </p>
 
-        <?php if ($message): ?><div class="alert-success"><?= htmlspecialchars($message) ?></div><?php endif; ?>
+        <?php if ($message): ?>
+            <div class="alert-success">
+                <?= htmlspecialchars($message) ?>
+                <?php if ($justClosedId): ?>
+                    <br>
+                    <a href="/finance/internet-support/receipt/<?= (int) $justClosedId ?>" target="_blank"
+                       style="display:inline-block; margin-top:8px; color:#106b9a; font-weight:600; text-decoration:none;">
+                        ⬇ Download receipt (PDF)
+                    </a>
+                <?php endif; ?>
+            </div>
+        <?php endif; ?>
         <?php if ($error): ?><div class="alert-error"><?= htmlspecialchars($error) ?></div><?php endif; ?>
 
         <!-- ============ 1. Recharge queue ============ -->
@@ -208,40 +223,6 @@ $closed        = $model->listClosedForFinance();
             </div>
         <?php endforeach; ?>
 
-        <!-- ============ 3. Closed ============ -->
-        <details style="margin-top:40px;">
-            <summary style="cursor:pointer; font-weight:600;">Closed requests (<?= count($closed) ?>)</summary>
-            <?php if (empty($closed)): ?>
-                <p>None yet.</p>
-            <?php else: ?>
-                <div style="overflow-x:auto;">
-                    <table style="width:100%; border-collapse:collapse; font-size:14px; margin-top:10px;">
-                        <thead>
-                            <tr style="text-align:left; border-bottom:2px solid #cbd5e1;">
-                                <th style="padding:6px;">Tracking</th>
-                                <th style="padding:6px;">Applicant</th>
-                                <th style="padding:6px;">Package</th>
-                                <th style="padding:6px;">Amount</th>
-                                <th style="padding:6px;">Reference</th>
-                                <th style="padding:6px;">Closed</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php foreach ($closed as $c): ?>
-                                <tr style="border-bottom:1px solid #e2e8f0;">
-                                    <td style="padding:6px;"><?= htmlspecialchars($c['tracking_id']) ?></td>
-                                    <td style="padding:6px;"><?= htmlspecialchars($c['applicant_name']) ?></td>
-                                    <td style="padding:6px;"><?= htmlspecialchars($c['operator']) ?> — <?= htmlspecialchars($c['package_name']) ?></td>
-                                    <td style="padding:6px;">₹<?= number_format($c['package_price_paise'] / 100, 2) ?></td>
-                                    <td style="padding:6px;"><?= htmlspecialchars((string) $c['recharge_reference']) ?></td>
-                                    <td style="padding:6px;"><?= htmlspecialchars((string) $c['closed_at']) ?> UTC</td>
-                                </tr>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
-                </div>
-            <?php endif; ?>
-        </details>
     </div>
 </body>
 </html>
