@@ -1,3 +1,3 @@
   <?php
   $financeDefaultTab = 'reimbursement';
-  require __DIR__ . '/queue.php';
+  require __DIR__ . '/closed.php';
