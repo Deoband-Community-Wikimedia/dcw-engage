@@ -74,10 +74,14 @@ $icons = [
     'people' => '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
     'card'   => '<rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/>',
     'wifi'   => '<path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/>',
+    'search' => '<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>',
+    'help'   => '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/><line x1="4.93" y1="4.93" x2="9.17" y2="9.17"/><line x1="14.83" y1="14.83" x2="19.07" y2="19.07"/><line x1="14.83" y1="9.17" x2="19.07" y2="4.93"/><line x1="4.93" y1="19.07" x2="9.17" y2="14.83"/>',
 ];
 
 // One flat list of cards, so the page never has a lonely card sitting in a section of its own.
 // tone = the card's accent colour, tag = the small label on top.
+// Reimbursement and internet support are not cards: they live in the "Looking for support?" tile
+// of the help strip further down (see the markup), shown only while each is switched on.
 $cards = [];
 
 if ($membershipOpen) {
@@ -104,24 +108,6 @@ foreach ($activeForms as $form) {
     ];
 }
 
-if ($reimbursementOpen) {
-    // Remove this card to keep reimbursements unlisted and share /reimbursement directly instead.
-    $cards[] = [
-        'featured' => false, 'tone' => '#b45309', 'tag' => 'Volunteer support', 'icon' => 'card',
-        'title' => 'Reimbursement',
-        'desc'  => 'Claim back expenses for a DCW-aligned, DCW-organised or DCW-associated event.',
-        'cta'   => 'Request reimbursement', 'href' => '/reimbursement',
-    ];
-}
-if ($internetOpen) {
-    // Remove this card to keep internet support unlisted and share /internet-support directly instead.
-    $cards[] = [
-        'featured' => false, 'tone' => '#0f766e', 'tag' => 'Volunteer support', 'icon' => 'wifi',
-        'title' => 'Internet Support',
-        'desc'  => 'DCW volunteers can request help with a data pack to keep contributing online.',
-        'cta'   => 'Request support', 'href' => '/internet-support',
-    ];
-}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -156,14 +142,15 @@ if ($internetOpen) {
         /* Hero: brand gradient with soft shapes, cards overlap its lower edge */
         .hero {
             position: relative; overflow: hidden; text-align: center; color: #fff;
-            padding: 54px 22px 110px;
+            padding: 54px 22px 100px;
             background:
                 radial-gradient(circle at 12% 18%, rgba(255,255,255,.14) 0, rgba(255,255,255,0) 38%),
                 radial-gradient(circle at 88% 80%, rgba(151,22,27,.55) 0, rgba(151,22,27,0) 46%),
                 linear-gradient(135deg, var(--primary-dark) 0%, var(--primary) 60%, #1b8cc0 100%);
         }
         .hero img.logo {
-            width: 84px; height: 84px; object-fit: contain; padding: 10px; margin-bottom: 18px;
+            display: block; margin: 0 auto 18px;
+            width: 84px; height: 84px; object-fit: contain; padding: 10px;
             background: #fff; border-radius: 50%; box-shadow: 0 8px 22px rgba(0,0,0,.2);
         }
         .hero .kicker {
@@ -178,15 +165,6 @@ if ($internetOpen) {
             max-width: 640px; margin: 0 auto; color: rgba(255,255,255,.88);
             font-size: clamp(16px, 2.2vw, 19px);
         }
-        .hero .actions { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; margin-top: 26px; }
-        .btn {
-            display: inline-flex; align-items: center; gap: 8px; padding: 12px 22px; border-radius: 999px;
-            font-weight: 700; font-size: 15px; text-decoration: none; transition: transform .15s, box-shadow .15s, background .15s;
-        }
-        .btn:hover { transform: translateY(-2px); }
-        .btn-solid { background: #fff; color: var(--primary-dark); box-shadow: 0 8px 20px rgba(0,0,0,.18); }
-        .btn-ghost { color: #fff; border: 1.5px solid rgba(255,255,255,.65); }
-        .btn-ghost:hover { background: rgba(255,255,255,.14); }
 
         /* Cards: one centred flow, so any number of cards looks tidy */
         .cards-wrap { margin-top: -62px; position: relative; }
@@ -242,6 +220,27 @@ if ($internetOpen) {
         }
         .prog.featured:hover { border-color: transparent; }
 
+        /* Help strip: tracking + support, under the cards */
+        .helpbar { display: flex; flex-wrap: wrap; justify-content: center; gap: 16px; margin-top: 26px; }
+        .help-item {
+            flex: 1 1 320px; max-width: 520px; display: flex; align-items: center; gap: 16px;
+            background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 18px 20px;
+            color: inherit; text-decoration: none; box-shadow: 0 4px 12px rgba(15,23,42,.05);
+        }
+        a.help-item { transition: transform .15s, box-shadow .15s, border-color .15s; }
+        a.help-item:hover { transform: translateY(-3px); box-shadow: 0 12px 26px rgba(15,23,42,.12); border-color: var(--primary); }
+        .help-ico { flex: none; width: 46px; height: 46px; border-radius: 50%; display: grid; place-items: center; background: color-mix(in srgb, var(--tone, var(--primary)) 14%, #fff); }
+        .help-ico svg { width: 22px; height: 22px; stroke: var(--tone, var(--primary)); fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+        .help-text { display: flex; flex-direction: column; gap: 4px; font-size: 14.5px; color: var(--muted); }
+        .help-text strong { color: var(--ink); font-size: 16px; }
+        .help-link { color: var(--primary); font-weight: 700; }
+        .help-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 2px; }
+        .help-chips a {
+            padding: 4px 13px; border-radius: 999px; font-size: 13.5px; font-weight: 600; text-decoration: none;
+            color: var(--tone); background: color-mix(in srgb, var(--tone) 12%, #fff); border: 1px solid color-mix(in srgb, var(--tone) 30%, #fff);
+        }
+        .help-chips a:hover { background: var(--tone); color: #fff; }
+
         /* Optional photo strip */
         .gallery { margin: 44px 0 6px; text-align: center; }
         .gallery h2 { margin: 0 0 16px; font-size: 13px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); font-weight: 700; }
@@ -290,12 +289,6 @@ if ($internetOpen) {
         <p class="kicker">Deoband Community Wikimedia</p>
         <h1>DCW Engage</h1>
         <p class="lead">One home for our applications and forms — scholarships, fellowships, volunteering, membership and more. Pick one below to get started.</p>
-        <div class="actions">
-            <?php if ($membershipOpen): ?>
-                <a class="btn btn-solid" href="/membership">Join or renew <span aria-hidden="true">→</span></a>
-            <?php endif; ?>
-            <a class="btn btn-ghost" href="/track">Track your application</a>
-        </div>
     </header>
 
     <main class="wrap cards-wrap">
@@ -319,6 +312,28 @@ if ($internetOpen) {
                 <?php endforeach; ?>
             </div>
         <?php endif; ?>
+
+        <section class="helpbar" aria-label="Tracking and support">
+            <a class="help-item" href="/track" style="--tone: #106b9a;">
+                <span class="help-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><?= $icons['search'] ?></svg></span>
+                <span class="help-text">
+                    <strong>Already applied?</strong>
+                    <span class="help-link">Track your application <span aria-hidden="true">→</span></span>
+                </span>
+            </a>
+            <?php if ($reimbursementOpen || $internetOpen): ?>
+                <div class="help-item" style="--tone: #0f766e;">
+                    <span class="help-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><?= $icons['help'] ?></svg></span>
+                    <span class="help-text">
+                        <strong>Looking for support?</strong>
+                        <span class="help-chips">
+                            <?php if ($reimbursementOpen): ?><a href="/reimbursement">Reimbursement</a><?php endif; ?>
+                            <?php if ($internetOpen): ?><a href="/internet-support">Internet support</a><?php endif; ?>
+                        </span>
+                    </span>
+                </div>
+            <?php endif; ?>
+        </section>
 
         <?php if (!empty($galleryImages)): ?>
             <section class="gallery" aria-label="From our events">
