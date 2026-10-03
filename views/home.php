@@ -218,18 +218,28 @@ if ($internetOpen) {
         .prog .go span { transition: transform .15s; }
         .prog:hover .go span { transform: translateX(4px); }
 
-        /* The membership card is the featured one: wider, full colour */
+        /* The membership card is the featured one: a full-width banner, as tall as its content */
         .prog.featured {
-            flex: 2 1 560px; max-width: 700px; color: #fff; border: none;
+            flex: 1 1 100%; max-width: 100%; color: #fff; border: none;
+            padding: 26px 30px;
+            display: grid; align-items: center; column-gap: 22px;
+            grid-template-columns: auto 1fr auto;
+            grid-template-areas:
+                "tick tag   go"
+                "tick title go"
+                "tick desc  go";
             background: linear-gradient(135deg, var(--accent) 0%, #b3262c 55%, #c2410c 140%);
         }
         .prog.featured::before { display: none; }
-        .prog.featured .tag { color: #fff; background: rgba(255,255,255,.2); }
-        .prog.featured .tick { background: rgba(255,255,255,.2); }
-        .prog.featured .tick svg { stroke: #fff; }
-        .prog.featured h3 { font-size: 24px; }
-        .prog.featured p { color: rgba(255,255,255,.9); font-size: 16px; }
-        .prog.featured .go { color: #fff; }
+        .prog.featured .tag   { grid-area: tag; margin: 0 0 6px; color: #fff; background: rgba(255,255,255,.2); }
+        .prog.featured .tick  { grid-area: tick; align-self: center; margin: 0; width: 56px; height: 56px; background: rgba(255,255,255,.2); }
+        .prog.featured .tick svg { width: 28px; height: 28px; stroke: #fff; }
+        .prog.featured h3     { grid-area: title; margin: 0 0 4px; font-size: 24px; }
+        .prog.featured p      { grid-area: desc; margin: 0; color: rgba(255,255,255,.9); font-size: 16px; }
+        .prog.featured .go {
+            grid-area: go; align-self: center; padding: 11px 22px; border-radius: 999px;
+            background: #fff; color: var(--accent); box-shadow: 0 6px 16px rgba(0,0,0,.18);
+        }
         .prog.featured:hover { border-color: transparent; }
 
         /* Optional photo strip */
@@ -262,6 +272,12 @@ if ($internetOpen) {
         @media (max-width: 640px) {
             .hero { padding: 40px 18px 100px; }
             .prog, .prog.featured { max-width: none; flex-basis: 100%; }
+            .prog.featured {
+                grid-template-columns: 1fr; row-gap: 4px; padding: 24px;
+                grid-template-areas: "tick" "tag" "title" "desc" "go";
+            }
+            .prog.featured .tick { margin-bottom: 12px; }
+            .prog.featured .go { justify-self: start; margin-top: 14px; }
         }
         @media (prefers-reduced-motion: reduce) {
             * { transition: none !important; }
