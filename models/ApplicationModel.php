@@ -6,6 +6,8 @@
  * and handles Magic Link generation.
  */
 
+require_once __DIR__ . '/MemberModel.php';
+
 class ApplicationModel {
     private $db;
 
@@ -26,9 +28,35 @@ class ApplicationModel {
     }
 
     /**
+     * Membership renewals only: before a renewal is submitted (any status other than Draft),
+     * the Membership ID on the form must match a real member who owns that email address
+     * (and chosen chapter). Drafts are saved as they are, since the ID may not be filled in yet.
+     * Throws InvalidArgumentException with a message that is safe to show to the applicant.
+     * Every other form type is left alone.
+     */
+    private function assertValidRenewal($formId, $email, $status, $formDataJson) {
+        if ($status === 'Draft') return;
+
+        $stmt = $this->db->prepare("SELECT form_type FROM forms WHERE id = :id");
+        $stmt->execute(['id' => $formId]);
+        $formType = (string) $stmt->fetchColumn();
+        if (!str_starts_with($formType, 'membership-renewal')) return;
+
+        $app = ['form_type' => $formType, 'form_data' => $formDataJson, 'email' => $email];
+        $member = (new MemberModel())->verifyRenewalMember($app);   // throws if the ID is malformed or unmatched
+        if ($member === null) {
+            throw new InvalidArgumentException('Please enter your Membership ID to renew. '
+                . 'If you do not have one, apply as a new member instead.');
+        }
+    }
+
+    /**
      * Save or update an application
      */
     public function saveApplication($formId, $email, $applicantName, $status, $formDataJson, $appId = null) {
+        // Renewals must carry a valid Membership ID before they can be submitted.
+        $this->assertValidRenewal($formId, $email, $status, $formDataJson);
+
         if ($appId) {
             // Check State Machine before allowing update
             $stmt = $this->db->prepare("SELECT status FROM applications WHERE id = :id");
