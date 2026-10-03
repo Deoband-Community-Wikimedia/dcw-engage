@@ -22,6 +22,7 @@
  */
 
 require_once __DIR__ . '/../includes/auth.php';
+require_once __DIR__ . '/MemberModel.php';
 
 class InviteModel {
     /** How long an invitation stays usable, unless config overrides it. */
@@ -45,6 +46,18 @@ class InviteModel {
         'support_reviewer',
         'membership_reviewer',
         'membership_coordinator',
+    ];
+
+    /**
+     * Chapters a membership coordinator can be limited to (key => label).
+     * KEEP IN SYNC with $names in membership_access.php; ideally both should
+     * read one list from MemberModel.
+     */
+    public const CHAPTERS = [
+        'generic'       => 'DCW Generic Community',
+        'amu'           => 'Wiki Club AMU',
+        'jamia'         => 'Wiki Club Jamia',
+        'photographers' => 'DCW Photographers Club',
     ];
 
     private $db;
@@ -88,6 +101,32 @@ class InviteModel {
         return $out;
     }
 
+    /** Known chapter keys only, no duplicates, in CHAPTERS order. Accepts an array or CSV. */
+    public static function normalizeChapters($chapters) {
+        if (is_string($chapters)) {
+            $chapters = explode(',', $chapters);
+        }
+        if (!is_array($chapters)) {
+            return [];
+        }
+
+        $picked = [];
+        foreach ($chapters as $chapter) {
+            $chapter = trim((string) $chapter);
+            if (isset(self::CHAPTERS[$chapter])) {
+                $picked[$chapter] = true;
+            }
+        }
+
+        $out = [];
+        foreach (array_keys(self::CHAPTERS) as $key) {
+            if (isset($picked[$key])) {
+                $out[] = $key;
+            }
+        }
+        return $out;
+    }
+
     /**
      * The stored form of a token. Sha-256 is the right tool here rather than
      * password_hash: the input is 256 bits of random, so there is nothing to
@@ -116,7 +155,7 @@ class InviteModel {
      * method does not enforce that itself, so the check belongs in the view
      * that collects the invite form (team.php).
      */
-    public function create($email, $roles, $invitedById, $invitedByEmail) {
+    public function create($email, $roles, $invitedById, $invitedByEmail, $chapters = []) {
         $roles = self::normalizeRoles($roles);
         if (!$roles) {
             throw new InvalidArgumentException('At least one valid role is required.');
@@ -124,6 +163,12 @@ class InviteModel {
 
         $primary = $roles[0];
         $token = bin2hex(random_bytes(32));
+
+        // Chapters only mean something for a coordinator; drop them otherwise
+        // so an invite never carries access its roles don't use.
+        $chapters = in_array('membership_coordinator', $roles, true)
+            ? self::normalizeChapters($chapters)
+            : [];
 
         $this->db->beginTransaction();
 
@@ -140,13 +185,14 @@ class InviteModel {
 
             $this->db->prepare(
                 "INSERT INTO admin_invites
-                    (email, token_hash, role, roles, invited_by, invited_by_email, expires_at)
-                 VALUES (:email, :hash, :role, :roles, :by_id, :by_email, NOW() + INTERVAL :seconds SECOND)"
+                    (email, token_hash, role, roles, chapters, invited_by, invited_by_email, expires_at)
+                 VALUES (:email, :hash, :role, :roles, :chapters, :by_id, :by_email, NOW() + INTERVAL :seconds SECOND)"
             )->execute([
                 'email'    => $email,
                 'hash'     => $this->hashToken($token),
                 'role'     => $primary,
                 'roles'    => implode(',', $roles),
+                'chapters' => implode(',', $chapters),
                 'by_id'    => $invitedById,
                 'by_email' => $invitedByEmail,
                 'seconds'  => $seconds,
@@ -162,7 +208,7 @@ class InviteModel {
             throw $e;
         }
 
-        return ['token' => $token, 'expires_at' => $expiresAt, 'roles' => $roles];
+        return ['token' => $token, 'expires_at' => $expiresAt, 'roles' => $roles, 'chapters' => $chapters];
     }
 
     /**
@@ -245,7 +291,28 @@ class InviteModel {
 
             $this->db->commit();
 
-            return ['id' => $adminId, 'email' => $invite['email'], 'role' => $roles[0], 'roles' => $roles];
+            // Hand a coordinator the chapters chosen at invite time, through
+            // the same MemberModel call Membership Access uses. This runs
+            // after the commit so it cannot undo a valid account; if it fails
+            // the account still exists and an owner can tick chapters on
+            // Membership Access. 'chapters_saved' tells the caller which.
+            $chapters = in_array('membership_coordinator', $roles, true)
+                ? self::normalizeChapters($invite['chapters'] ?? '')
+                : [];
+            $chaptersSaved = true;
+            if ($chapters) {
+                try {
+                    (new MemberModel())->setChapters($invite['email'], $chapters);
+                } catch (Throwable $e) {
+                    $chaptersSaved = false;
+                    error_log('Invite redeem: could not set chapters for ' . $invite['email'] . ': ' . $e->getMessage());
+                }
+            }
+
+            return [
+                'id' => $adminId, 'email' => $invite['email'], 'role' => $roles[0], 'roles' => $roles,
+                'chapters' => $chapters, 'chapters_saved' => $chaptersSaved,
+            ];
         } catch (Exception $e) {
             if ($this->db->inTransaction()) {
                 $this->db->rollBack();
@@ -257,7 +324,7 @@ class InviteModel {
     /** Invitations still waiting to be accepted, newest first. */
     public function listPending() {
         $rows = $this->db->query(
-            "SELECT id, email, role, roles, invited_by_email, expires_at, created_at,
+            "SELECT id, email, role, roles, chapters, invited_by_email, expires_at, created_at,
                     (expires_at <= NOW()) AS is_expired
              FROM admin_invites
              WHERE accepted_at IS NULL AND revoked_at IS NULL
@@ -266,6 +333,7 @@ class InviteModel {
 
         foreach ($rows as &$row) {
             $row['role_list'] = self::normalizeRoles($row['roles'] !== '' ? $row['roles'] : $row['role']);
+            $row['chapter_list'] = self::normalizeChapters($row['chapters'] ?? '');
         }
         unset($row);
 
