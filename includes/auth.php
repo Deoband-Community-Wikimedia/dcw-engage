@@ -133,14 +133,21 @@ class Auth {
     }
 
     /**
-     * The signed-in organizer's role: 'owner', 'organizer', or 'finance'.
-     * Anything unrecognised is treated as the lowest privilege level, so a
-     * session written before a role existed (or one that has since been
-     * retired) cannot accidentally grant elevated access.
+     * The signed-in organizer's role: 'owner', 'organizer', 'finance',
+     * 'support_reviewer', 'membership_reviewer' (DCW Generic Reviewers: every
+     * chapter) or 'membership_coordinator' (only the chapters assigned in
+     * membership_scopes).
+     *
+     * Anything unrecognised falls back to 'organizer'. That is NOT the lowest
+     * privilege: organizers can see every application. So every role that
+     * exists must be listed here, or its holders are silently promoted.
      */
     public static function role() {
         $role = $_SESSION['admin_role'] ?? 'organizer';
-        $allowedRoles = ['owner', 'organizer', 'finance', 'support_reviewer'];
+        $allowedRoles = [
+            'owner', 'organizer', 'finance', 'support_reviewer',
+            'membership_reviewer', 'membership_coordinator',
+        ];
         return in_array($role, $allowedRoles, true) ? $role : 'organizer';
     }
 

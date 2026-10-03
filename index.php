@@ -47,6 +47,26 @@ if ($route === '/' || $route === '/index.php') {
     require __DIR__ . '/views/admin/builder.php';
 } elseif ($route === '/admin/preview_form') {
     require __DIR__ . '/views/admin/preview_form.php';
+
+// --- Membership -------------------------------------------------------
+// Public landing page: two dropdowns that send people to the right builder
+// form (membership-generic, membership-amu, ... or the current renewal form).
+// A literal route, so it must come before the catch-all dynamic form route
+// below or 'membership' would be treated as a form slug of its own.
+} elseif ($route === '/membership') {
+    require __DIR__ . '/views/membership.php';
+
+// Coordinator / reviewer queue for membership applications. Role check is
+// inside the view: requireRole(['membership_coordinator', 'membership_reviewer',
+// 'organizer', 'owner']); coordinators only ever see their assigned chapters.
+// Under /admin so Auth::isSafeNext() lets the login redirect bring people back.
+} elseif ($route === '/admin/membership-review') {
+    require __DIR__ . '/views/admin/membership_review.php';
+
+// Owner-only: which chapters each membership coordinator may see.
+} elseif ($route === '/admin/membership-access') {
+    require __DIR__ . '/views/admin/membership_access.php';
+
 } elseif ($route === '/track') {
     // Public "check my application status" lookup (see #32) — a form's
     // slug is matched by the catch-all below, so this has to come before it.
