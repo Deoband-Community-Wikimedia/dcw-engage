@@ -8,10 +8,30 @@ class MemberModel {
     const TERM = '+1 year';                       // membership length, confirm with organizers
     const OPEN = ['New', 'Submitted', 'Under Review'];
     const CHAPTERS = ['generic', 'amu', 'jamia', 'photographers'];
+
+    /** Chapter key -> club display name (used in emails). Keep in sync with LABELS. */
+    const CHAPTER_NAMES = [
+        'generic'       => 'DCW Generic Community',
+        'amu'           => 'Wiki Club AMU',
+        'jamia'         => 'Wiki Club Jamia',
+        'photographers' => 'DCW Photographers Club',
+    ];
+
+    /** Display name -> chapter key (the renewal form stores the display name). Keep in sync with CHAPTER_NAMES. */
     const LABELS = [
         'DCW Generic Community' => 'generic', 'Wiki Club AMU' => 'amu',
         'Wiki Club Jamia' => 'jamia', 'DCW Photographers Club' => 'photographers',
     ];
+
+    /**
+     * First letter of a member ID, as a hint to the club: D = DCW, A = AMU, J = Jamia,
+     * P = Photographers. Letters must stay unique per chapter.
+     */
+    const ID_PREFIX = ['generic' => 'D', 'amu' => 'A', 'jamia' => 'J', 'photographers' => 'P'];
+
+    /** Number of random digits after the letter, e.g. A48213977 (9 characters in total). */
+    const MEMBER_ID_DIGITS = 8;
+
     private $db;
 
     public function __construct() { $this->db = DB::getInstance()->getConnection(); }
@@ -27,6 +47,21 @@ class MemberModel {
         }
         $c = substr($app['form_type'], strlen('membership-'));
         return in_array($c, self::CHAPTERS, true) ? $c : null;
+    }
+
+    /**
+     * True when the chapter is DCW itself (the generic community) or unknown,
+     * i.e. NOT a separate club. Emails use this to say "DCW" instead of a club name.
+     */
+    public static function isDcw(?string $chapter): bool {
+        return $chapter === null || $chapter === 'generic';
+    }
+
+    /** Chapter key hinted at by a member ID's first letter ('A48213977' -> 'amu'), or null if it doesn't fit the format. */
+    public static function chapterFromMemberId(string $memberId): ?string {
+        if (!preg_match('/^([A-Z])\d{' . self::MEMBER_ID_DIGITS . '}$/', $memberId, $m)) return null;
+        $chapter = array_search($m[1], self::ID_PREFIX, true);
+        return $chapter === false ? null : $chapter;
     }
 
     /**
@@ -115,7 +150,7 @@ class MemberModel {
                 $exp = date('Y-m-d H:i:s', strtotime(self::TERM, $base));
                 $this->db->prepare("UPDATE members SET status='active', expires_at=:x, full_name=:n, application_id=:a WHERE id=:id")
                     ->execute(['x' => $exp, 'n' => $app['applicant_name'], 'a' => $app['id'], 'id' => $m['id']]);
-                $memberId = $m['member_id'];
+                $memberId = $m['member_id'];   // existing members keep their current ID
             } else {
                 $exp = date('Y-m-d H:i:s', strtotime(self::TERM));
                 $memberId = $this->insertMember($app, $chapter, $exp);
@@ -195,12 +230,20 @@ class MemberModel {
             VALUES (:a, :d, :r, :b)')->execute(['a' => $appId, 'd' => $decision, 'r' => $reason, 'b' => $by]);
     }
 
+    /**
+     * New member with a random ID: one letter for the club, then 8 random digits
+     * (D = DCW, A = AMU, J = Jamia, P = Photographers; e.g. A48213977). Random rather than
+     * sequential so IDs don't reveal how many members exist or let anyone guess neighbours.
+     * Digits may start with 0. Stored as a string. A clash on the member_id unique key is
+     * retried with a new number.
+     */
     private function insertMember(array $app, string $chapter, string $exp): string {
-        $alphabet = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';   // same no-lookalike alphabet as tracking IDs
+        $prefix = self::ID_PREFIX[$chapter] ?? null;
+        if ($prefix === null) throw new Exception('No member ID letter defined for this chapter.');
+
         for ($try = 1; $try <= 5; $try++) {
-            $code = '';
-            for ($i = 0; $i < 8; $i++) $code .= $alphabet[random_int(0, strlen($alphabet) - 1)];
-            $memberId = 'MEM-' . $code;
+            $digits = str_pad((string) random_int(0, (10 ** self::MEMBER_ID_DIGITS) - 1), self::MEMBER_ID_DIGITS, '0', STR_PAD_LEFT);
+            $memberId = $prefix . $digits;
             try {
                 $this->db->prepare('INSERT INTO members (member_id, email, full_name, chapter, expires_at, application_id)
                     VALUES (:m, :e, :n, :c, :x, :a)')
@@ -208,9 +251,11 @@ class MemberModel {
                                'c' => $chapter, 'x' => $exp, 'a' => $app['id']]);
                 return $memberId;
             } catch (PDOException $e) {
-                $clash = isset($e->errorInfo[2]) && str_contains($e->errorInfo[2], 'member_id');
+                $dup   = (int) ($e->errorInfo[1] ?? 0) === 1062;   // MySQL/MariaDB duplicate key
+                $clash = $dup && isset($e->errorInfo[2]) && str_contains($e->errorInfo[2], 'member_id');
                 if (!$clash || $try === 5) throw $e;
             }
         }
+        throw new Exception('Could not generate a unique member ID.');
     }
 }

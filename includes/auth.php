@@ -5,6 +5,12 @@
  * Session based login for the organizer workspace.
  * Every view under /admin must call Auth::requireLogin() before it renders
  * anything, including before it reads $_GET or touches the database.
+ *
+ * ROLES
+ * An account can hold several roles (admin_user_roles). admin_users.role holds
+ * the primary one. Ask "can this person do X?" with Auth::hasRole() or
+ * Auth::hasAnyRole(), never by comparing Auth::role(), which is only the
+ * primary role and exists so older code keeps working.
  */
 
 class Auth {
@@ -16,6 +22,20 @@ class Auth {
      * with each other. Everything now reads this.
      */
     public const MIN_PASSWORD_LENGTH = 8;
+
+    /**
+     * Every role that exists, highest privilege first. The first one an
+     * account holds is its primary role. InviteModel::ROLES reads this, so
+     * adding a role means editing it here only.
+     */
+    public const ROLES = [
+        'owner',
+        'organizer',
+        'finance',
+        'support_reviewer',
+        'membership_reviewer',
+        'membership_coordinator',
+    ];
 
     /** Failed attempts from one session before a cooldown starts. */
     private const MAX_ATTEMPTS = 5;
@@ -29,6 +49,9 @@ class Auth {
      * does not reveal which addresses belong to real organizers.
      */
     private const DUMMY_HASH = '$2y$10$OuT1..v46RCs9DMbVq3KAOKlt3.02ymH0mlNsAbFT1dmyo8h4gcc.';
+
+    /** Roles loaded for this request by check()/attempt(). */
+    private static $roles = null;
 
     /**
      * Attempt a login. Returns null on success, or a message on failure.
@@ -61,9 +84,9 @@ class Auth {
 
         $_SESSION['admin_id']    = (int) $admin['id'];
         $_SESSION['admin_email'] = $admin['email'];
-        $_SESSION['admin_role']  = $admin['role'] ?? 'organizer';
         // Remembered so a later password change can invalidate this session.
         $_SESSION['admin_pw_stamp'] = $admin['password_changed_at'];
+        self::loadRoles((int) $admin['id'], (string) ($admin['role'] ?? ''));
 
         $db->prepare("UPDATE admin_users SET last_login = NOW() WHERE id = :id")
            ->execute(['id' => $admin['id']]);
@@ -79,6 +102,10 @@ class Auth {
      * files, so instead each session carries the password_changed_at value it
      * was issued under, and a mismatch ends it here. That is what makes
      * "reset my password" actually evict a session somebody else is holding.
+     *
+     * The same lookup refreshes the account's roles on every request, so a
+     * role granted or taken away on the Team page applies on the person's
+     * very next page load rather than at their next sign-in.
      */
     public static function check() {
         if (empty($_SESSION['admin_id'])) {
@@ -89,7 +116,7 @@ class Auth {
         // accounts, so this is far cheaper than the alternative of leaving a
         // compromised session alive.
         $stmt = DB::getInstance()->getConnection()
-            ->prepare("SELECT password_changed_at FROM admin_users WHERE id = :id");
+            ->prepare("SELECT password_changed_at, role FROM admin_users WHERE id = :id");
         $stmt->execute(['id' => $_SESSION['admin_id']]);
         $row = $stmt->fetch();
 
@@ -106,6 +133,8 @@ class Auth {
             self::logout();
             return false;
         }
+
+        self::loadRoles((int) $_SESSION['admin_id'], (string) ($row['role'] ?? ''));
 
         return true;
     }
@@ -133,26 +162,71 @@ class Auth {
     }
 
     /**
-     * The signed-in organizer's role: 'owner', 'organizer', 'finance',
-     * 'support_reviewer', 'membership_reviewer' (DCW Generic Reviewers: every
-     * chapter) or 'membership_coordinator' (only the chapters assigned in
-     * membership_scopes).
-     *
-     * Anything unrecognised falls back to 'organizer'. That is NOT the lowest
-     * privilege: organizers can see every application. So every role that
-     * exists must be listed here, or its holders are silently promoted.
+     * Read the account's roles from admin_user_roles, add the primary role,
+     * keep only roles that exist, and remember them for this request and in
+     * the session. If admin_user_roles cannot be read (for example the
+     * migration has not run yet) the primary role alone is used.
+     */
+    private static function loadRoles($adminId, $primaryRole) {
+        $held = [$primaryRole];
+
+        try {
+            $stmt = DB::getInstance()->getConnection()
+                ->prepare("SELECT role FROM admin_user_roles WHERE admin_id = :id");
+            $stmt->execute(['id' => $adminId]);
+            foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $role) {
+                $held[] = $role;
+            }
+        } catch (Throwable $e) {
+            // Fall through with the primary role only.
+        }
+
+        $roles = [];
+        foreach (self::ROLES as $role) {          // priority order
+            if (in_array($role, $held, true)) {
+                $roles[] = $role;
+            }
+        }
+
+        self::$roles = $roles;
+        $_SESSION['admin_roles'] = $roles;
+        $_SESSION['admin_role']  = $roles[0] ?? '';
+    }
+
+    /**
+     * Every role the signed-in account holds, highest privilege first.
+     * Unknown or blank values are dropped. An account with no valid role gets
+     * an empty list, which means no access, not a silent promotion.
+     */
+    public static function roles() {
+        if (self::$roles !== null) {
+            return self::$roles;
+        }
+
+        $stored = $_SESSION['admin_roles'] ?? [];
+        return is_array($stored) ? array_values(array_intersect(self::ROLES, $stored)) : [];
+    }
+
+    public static function hasRole($role) {
+        return in_array($role, self::roles(), true);
+    }
+
+    /** True if the account holds at least one of the given roles. */
+    public static function hasAnyRole($roles) {
+        return (bool) array_intersect((array) $roles, self::roles());
+    }
+
+    /**
+     * The primary (highest-privilege) role, or '' if the account has none.
+     * Kept for older code. Use hasRole()/hasAnyRole() for permission checks,
+     * because this ignores every other role the account holds.
      */
     public static function role() {
-        $role = $_SESSION['admin_role'] ?? 'organizer';
-        $allowedRoles = [
-            'owner', 'organizer', 'finance', 'support_reviewer',
-            'membership_reviewer', 'membership_coordinator',
-        ];
-        return in_array($role, $allowedRoles, true) ? $role : 'organizer';
+        return self::roles()[0] ?? '';
     }
 
     public static function isOwner() {
-        return self::role() === 'owner';
+        return self::hasRole('owner');
     }
 
     /**
@@ -160,7 +234,7 @@ class Auth {
      * Mirrors isOwner() so views can gate finance-only screens the same way.
      */
     public static function isFinance() {
-        return self::role() === 'finance';
+        return self::hasRole('finance');
     }
 
     /**
@@ -203,6 +277,7 @@ class Auth {
      */
     public static function logout() {
         $_SESSION = [];
+        self::$roles = null;
 
         if (ini_get('session.use_cookies')) {
             $params = session_get_cookie_params();

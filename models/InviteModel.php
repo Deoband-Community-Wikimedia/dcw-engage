@@ -35,30 +35,16 @@ class InviteModel {
     public const MIN_PASSWORD_LENGTH = Auth::MIN_PASSWORD_LENGTH;
 
     /**
-     * Every role an account can hold, highest privilege first. The order
-     * matters: the first role a person holds becomes their primary role.
-     * Single source of truth for create(), setRoles() and team.php.
+     * Every role an account can hold, highest privilege first. Defined once
+     * on Auth; the first role a person holds becomes their primary role.
      */
-    public const ROLES = [
-        'owner',
-        'organizer',
-        'finance',
-        'support_reviewer',
-        'membership_reviewer',
-        'membership_coordinator',
-    ];
+    public const ROLES = Auth::ROLES;
 
     /**
      * Chapters a membership coordinator can be limited to (key => label).
-     * KEEP IN SYNC with $names in membership_access.php; ideally both should
-     * read one list from MemberModel.
+     * Read from MemberModel so there is one list for the whole app.
      */
-    public const CHAPTERS = [
-        'generic'       => 'DCW Generic Community',
-        'amu'           => 'Wiki Club AMU',
-        'jamia'         => 'Wiki Club Jamia',
-        'photographers' => 'DCW Photographers Club',
-    ];
+    public const CHAPTERS = MemberModel::CHAPTER_NAMES;
 
     private $db;
     private $expiry;
