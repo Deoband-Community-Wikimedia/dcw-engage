@@ -14,9 +14,18 @@ $forms = $formModel->getAllForms();
 //   internet_review.php      -> requireRole(['support_reviewer', 'owner'])
 //   finance/queue.php        -> requireRole(['finance', 'owner'])   (combined: reimbursements + internet support)
 //   finance/closed.php       -> requireRole(['finance', 'owner'])
+//   membership_review.php    -> requireRole(['membership_coordinator', 'membership_reviewer', 'organizer', 'owner'])
+//   membership_access.php    -> requireRole('owner')
 $canReviewReimbursements = in_array(Auth::role(), ['owner', 'organizer'], true);
 $canReviewInternet       = in_array(Auth::role(), ['support_reviewer', 'owner'], true);
 $canProcessFinance       = in_array(Auth::role(), ['finance', 'owner'], true);
+$canReviewMembership     = in_array(Auth::role(), ['membership_coordinator', 'membership_reviewer', 'organizer', 'owner'], true);
+$canManageMembershipAccess = Auth::isOwner();
+
+// Membership-only staff work from the membership queue. Hiding the general
+// forms grid is tidiness, not security: form_manager.php must still guard
+// itself with its own role check.
+$membershipStaffOnly = in_array(Auth::role(), ['membership_coordinator', 'membership_reviewer'], true);
 
 $canReviewAny  = $canReviewReimbursements || $canReviewInternet;
 $canSeeSupport = $canReviewAny || $canProcessFinance;
@@ -126,6 +135,7 @@ $canSeeSupport = $canReviewAny || $canProcessFinance;
             </div>
         </div>
 
+        <?php if (!$membershipStaffOnly): ?>
         <div class="section-head" style="margin-top: 16px;">
             <h2 class="section-title">Application forms</h2>
             <p class="section-intro">Create, open, and close the forms volunteers apply through, and review their responses.</p>
@@ -156,6 +166,28 @@ $canSeeSupport = $canReviewAny || $canProcessFinance;
                 </a>
             <?php endforeach; ?>
         </div>
+        <?php endif; ?>
+
+        <?php if ($canReviewMembership): ?>
+            <div class="section-head"<?= $membershipStaffOnly ? ' style="margin-top: 16px;"' : '' ?>>
+                <h2 class="section-title">Membership</h2>
+                <p class="section-intro">
+                    Review new membership applications and renewals<?= Auth::role() === 'membership_coordinator' ? ' for your chapters' : '' ?>.
+                </p>
+            </div>
+            <div class="grid">
+                <a href="/admin/membership-review" class="card">
+                    <h3 class="card-title">Membership Review</h3>
+                    <p class="card-meta">Approve, reject, or send an application back for more information.</p>
+                </a>
+                <?php if ($canManageMembershipAccess): ?>
+                    <a href="/admin/membership-access" class="card">
+                        <h3 class="card-title">Membership Access</h3>
+                        <p class="card-meta">Choose which chapters each membership coordinator can see.</p>
+                    </a>
+                <?php endif; ?>
+            </div>
+        <?php endif; ?>
 
         <?php if ($canSeeSupport): ?>
             <div class="section-head">
