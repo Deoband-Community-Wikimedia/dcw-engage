@@ -9,6 +9,9 @@
 // it reads "Deoband Community Wikimedia" and is signed by the Membership Coordinators.
 // Clubs are signed by the Core Organising Team of that club. See MemberModel::isDcw().
 //
+// Renewals: pass MemberModel::isRenewal($app) as the last argument so the wording says
+// "renewing" rather than "joining".
+//
 // Sign-off examples:
 //   Best regards,                       Best regards,
 //   Core Organising Team                Membership Coordinators
@@ -78,40 +81,63 @@ class MembershipMailer {
      * Approved: $memberId and $detail (expiry, 'Y-m-d H:i:s') are shown; only the day is displayed.
      * Rejected: $detail is the reason the coordinator wrote.
      * $chapter is the chapter key (MemberModel::chapterOf($app)), or null.
+     * $renewal is true for a renewal (MemberModel::isRenewal($app)): the wording then says
+     * "renewing" instead of "joining", and notes that the member ID stays the same.
      */
-    public static function sendDecision($email, $name, $decision, $memberId = null, $detail = '', $chapter = null) {
+    public static function sendDecision($email, $name, $decision, $memberId = null, $detail = '', $chapter = null, $renewal = false) {
         $n = htmlspecialchars((string) $name, ENT_QUOTES, 'UTF-8');
         $org = self::org($chapter);
         $safeOrg = htmlspecialchars($org, ENT_QUOTES, 'UTF-8');
         $hasDetail = ($detail !== '' && $detail !== null);
 
+        // Opening line, as plain text with the club name left to be escaped by each version.
+        $thanks = $renewal
+            ? 'Thanks for renewing your membership with %s'
+            : 'Thanks for your interest in joining %s';
+
         if ($decision === 'approved') {
             $until = $hasDetail ? date('j M Y', strtotime($detail)) : '';
             $id = htmlspecialchars((string) $memberId, ENT_QUOTES, 'UTF-8');
-            $subject = "Welcome to $org: your membership is confirmed";
+            $subject = $renewal
+                ? "Your $org membership is renewed"
+                : "Welcome to $org: your membership is confirmed";
+            $good = $renewal
+                ? "Good news: your renewal is confirmed, and we're glad to keep you with us!"
+                : "Good news: your membership is confirmed, and we're glad to have you with us!";
+            $keep = $renewal
+                ? "Your member ID stays the same. Keep it handy for next time."
+                : "Keep your member ID handy: you'll need it when you renew.";
             $inner = "
                 <p>Hello <strong>$n</strong>,</p>
-                <p>Thanks for your interest in joining <strong>$safeOrg</strong>. Good news: your membership is confirmed, and we're glad to have you with us!</p>
+                <p>" . sprintf($thanks, "<strong>$safeOrg</strong>") . ". $good</p>
                 <div style='background:#f1f7fb; border-left:4px solid #106b9a; padding:14px 18px; margin:0 0 20px; line-height:1.7;'>
-                    <strong>Member ID:</strong> $id" . ($until ? "<br><strong>Valid until:</strong> $until" : '') . "
+                    <strong>Member ID:</strong> <span style='font-family:Menlo,Consolas,monospace; letter-spacing:1px;'>$id</span>" . ($until ? "<br><strong>Valid until:</strong> $until" : '') . "
                 </div>
-                <p>Keep your member ID handy: you'll need it when you renew.</p>
+                <p>$keep</p>
                 " . self::signHtml($chapter);
-            $alt = "Hello $name,\n\nThanks for your interest in joining $org. Good news: your membership is confirmed, and we're glad to have you with us!\n\nMember ID: $memberId"
-                 . ($until ? "\nValid until: $until" : '') . "\n\nKeep your member ID handy: you'll need it when you renew.\n\n" . self::signText($chapter);
+            $alt = "Hello $name,\n\n" . sprintf($thanks, $org) . ". $good\n\nMember ID: $memberId"
+                 . ($until ? "\nValid until: $until" : '') . "\n\n$keep\n\n" . self::signText($chapter);
         } else {
-            $subject = "Your $org membership application";
+            $subject = $renewal
+                ? "Your $org membership renewal"
+                : "Your $org membership application";
+            $sorry = $renewal
+                ? "and for the time you put into your renewal. After review, we're not able to approve it at this time."
+                : "and for the time you put into your application. After review, we're not able to approve your membership at this time.";
+            $close = $renewal
+                ? "We appreciate your interest in staying part of the community."
+                : "We appreciate your interest and hope our paths cross again.";
             $reason = $hasDetail
                 ? "<p><strong>Reviewer notes:</strong><br>" . nl2br(htmlspecialchars((string) $detail, ENT_QUOTES, 'UTF-8')) . "</p>" : '';
             $inner = "
                 <p>Hello <strong>$n</strong>,</p>
-                <p>Thanks for your interest in joining <strong>$safeOrg</strong>, and for the time you put into your application. After review, we're not able to approve your membership at this time.</p>
+                <p>" . sprintf($thanks, "<strong>$safeOrg</strong>") . ", $sorry</p>
                 $reason
-                <p>We appreciate your interest and hope our paths cross again.</p>
+                <p>$close</p>
                 " . self::signHtml($chapter);
-            $alt = "Hello $name,\n\nThanks for your interest in joining $org, and for the time you put into your application. After review, we're not able to approve your membership at this time."
+            $alt = "Hello $name,\n\n" . sprintf($thanks, $org) . ", $sorry"
                  . ($hasDetail ? "\n\nReviewer notes:\n$detail" : '')
-                 . "\n\nWe appreciate your interest and hope our paths cross again.\n\n" . self::signText($chapter);
+                 . "\n\n$close\n\n" . self::signText($chapter);
         }
 
         return self::send($email, $name, $subject, $inner, $alt, $chapter);
@@ -121,8 +147,9 @@ class MembershipMailer {
      * Sends an application back with the coordinator's message and a fresh link to edit and
      * resubmit it (the existing /resume/{token} page).
      * $chapter is the chapter key (MemberModel::chapterOf($app)), or null.
+     * $renewal is true for a renewal (MemberModel::isRenewal($app)).
      */
-    public static function sendInfoRequest($email, $name, $message, $token, $chapter = null) {
+    public static function sendInfoRequest($email, $name, $message, $token, $chapter = null, $renewal = false) {
         $config = require __DIR__ . '/config.php';
         $url = $config['app']['url'] . '/resume/' . $token;
         $safeUrl = htmlspecialchars($url, ENT_QUOTES, 'UTF-8');
@@ -131,9 +158,19 @@ class MembershipMailer {
         $org = self::org($chapter);
         $safeOrg = htmlspecialchars($org, ENT_QUOTES, 'UTF-8');
 
+        $thanks = $renewal
+            ? 'Thanks for renewing your membership with %s'
+            : 'Thanks for your interest in joining %s';
+        $looked = $renewal
+            ? "We've looked at your renewal and need one more thing from you before we can decide:"
+            : "We've looked at your application and need one more thing from you before we can decide:";
+        $subject = $renewal
+            ? "One more step for your $org membership renewal"
+            : "One more step for your $org membership application";
+
         $inner = "
             <p>Hello <strong>$n</strong>,</p>
-            <p>Thanks for your interest in joining <strong>$safeOrg</strong>. We've looked at your application and need one more thing from you before we can decide:</p>
+            <p>" . sprintf($thanks, "<strong>$safeOrg</strong>") . ". $looked</p>
             <p style='border-left:3px solid #106b9a; padding-left:14px;'>$m</p>
             <div class='btn-wrapper'><a href='$safeUrl' class='btn'>Update my application</a></div>
             <p>If the button doesn't work, copy and paste this link into your browser:<br><br>
@@ -141,9 +178,9 @@ class MembershipMailer {
             <p>This link is private to you and will expire, so please don't share it.</p>
             " . self::signHtml($chapter);
 
-        $alt = "Hello $name,\n\nThanks for your interest in joining $org. We've looked at your application and need one more thing from you before we can decide:\n\n$message\n\nUpdate your application here:\n$url\n\nThis link is private to you and will expire, so please don't share it.\n\n" . self::signText($chapter);
+        $alt = "Hello $name,\n\n" . sprintf($thanks, $org) . ". $looked\n\n$message\n\nUpdate your application here:\n$url\n\nThis link is private to you and will expire, so please don't share it.\n\n" . self::signText($chapter);
 
-        return self::send($email, $name, "One more step for your $org membership application", $inner, $alt, $chapter);
+        return self::send($email, $name, $subject, $inner, $alt, $chapter);
     }
 
     private static function send($email, $name, $subject, $innerHtml, $altBody, $chapter = null) {
