@@ -32,6 +32,9 @@ class MemberModel {
     /** Number of random digits after the letter, e.g. A48213977 (9 characters in total). */
     const MEMBER_ID_DIGITS = 8;
 
+    /** Key of the Member ID answer in a renewal form's form_data. Change if the renewal form uses another key. */
+    const RENEWAL_ID_FIELD = 'member_id';
+
     private $db;
 
     public function __construct() { $this->db = DB::getInstance()->getConnection(); }
@@ -62,6 +65,25 @@ class MemberModel {
         if (!preg_match('/^([A-Z])\d{' . self::MEMBER_ID_DIGITS . '}$/', $memberId, $m)) return null;
         $chapter = array_search($m[1], self::ID_PREFIX, true);
         return $chapter === false ? null : $chapter;
+    }
+
+    /**
+     * Member ID entered on a renewal form (answer key RENEWAL_ID_FIELD in form_data).
+     *   - not a renewal form, or the field is empty -> null: it is handled as a normal application
+     *   - given but not letter + 8 digits, or an unknown letter -> InvalidArgumentException
+     *   - otherwise the ID, trimmed and upper-cased
+     * Call this when the renewal is submitted (to show the applicant the error) and again on approval.
+     */
+    public static function renewalMemberId(array $app): ?string {
+        if (!self::isRenewal($app)) return null;
+        $d = json_decode($app['form_data'] ?? '', true) ?: [];
+        $id = strtoupper(trim((string) ($d[self::RENEWAL_ID_FIELD] ?? '')));
+        if ($id === '') return null;
+        if (self::chapterFromMemberId($id) === null) {
+            throw new InvalidArgumentException('That Member ID is not valid. It is one letter ('
+                . implode(', ', array_values(self::ID_PREFIX)) . ') followed by ' . self::MEMBER_ID_DIGITS . ' digits, for example A48213977.');
+        }
+        return $id;
     }
 
     /**
@@ -137,6 +159,8 @@ class MemberModel {
     public function approve(array $app, string $by): array {
         $chapter = self::chapterOf($app);
         if (!$chapter) throw new Exception('Could not work out the chapter for this application.');
+        // A renewal with no Member ID is simply treated as a normal application; a malformed ID throws.
+        self::renewalMemberId($app);
 
         $this->db->beginTransaction();
         try {
