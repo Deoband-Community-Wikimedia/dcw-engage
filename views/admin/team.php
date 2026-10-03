@@ -21,12 +21,39 @@ function team_flash($type, $message, $link = null) {
 /** Human label for a stored role value ('support_reviewer' -> 'Support reviewer'). */
 function team_role_label($role) {
     $labels = [
-        'owner'            => 'Owner',
-        'organizer'        => 'Organizer',
-        'finance'          => 'Finance',
-        'support_reviewer' => 'Support reviewer',
+        'owner'                  => 'Owner',
+        'organizer'              => 'Organizer',
+        'finance'                => 'Finance',
+        'support_reviewer'       => 'Support reviewer',
+        'membership_reviewer'    => 'Membership reviewer',
+        'membership_coordinator' => 'Membership coordinator',
     ];
-    return $labels[$role] ?? ucfirst($role);
+    return $labels[$role] ?? ucfirst(str_replace('_', ' ', $role));
+}
+
+/** One pill per role, e.g. for a person who is both Finance and Support reviewer. */
+function team_role_pills(array $roles) {
+    $html = '<span class="pills">';
+    foreach ($roles as $role) {
+        $html .= '<span class="pill pill-' . htmlspecialchars($role) . '">'
+              . htmlspecialchars(team_role_label($role)) . '</span>';
+    }
+    return $html . '</span>';
+}
+
+/** The role checkboxes, shared by the invite form and the per-person editor. */
+function team_role_checkboxes(array $checked) {
+    $html = '<div class="role-grid">';
+    foreach (InviteModel::ROLES as $role) {
+        $html .= '<label class="check"><input type="checkbox" name="roles[]" value="'
+              . htmlspecialchars($role) . '"' . (in_array($role, $checked, true) ? ' checked' : '')
+              . '> ' . htmlspecialchars(team_role_label($role)) . '</label>';
+    }
+    return $html . '</div>';
+}
+
+function team_role_names(array $roles) {
+    return implode(', ', array_map('team_role_label', $roles));
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -50,22 +77,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'invite') {
         $email = trim($_POST['email'] ?? '');
 
-        // Kept in sync with InviteModel::create()'s whitelist. Only an owner
-        // can reach this branch at all (Auth::requireOwner() above), which is
-        // what satisfies the model's "only an owner may assign finance/owner"
-        // caller contract.
-        $allowedRoles = ['organizer', 'finance', 'support_reviewer', 'owner'];
-        $role = in_array($_POST['role'] ?? '', $allowedRoles, true) ? $_POST['role'] : 'organizer';
+        // The whitelist lives in InviteModel::ROLES, and normalizeRoles()
+        // drops anything not on it. Only an owner can reach this branch at
+        // all (Auth::requireOwner() above), which is what satisfies the
+        // model's "only an owner may invite" caller contract.
+        $roles = InviteModel::normalizeRoles($_POST['roles'] ?? []);
 
         if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
             team_flash('error', 'That is not a valid email address.');
+        } elseif (!$roles) {
+            team_flash('error', 'Pick at least one role.');
         } elseif ($invites->emailHasAccount($email)) {
             // The reader is an owner-trusted colleague, so naming the reason
             // is helpful here rather than an account-enumeration risk.
             team_flash('error', $email . ' already has an account.');
         } else {
-            $invite = $invites->create($email, $role, Auth::id(), Auth::email());
-            AuditLog::record('invite.created', Auth::id(), Auth::email(), $email, 'Role: ' . $role);
+            $invite = $invites->create($email, $roles, Auth::id(), Auth::email());
+            AuditLog::record('invite.created', Auth::id(), Auth::email(), $email, 'Roles: ' . implode(', ', $roles));
 
             $config = require __DIR__ . '/../../includes/config.php';
             $link = $config['app']['url'] . '/admin/accept-invite?token=' . urlencode($invite['token']);
@@ -91,6 +119,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 );
             }
         }
+    } elseif ($action === 'update_roles') {
+        $result = $invites->setRoles($_POST['admin_id'] ?? 0, $_POST['roles'] ?? [], Auth::id());
+
+        if ($result['ok']) {
+            AuditLog::record(
+                'organizer.roles_changed', Auth::id(), Auth::email(), $result['email'],
+                'Roles: ' . implode(', ', $result['old']) . ' -> ' . implode(', ', $result['new'])
+            );
+            team_flash('success', 'Roles updated for ' . $result['email'] . '. They take effect on their next page load.');
+        } elseif ($result['reason'] === 'empty') {
+            team_flash('error', 'Pick at least one role. To take away all access, remove the account instead.');
+        } elseif ($result['reason'] === 'self') {
+            team_flash('error', 'You cannot change your own roles. Ask another owner.');
+        } elseif ($result['reason'] === 'last_owner') {
+            team_flash('error', 'You cannot take the owner role from the last owner. Make someone else an owner first.');
+        } else {
+            team_flash('error', 'That account no longer exists.');
+        }
     } elseif ($action === 'revoke') {
         $inviteId = (int) ($_POST['invite_id'] ?? 0);
         $ok = $invites->revoke($inviteId);
@@ -105,7 +151,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $result = $invites->removeOrganizer($_POST['admin_id'] ?? 0, Auth::id());
 
         if ($result['ok']) {
-            AuditLog::record('organizer.removed', Auth::id(), Auth::email(), $result['email'], 'Role: ' . $result['role']);
+            AuditLog::record('organizer.removed', Auth::id(), Auth::email(), $result['email'], 'Roles: ' . $result['role']);
             team_flash('success', 'Organizer removed. They can no longer sign in.');
         } elseif ($result['reason'] === 'self') {
             team_flash('error', 'You cannot remove your own account.');
@@ -151,21 +197,28 @@ $organizers = $invites->listOrganizers();
         .panel-sub { font-size: 13px; color: #64748b; margin: 0 0 20px; line-height: 1.55; }
 
         label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
-        input[type=email], select {
+        input[type=email] {
             width: 100%; padding: 11px; border: 1px solid var(--border-color);
             border-radius: 6px; font-family: inherit; font-size: 15px; background: #fff;
         }
-        input:focus, select:focus { outline: 2px solid var(--primary-color); outline-offset: -1px; border-color: transparent; }
-        .field-row { display: flex; gap: 14px; flex-wrap: wrap; }
-        .field-row > div:first-child { flex: 1 1 260px; }
-        .field-row > div:last-child { flex: 0 1 180px; }
+        input:focus { outline: 2px solid var(--primary-color); outline-offset: -1px; border-color: transparent; }
         .hint { font-size: 12px; color: #64748b; margin: 10px 0 0; line-height: 1.55; }
+
+        .role-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 8px 16px; margin-top: 4px; }
+        label.check { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 500; margin: 0; cursor: pointer; }
+        label.check input { width: 16px; height: 16px; margin: 0; accent-color: var(--primary-color); }
+        .field-label { display: block; font-size: 13px; font-weight: 600; margin: 18px 0 6px; }
 
         button.primary {
             margin-top: 18px; padding: 12px 22px; background: var(--primary-color); color: #fff;
             border: none; border-radius: 6px; font-family: inherit; font-size: 15px; font-weight: 600; cursor: pointer;
         }
         button.primary:hover { background: #0d587f; }
+        button.save {
+            margin-top: 12px; padding: 7px 14px; background: var(--primary-color); color: #fff;
+            border: none; border-radius: 6px; font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+        }
+        button.save:hover { background: #0d587f; }
         button.link {
             background: none; border: none; color: #b91c1c; font-family: inherit;
             font-size: 13px; cursor: pointer; padding: 0; text-decoration: underline;
@@ -173,16 +226,23 @@ $organizers = $invites->listOrganizers();
 
         table { width: 100%; border-collapse: collapse; font-size: 14px; }
         th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: #64748b; padding: 0 0 10px; font-weight: 600; }
-        td { padding: 12px 0; border-top: 1px solid var(--border-color); vertical-align: middle; }
+        td { padding: 12px 0; border-top: 1px solid var(--border-color); vertical-align: top; }
         td.right, th.right { text-align: right; }
         .empty { font-size: 14px; color: #64748b; margin: 0; }
 
+        .pills { display: inline-flex; flex-wrap: wrap; gap: 4px; }
         .pill { display: inline-block; font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 999px; }
         .pill-owner { background: rgba(16,107,154,0.1); color: var(--primary-color); }
         .pill-organizer { background: #f1f5f9; color: #475569; }
         .pill-finance { background: #f0f5ff; color: #3730a3; }
         .pill-support_reviewer { background: #fffbeb; color: #92400e; }
+        .pill-membership_coordinator { background: #ecfdf5; color: #065f46; }
+        .pill-membership_reviewer { background: #f5f3ff; color: #5b21b6; }
         .pill-expired { background: #fef2f2; color: #991b1b; }
+
+        details.edit { margin-top: 8px; }
+        details.edit summary { font-size: 12px; color: var(--primary-color); cursor: pointer; }
+        details.edit form { margin: 10px 0 0; padding: 12px; background: #f8fafc; border: 1px solid var(--border-color); border-radius: 8px; }
 
         .flash { padding: 13px 15px; border-radius: 6px; font-size: 14px; margin-bottom: 24px; line-height: 1.55; }
         .flash-success { background: #f0fdf4; border: 1px solid #bbf7d0; color: #166534; }
@@ -200,7 +260,7 @@ $organizers = $invites->listOrganizers();
                 <a class="back" href="/admin/dashboard">&larr; Back to workspace</a>
             </span>
         </div>
-        <p class="lede">Everyone listed here can read every application. Invite carefully.</p>
+        <p class="lede">Organizers, finance and support staff can read applications. Membership roles only see membership applications. Invite carefully.</p>
 
         <?php if ($flash): ?>
             <div class="flash flash-<?= htmlspecialchars($flash['type']) ?>">
@@ -223,27 +283,22 @@ $organizers = $invites->listOrganizers();
                 <?= CSRF::getSubmitField() ?>
                 <input type="hidden" name="action" value="invite">
 
-                <div class="field-row">
-                    <div>
-                        <label for="email">Email address</label>
-                        <input type="email" name="email" id="email" required placeholder="name@dcwwiki.org">
-                    </div>
-                    <div>
-                        <label for="role">Role</label>
-                        <select name="role" id="role">
-                            <option value="organizer">Organizer</option>
-                            <option value="finance">Finance</option>
-                            <option value="support_reviewer">Support reviewer</option>
-                            <option value="owner">Owner</option>
-                        </select>
-                    </div>
-                </div>
+                <label for="email">Email address</label>
+                <input type="email" name="email" id="email" required placeholder="name@dcwwiki.org">
+
+                <span class="field-label">Roles (pick one or more)</span>
+                <?= team_role_checkboxes(['organizer']) ?>
 
                 <p class="hint">
                     Organizers manage forms and applications. Finance can process
                     reimbursement payments and internet support recharges. Support
-                    reviewers decide internet support requests. Owners can additionally
-                    invite people and revoke invitations from this page.
+                    reviewers decide internet support requests. Membership coordinators
+                    review membership applications only for the chapters an owner
+                    assigns them under Membership Access. Membership reviewers
+                    (DCW Generic Reviewers) review membership applications from every
+                    chapter. Owners can additionally invite people, change roles and
+                    revoke invitations from this page. Someone with several roles gets
+                    the access of each.
                 </p>
 
                 <button type="submit" class="primary">Send invitation</button>
@@ -261,7 +316,7 @@ $organizers = $invites->listOrganizers();
                     <thead>
                         <tr>
                             <th>Email</th>
-                            <th>Role</th>
+                            <th>Roles</th>
                             <th>Invited by</th>
                             <th>Expires</th>
                             <th class="right">Action</th>
@@ -271,11 +326,7 @@ $organizers = $invites->listOrganizers();
                     <?php foreach ($pending as $invite): ?>
                         <tr>
                             <td><?= htmlspecialchars($invite['email']) ?></td>
-                            <td>
-                                <span class="pill pill-<?= htmlspecialchars($invite['role']) ?>">
-                                    <?= htmlspecialchars(team_role_label($invite['role'])) ?>
-                                </span>
-                            </td>
+                            <td><?= team_role_pills($invite['role_list']) ?></td>
                             <td><?= htmlspecialchars($invite['invited_by_email']) ?></td>
                             <td>
                                 <?php if ($invite['is_expired']): ?>
@@ -308,24 +359,36 @@ $organizers = $invites->listOrganizers();
                 <thead>
                     <tr>
                         <th>Email</th>
-                        <th>Role</th>
+                        <th>Roles</th>
                         <th>Last signed in</th>
                         <th class="right">Action</th>
                     </tr>
                 </thead>
                 <tbody>
                 <?php foreach ($organizers as $person): ?>
+                    <?php $isSelf = (int) $person['id'] === (int) Auth::id(); ?>
                     <tr>
                         <td>
                             <?= htmlspecialchars($person['email']) ?>
-                            <?php if ((int) $person['id'] === (int) Auth::id()): ?>
+                            <?php if ($isSelf): ?>
                                 <span style="color:#64748b; font-size:12px;">(you)</span>
                             <?php endif; ?>
                         </td>
                         <td>
-                            <span class="pill pill-<?= htmlspecialchars($person['role']) ?>">
-                                <?= htmlspecialchars(team_role_label($person['role'])) ?>
-                            </span>
+                            <?= team_role_pills($person['role_list']) ?>
+                            <?php if (!$isSelf): ?>
+                                <details class="edit">
+                                    <summary>Edit roles</summary>
+                                    <form method="POST">
+                                        <?= CSRF::getInputField() ?>
+                                        <?= CSRF::getSubmitField() ?>
+                                        <input type="hidden" name="action" value="update_roles">
+                                        <input type="hidden" name="admin_id" value="<?= (int) $person['id'] ?>">
+                                        <?= team_role_checkboxes($person['role_list']) ?>
+                                        <button type="submit" class="save">Save roles</button>
+                                    </form>
+                                </details>
+                            <?php endif; ?>
                         </td>
                         <td>
                             <?php if ($person['last_login']): ?>
@@ -335,7 +398,7 @@ $organizers = $invites->listOrganizers();
                             <?php endif; ?>
                         </td>
                         <td class="right">
-                            <?php if ((int) $person['id'] === (int) Auth::id()): ?>
+                            <?php if ($isSelf): ?>
                                 <span style="color:#cbd5e1;">&mdash;</span>
                             <?php else: ?>
                                 <form method="POST" style="margin:0;">
