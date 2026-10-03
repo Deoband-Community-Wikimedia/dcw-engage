@@ -1,18 +1,17 @@
 <?php
 /**
- * DCW Engage - Role guard for reimbursement admin/finance views
+ * DCW Engage - Role guard for admin views
  *
- * Uses Auth's real API (confirmed against includes/auth.php) rather than an
- * assumed return shape from Auth::check(). Auth::check() is a boolean —
- * true if the session is valid, false otherwise — it never carries role,
- * email, or id. Those come from Auth::role(), Auth::email(), and Auth::id()
- * respectively. The previous version read $user['role'] off that boolean,
- * which silently evaluated to null and made every requireRole() call fail
- * for every role, including owner.
+ * Uses Auth's real API rather than an assumed return shape from
+ * Auth::check(), which is a plain boolean: true if the session is valid,
+ * false otherwise. It never carries role, email or id. Those come from
+ * Auth::roles(), Auth::email() and Auth::id().
  *
- * Auth::requireLogin() already does what the old code was trying to do
- * manually with Auth::check() (redirect to /admin/login if not signed in),
- * so this defers to it instead of duplicating that logic.
+ * Auth::requireLogin() already redirects to /admin/login when nobody is
+ * signed in, so this defers to it instead of duplicating that logic.
+ *
+ * An account can hold several roles. Access is granted when it holds ANY of
+ * the allowed ones.
  */
 
 require_once __DIR__ . '/auth.php';
@@ -25,11 +24,9 @@ require_once __DIR__ . '/auth.php';
 function requireRole($allowedRoles): void {
     Auth::requireLogin();
 
-    $allowedRoles = (array) $allowedRoles;
-
-    if (!in_array(Auth::role(), $allowedRoles, true)) {
+    if (!Auth::hasAnyRole($allowedRoles)) {
         http_response_code(403);
-        die("You don't have access to this page.");
+        die("You don't have access to this page. Please contact DCW maintainers.");
     }
 }
 
