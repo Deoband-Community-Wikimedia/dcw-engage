@@ -51,6 +51,8 @@ granted deliberately, in one of two ways.
 | --- | --- |
 | `owner` | Everything an organizer can, plus invite people and revoke pending invitations |
 | `organizer` | Manage forms and applications |
+| `finance` | Manage finance queue related to community support (review receipts). |
+| `support reviewer` | Review and send back/forward applications of support
 
 Existing installs default every account to `organizer` when the migration runs.
 Promote yourself once, by hand:
