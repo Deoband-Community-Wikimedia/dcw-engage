@@ -32,8 +32,17 @@ class MemberModel {
     /** Number of random digits after the letter, e.g. A48213977 (9 characters in total). */
     const MEMBER_ID_DIGITS = 8;
 
-    /** Key of the Member ID answer in a renewal form's form_data. Change if the renewal form uses another key. */
-    const RENEWAL_ID_FIELD = 'member_id';
+    /**
+     * Key of the Member ID answer in a renewal form's form_data. The form builder makes a key
+     * from the question's label, so rewording the question changes it: re-check after any edit.
+     */
+    const RENEWAL_ID_FIELD = 'membership_id';
+
+    /**
+     * Keys that can hold the chapter answer on a renewal form, newest first. Older saved
+     * applications used 'chapter'; the current form calls it 'your_membership' (confirm this).
+     */
+    const RENEWAL_CHAPTER_FIELDS = ['your_membership', 'chapter'];
 
     private $db;
 
@@ -46,7 +55,11 @@ class MemberModel {
     public static function chapterOf(array $app): ?string {
         if (self::isRenewal($app)) {
             $d = json_decode($app['form_data'] ?? '', true) ?: [];
-            return self::LABELS[$d['chapter'] ?? ''] ?? null;
+            $label = '';
+            foreach (self::RENEWAL_CHAPTER_FIELDS as $key) {
+                if (!empty($d[$key])) { $label = trim((string) $d[$key]); break; }
+            }
+            return self::LABELS[$label] ?? null;
         }
         $c = substr($app['form_type'], strlen('membership-'));
         return in_array($c, self::CHAPTERS, true) ? $c : null;
@@ -84,6 +97,35 @@ class MemberModel {
                 . implode(', ', array_values(self::ID_PREFIX)) . ') followed by ' . self::MEMBER_ID_DIGITS . ' digits, for example A48213977.');
         }
         return $id;
+    }
+
+    /**
+     * Verify the Member ID on a renewal against the members table.
+     *   - not a renewal, or no ID given -> null (the caller treats it as a normal application)
+     *   - malformed ID -> InvalidArgumentException (from renewalMemberId)
+     *   - ID not found, or it belongs to a different email or chapter -> InvalidArgumentException
+     *   - otherwise the member row
+     * The applicant's email is the one they verified by magic link, so a match proves the ID is theirs.
+     * The error is deliberately the same for "no such ID" and "someone else's ID", so IDs can't be probed.
+     * Call this when the renewal is submitted and again on approval.
+     */
+    public function verifyRenewalMember(array $app): ?array {
+        $id = self::renewalMemberId($app);
+        if ($id === null) return null;
+
+        $st = $this->db->prepare('SELECT * FROM members WHERE member_id = :m');
+        $st->execute(['m' => $id]);
+        $m = $st->fetch();
+
+        $chapter = self::chapterOf($app);   // from the chapter answer on the form; may be null if not answered yet
+        $ok = $m
+            && strcasecmp((string) $m['email'], (string) $app['email']) === 0
+            && ($chapter === null || $m['chapter'] === $chapter);
+        if (!$ok) {
+            throw new InvalidArgumentException('We could not match that Member ID to your email address and chosen membership. '
+                . 'Please check it, or go back and apply as a new member.');
+        }
+        return $m;
     }
 
     /**
@@ -159,8 +201,9 @@ class MemberModel {
     public function approve(array $app, string $by): array {
         $chapter = self::chapterOf($app);
         if (!$chapter) throw new Exception('Could not work out the chapter for this application.');
-        // A renewal with no Member ID is simply treated as a normal application; a malformed ID throws.
-        self::renewalMemberId($app);
+        // A renewal with no Member ID is simply treated as a normal application;
+        // a malformed or unmatched ID throws.
+        $this->verifyRenewalMember($app);
 
         $this->db->beginTransaction();
         try {
