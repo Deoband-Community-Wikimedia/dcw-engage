@@ -7,6 +7,15 @@ require_once __DIR__ . '/../models/ReimbursementSettingsModel.php';
 $formModel = new FormModel();
 $activeForms = $formModel->getActiveForms();
 
+// Membership forms (membership-generic, membership-amu, ..., the renewal form) are not
+// ordinary programs. They are reached through /membership, which sends new applicants
+// and renewals to the right form, so they are taken out of the "Open programs" list
+// and shown as a single Membership card instead. The card appears only while at
+// least one membership form is switched on in the form manager.
+$isMembershipForm = fn($f) => str_starts_with((string) $f['form_type'], 'membership-');
+$membershipOpen = count(array_filter($activeForms, $isMembershipForm)) > 0;
+$activeForms = array_values(array_filter($activeForms, fn($f) => !$isMembershipForm($f)));
+
 // Show the internet support card only while the programme is switched on
 // (internet_settings.is_active). Guarded so the public landing page can
 // never break, for example before internet_support.sql has been run.
@@ -122,10 +131,12 @@ try {
 
     <div class="wrap">
         <?php if (empty($activeForms)): ?>
-            <div class="empty">
-                <h3>No open programs right now</h3>
-                <p>There are no forms accepting submissions at the moment. Please check back soon — new opportunities are added here as they open.</p>
-            </div>
+            <?php if (!$membershipOpen): ?>
+                <div class="empty">
+                    <h3>No open programs right now</h3>
+                    <p>There are no forms accepting submissions at the moment. Please check back soon — new opportunities are added here as they open.</p>
+                </div>
+            <?php endif; ?>
         <?php else: ?>
             <p class="section-label">Open programs</p>
             <div class="grid">
@@ -150,6 +161,26 @@ try {
                         <span class="go">Apply now →</span>
                     </a>
                 <?php endforeach; ?>
+            </div>
+        <?php endif; ?>
+
+        <?php if ($membershipOpen): ?>
+            <p class="section-label">Membership</p>
+            <div class="grid">
+                <!-- One card for every membership form. /membership sends people to the right one (new or renewal). -->
+                <a class="prog" href="/membership">
+                    <span class="tick">
+                        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                            <circle cx="9" cy="7" r="4"></circle>
+                            <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                            <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                        </svg>
+                    </span>
+                    <h3>Membership</h3>
+                    <p>Join Deoband Community Wikimedia or one of our clubs, or renew your existing membership.</p>
+                    <span class="go">Join or renew →</span>
+                </a>
             </div>
         <?php endif; ?>
 
