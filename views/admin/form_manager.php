@@ -1,11 +1,17 @@
 <?php
 require_once __DIR__ . '/../../includes/init.php';
 require_once __DIR__ . '/../../includes/auth.php';
+require_once __DIR__ . '/../../includes/require_role.php';
 require_once __DIR__ . '/../../models/FormModel.php';
 require_once __DIR__ . '/../../models/ApplicationModel.php';
 require_once __DIR__ . '/../../models/NotesModel.php';
 
+// The workspace page only hides the forms grid from other roles; that is
+// tidiness, not security. This is the actual gate: everything below can read
+// every applicant's data, change statuses, email applicants, and close or
+// delete the form. Finance, support and membership staff have no business here.
 Auth::requireLogin();
+requireRole(['owner', 'organizer']);
 
 $formId = $_GET['id'] ?? null;
 if (!$formId)
@@ -18,6 +24,14 @@ $notesModel = new NotesModel();
 $form = $formModel->getFormById($formId);
 if (!$form)
     die("Form not found.");
+
+// Statuses this page is allowed to set. Anything else in a POST is ignored.
+$allowedStatuses = ['New', 'Under Review', 'Accepted', 'Rejected'];
+
+// Ids of the applications that belong to THIS form. The model calls below
+// take an application id on its own, so without this check a crafted POST
+// could change, email about, or annotate an application from another form.
+$ownedIds = array_map('intval', array_column($appModel->getApplicationsByFormId($formId), 'id'));
 
 // Determine select-type fields in the schema (used to build filter dropdowns).
 // Defined early so it's available both to buildFilterQueryString() below
@@ -46,12 +60,12 @@ $success = '';
 
 // Handle POST actions
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (!CSRF::validate($_POST['csrf_token']))
+    if (!CSRF::validate($_POST['csrf_token'] ?? ''))
         die("Invalid CSRF");
 
     if (isset($_POST['action'])) {
         if ($_POST['action'] === 'toggle_form') {
-            $newStatus = $_POST['is_active'] === '1' ? 1 : 0;
+            $newStatus = ($_POST['is_active'] ?? '') === '1' ? 1 : 0;
             $formModel->toggleFormStatus($formId, $newStatus);
             header("Location: /admin/form_manager?id=" . $formId);
             exit;
@@ -60,30 +74,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             header("Location: /admin/dashboard");
             exit;
         } elseif ($_POST['action'] === 'update_applicant_status') {
-            $targetAppId = $_POST['application_id'];
-            $newStatus = $_POST['status'];
+            $targetAppId = (int) ($_POST['application_id'] ?? 0);
+            $newStatus = $_POST['status'] ?? '';
             $applicantNote = trim($_POST['applicant_note'] ?? '');
-            $appModel->updateStatus($targetAppId, $newStatus);
 
-            // Let the applicant know the moment a decision is made. Not fired
-            // for 'New' since that's just the default/unreviewed state, not
-            // an outcome.
-            if (in_array($newStatus, ['Under Review', 'Accepted', 'Rejected'])) {
-                $target = $appModel->getApplicationById($targetAppId);
-                if ($target) {
-                    require_once __DIR__ . '/../../includes/mailer.php';
-                    $trackingId = $target['tracking_id'];
-                    Mailer::sendStatusUpdate($target['email'], $target['applicant_name'], $newStatus, $trackingId, $target['form_title'] ?? $form['title'], $applicantNote);
+            if (in_array($targetAppId, $ownedIds, true) && in_array($newStatus, $allowedStatuses, true)) {
+                $appModel->updateStatus($targetAppId, $newStatus);
+
+                // Let the applicant know the moment a decision is made. Not fired
+                // for 'New' since that's just the default/unreviewed state, not
+                // an outcome.
+                if (in_array($newStatus, ['Under Review', 'Accepted', 'Rejected'])) {
+                    $target = $appModel->getApplicationById($targetAppId);
+                    if ($target) {
+                        require_once __DIR__ . '/../../includes/mailer.php';
+                        $trackingId = $target['tracking_id'];
+                        Mailer::sendStatusUpdate($target['email'], $target['applicant_name'], $newStatus, $trackingId, $target['form_title'] ?? $form['title'], $applicantNote);
+                    }
                 }
             }
 
-            header("Location: /admin/form_manager?id=" . $formId);
+            header("Location: /admin/form_manager?id=" . $formId . buildFilterQueryString());
             exit;
         } elseif ($_POST['action'] === 'bulk_update_status') {
-            $selectedIds = $_POST['application_ids'] ?? [];
+            // Only ids that really belong to this form, as integers.
+            $selectedIds = array_values(array_intersect(
+                array_map('intval', (array) ($_POST['application_ids'] ?? [])),
+                $ownedIds
+            ));
             $newBulkStatus = $_POST['bulk_status'] ?? '';
             $applicantNote = trim($_POST['bulk_applicant_note'] ?? '');
-            if (!empty($selectedIds) && !empty($newBulkStatus)) {
+            if (!empty($selectedIds) && in_array($newBulkStatus, $allowedStatuses, true)) {
                 $appModel->updateStatusBulk($selectedIds, $newBulkStatus, $formId);
 
                 if (in_array($newBulkStatus, ['Under Review', 'Accepted', 'Rejected'])) {
@@ -101,8 +122,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             exit;
         } elseif ($_POST['action'] === 'add_note') {
             $noteText = trim($_POST['note_text'] ?? '');
-            $noteAppId = $_POST['application_id'] ?? '';
-            if (!empty($noteText) && !empty($noteAppId)) {
+            $noteAppId = (int) ($_POST['application_id'] ?? 0);
+            if (!empty($noteText) && in_array($noteAppId, $ownedIds, true)) {
                 $notesModel->addNote(
                     $noteAppId,
                     Auth::id(),
@@ -206,7 +227,7 @@ if (!empty($activeFieldFilters)) {
         <?php if ($success): ?>
             <div
                 style="background: #d1fae5; color: #065f46; padding: 15px; border-radius: 6px; margin-bottom: 20px; border: 1px solid #34d399;">
-                <?= $success ?>
+                <?= htmlspecialchars($success) ?>
             </div><?php endif; ?>
 
         <div class="header-card">
@@ -329,7 +350,7 @@ if (!empty($activeFieldFilters)) {
                         $statusClass = 'status-' . str_replace(' ', '-', $app['status']);
                         ?>
                         <tr>
-                            <td><input type="checkbox" class="row-checkbox" value="<?= $app['id'] ?>"
+                            <td><input type="checkbox" class="row-checkbox" value="<?= (int) $app['id'] ?>"
                                     onchange="updateBulkBar()"></td>
                             <td style="font-family: monospace; font-weight: 600;">
                                 <?= htmlspecialchars($app['tracking_id'] ?? 'N/A') ?>
@@ -341,14 +362,14 @@ if (!empty($activeFieldFilters)) {
                             <td style="color: #64748b;"><?= date('M j, Y H:i', strtotime($app['created_at'])) ?></td>
                             <td>
                                 <button class="btn btn-sm btn-primary"
-                                    onclick='viewData(<?= json_encode($app['form_data'], JSON_HEX_APOS | JSON_HEX_QUOT) ?>, "<?= htmlspecialchars($app['applicant_name'], ENT_QUOTES) ?>", <?= $app['id'] ?>, <?= json_encode($notesModel->getNotesByApplication($app['id']), JSON_HEX_APOS | JSON_HEX_QUOT) ?>)'>View
+                                    onclick='viewData(<?= json_encode($app['form_data'], JSON_HEX_APOS | JSON_HEX_QUOT) ?>, "<?= htmlspecialchars($app['applicant_name'], ENT_QUOTES) ?>", <?= (int) $app['id'] ?>, <?= json_encode($notesModel->getNotesByApplication($app['id']), JSON_HEX_APOS | JSON_HEX_QUOT) ?>)'>View
                                     Data</button>
 
                                 <form method="POST"
                                     style="display:inline-flex; gap:6px; align-items:center; margin-left:10px;">
                                     <?= CSRF::getInputField() ?>
                                     <input type="hidden" name="action" value="update_applicant_status">
-                                    <input type="hidden" name="application_id" value="<?= $app['id'] ?>">
+                                    <input type="hidden" name="application_id" value="<?= (int) $app['id'] ?>">
                                     <select name="status">
                                         <option value="New" <?= $app['status'] == 'New' ? 'selected' : '' ?>>New</option>
                                         <option value="Under Review" <?= $app['status'] == 'Under Review' ? 'selected' : '' ?>>
@@ -531,10 +552,23 @@ if (!empty($activeFieldFilters)) {
             const all = document.querySelectorAll('.row-checkbox');
             const selectAll = document.getElementById('selectAll');
             selectAll.checked = all.length > 0 && checked.length === all.length;
+            selectAll.indeterminate = checked.length > 0 && checked.length < all.length;
         }
 
         function prepareBulkSubmit() {
             const checked = document.querySelectorAll('.row-checkbox:checked');
+            if (checked.length === 0) return false;
+
+            // Accepting or rejecting emails every selected applicant, so confirm.
+            const status = document.querySelector('#bulkForm select[name=bulk_status]').value;
+            if (status === 'Accepted' || status === 'Rejected') {
+                const n = checked.length;
+                if (!confirm(status + ' ' + n + ' application' + (n === 1 ? '' : 's') +
+                    '? Each applicant will be emailed.')) {
+                    return false;
+                }
+            }
+
             const container = document.getElementById('bulkIdsContainer');
             container.innerHTML = '';
             checked.forEach(cb => {
@@ -544,7 +578,7 @@ if (!empty($activeFieldFilters)) {
                 input.value = cb.value;
                 container.appendChild(input);
             });
-            return checked.length > 0;
+            return true;
         }
     </script>
 </body>
