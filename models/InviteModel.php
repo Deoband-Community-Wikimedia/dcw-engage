@@ -12,6 +12,13 @@
  * Receiving the token is what proves control of the inbox, so there is no
  * separate email verification step. Nothing exists in admin_users until
  * step 2 completes — an unaccepted invite cannot sign in.
+ *
+ * ROLES
+ * An account can hold several roles. They live in admin_user_roles (one row
+ * per role). admin_users.role still exists and always holds the account's
+ * PRIMARY role, the first match in self::ROLES, so code that has not yet
+ * moved to multi-role checks keeps working. Pending invites store the whole
+ * list as comma-separated text in admin_invites.roles.
  */
 
 require_once __DIR__ . '/../includes/auth.php';
@@ -26,6 +33,20 @@ class InviteModel {
      */
     public const MIN_PASSWORD_LENGTH = Auth::MIN_PASSWORD_LENGTH;
 
+    /**
+     * Every role an account can hold, highest privilege first. The order
+     * matters: the first role a person holds becomes their primary role.
+     * Single source of truth for create(), setRoles() and team.php.
+     */
+    public const ROLES = [
+        'owner',
+        'organizer',
+        'finance',
+        'support_reviewer',
+        'membership_reviewer',
+        'membership_coordinator',
+    ];
+
     private $db;
     private $expiry;
 
@@ -34,6 +55,37 @@ class InviteModel {
 
         $config = require __DIR__ . '/../includes/config.php';
         $this->expiry = $config['security']['invite_expiry'] ?? self::DEFAULT_EXPIRY;
+    }
+
+    /**
+     * Turn whatever a form or column gave us (array, CSV string, junk) into a
+     * clean list: known roles only, no duplicates, highest privilege first.
+     * Returns an empty array when nothing valid is left; callers decide
+     * whether that is an error.
+     */
+    public static function normalizeRoles($roles) {
+        if (is_string($roles)) {
+            $roles = explode(',', $roles);
+        }
+        if (!is_array($roles)) {
+            return [];
+        }
+
+        $picked = [];
+        foreach ($roles as $role) {
+            $role = trim((string) $role);
+            if (in_array($role, self::ROLES, true)) {
+                $picked[$role] = true;
+            }
+        }
+
+        $out = [];
+        foreach (self::ROLES as $role) {
+            if (isset($picked[$role])) {
+                $out[] = $role;
+            }
+        }
+        return $out;
     }
 
     /**
@@ -54,25 +106,23 @@ class InviteModel {
     /**
      * Issue an invitation and return the raw token.
      *
-     * This is the only moment the raw token exists in the application; the
-     * caller must hand it straight to the mailer. Any earlier pending invite
-     * for the same address is revoked first, so re-inviting someone
-     * invalidates the previous link instead of leaving two live doors.
+     * $roles is an array of role names (a single string also works). This is
+     * the only moment the raw token exists in the application; the caller
+     * must hand it straight to the mailer. Any earlier pending invite for the
+     * same address is revoked first, so re-inviting someone invalidates the
+     * previous link instead of leaving two live doors.
+     *
+     * CALLER CONTRACT: only an 'owner' should be able to invite anyone. This
+     * method does not enforce that itself, so the check belongs in the view
+     * that collects the invite form (team.php).
      */
-    public function create($email, $role, $invitedById, $invitedByEmail) {
-        // Extended from the original owner/organizer-only validation to add
-        // a third role for reimbursement payment execution (see #71). This
-        // check is the only place role validity is enforced — admin_users.role
-        // is a plain column, not a DB-level enum — so this whitelist IS the
-        // source of truth for what a role can be.
-        //
-        // CALLER CONTRACT: only an 'owner' should be able to invite someone
-        // as 'finance' or as another 'owner'. This method does not enforce
-        // that itself — it only validates that the value is one of the three
-        // known roles — so that check belongs in whatever view collects the
-        // invite form (team.php) before calling this.
-        $allowedRoles = ['owner', 'organizer', 'finance', 'support_reviewer'];
-        $role = in_array($role, $allowedRoles, true) ? $role : 'organizer';
+    public function create($email, $roles, $invitedById, $invitedByEmail) {
+        $roles = self::normalizeRoles($roles);
+        if (!$roles) {
+            throw new InvalidArgumentException('At least one valid role is required.');
+        }
+
+        $primary = $roles[0];
         $token = bin2hex(random_bytes(32));
 
         $this->db->beginTransaction();
@@ -90,12 +140,13 @@ class InviteModel {
 
             $this->db->prepare(
                 "INSERT INTO admin_invites
-                    (email, token_hash, role, invited_by, invited_by_email, expires_at)
-                 VALUES (:email, :hash, :role, :by_id, :by_email, NOW() + INTERVAL :seconds SECOND)"
+                    (email, token_hash, role, roles, invited_by, invited_by_email, expires_at)
+                 VALUES (:email, :hash, :role, :roles, :by_id, :by_email, NOW() + INTERVAL :seconds SECOND)"
             )->execute([
                 'email'    => $email,
                 'hash'     => $this->hashToken($token),
-                'role'     => $role,
+                'role'     => $primary,
+                'roles'    => implode(',', $roles),
                 'by_id'    => $invitedById,
                 'by_email' => $invitedByEmail,
                 'seconds'  => $seconds,
@@ -111,7 +162,7 @@ class InviteModel {
             throw $e;
         }
 
-        return ['token' => $token, 'expires_at' => $expiresAt];
+        return ['token' => $token, 'expires_at' => $expiresAt, 'roles' => $roles];
     }
 
     /**
@@ -143,7 +194,8 @@ class InviteModel {
      * conditional, so two submissions racing each other cannot both create an
      * account: the second one matches zero rows and is rejected.
      *
-     * Returns the new admin id, or null if the invite was consumed first.
+     * Returns the new admin's details, or null if the invite was consumed
+     * first.
      */
     public function redeem($token, $password) {
         $this->db->beginTransaction();
@@ -154,6 +206,16 @@ class InviteModel {
             if (!$invite) {
                 $this->db->rollBack();
                 return null;
+            }
+
+            // Never create an account from a blank or unknown role list. That
+            // is what a too-narrow column produces, and such an account could
+            // sign in but see nothing. Throwing rolls the transaction back,
+            // so the invite stays unused and can be fixed or re-sent.
+            $stored = (($invite['roles'] ?? '') !== '') ? $invite['roles'] : $invite['role'];
+            $roles = self::normalizeRoles($stored);
+            if (!$roles) {
+                throw new RuntimeException('Invite #' . (int) $invite['id'] . ' has no valid role.');
             }
 
             // Claim the invite first. Zero affected rows means another request
@@ -175,38 +237,59 @@ class InviteModel {
             )->execute([
                 'email' => $invite['email'],
                 'hash'  => password_hash($password, PASSWORD_DEFAULT),
-                'role'  => $invite['role'],
+                'role'  => $roles[0],
             ]);
 
             $adminId = (int) $this->db->lastInsertId();
+            $this->writeRoles($adminId, $roles);
 
             $this->db->commit();
 
-            return ['id' => $adminId, 'email' => $invite['email'], 'role' => $invite['role']];
+            return ['id' => $adminId, 'email' => $invite['email'], 'role' => $roles[0], 'roles' => $roles];
         } catch (Exception $e) {
-            $this->db->rollBack();
+            if ($this->db->inTransaction()) {
+                $this->db->rollBack();
+            }
             throw $e;
         }
     }
 
     /** Invitations still waiting to be accepted, newest first. */
     public function listPending() {
-        return $this->db->query(
-            "SELECT id, email, role, invited_by_email, expires_at, created_at,
+        $rows = $this->db->query(
+            "SELECT id, email, role, roles, invited_by_email, expires_at, created_at,
                     (expires_at <= NOW()) AS is_expired
              FROM admin_invites
              WHERE accepted_at IS NULL AND revoked_at IS NULL
              ORDER BY created_at DESC"
         )->fetchAll();
+
+        foreach ($rows as &$row) {
+            $row['role_list'] = self::normalizeRoles($row['roles'] !== '' ? $row['roles'] : $row['role']);
+        }
+        unset($row);
+
+        return $rows;
     }
 
-    /** Everyone who can currently sign in. */
+    /** Everyone who can currently sign in, with their full role list. */
     public function listOrganizers() {
-        return $this->db->query(
-            "SELECT id, email, role, created_at, last_login
-             FROM admin_users
-             ORDER BY role = 'owner' DESC, email ASC"
+        $rows = $this->db->query(
+            "SELECT u.id, u.email, u.role, u.created_at, u.last_login,
+                    GROUP_CONCAT(r.role) AS roles_csv
+             FROM admin_users u
+             LEFT JOIN admin_user_roles r ON r.admin_id = u.id
+             GROUP BY u.id
+             ORDER BY (u.role = 'owner') DESC, u.email ASC"
         )->fetchAll();
+
+        foreach ($rows as &$row) {
+            $csv = $row['roles_csv'] ?? '';
+            $row['role_list'] = self::normalizeRoles($csv !== '' ? $csv : $row['role']);
+        }
+        unset($row);
+
+        return $rows;
     }
 
     /** Withdraw a pending invitation. Already accepted ones are untouched. */
@@ -218,6 +301,60 @@ class InviteModel {
         $stmt->execute(['id' => (int) $id]);
 
         return $stmt->rowCount() === 1;
+    }
+
+    /**
+     * Replace an existing account's roles.
+     *
+     * $actingAdminId is the owner making the change. Refused, with a reason
+     * the caller can explain:
+     *   - 'empty'      no valid role was supplied
+     *   - 'self'       changing your own roles (avoids locking yourself out)
+     *   - 'missing'    the account no longer exists
+     *   - 'last_owner' taking the owner role from the last remaining owner
+     *
+     * Returns ['ok' => bool, 'reason' => string, plus email/old/new on success].
+     */
+    public function setRoles($id, $roles, $actingAdminId) {
+        $id = (int) $id;
+        $roles = self::normalizeRoles($roles);
+
+        if (!$roles) {
+            return ['ok' => false, 'reason' => 'empty'];
+        }
+        if ($id === (int) $actingAdminId) {
+            return ['ok' => false, 'reason' => 'self'];
+        }
+
+        $stmt = $this->db->prepare("SELECT email, role FROM admin_users WHERE id = :id");
+        $stmt->execute(['id' => $id]);
+        $target = $stmt->fetch();
+
+        if (!$target) {
+            return ['ok' => false, 'reason' => 'missing'];
+        }
+
+        $old = $this->rolesFor($id, $target['role']);
+
+        if (in_array('owner', $old, true) && !in_array('owner', $roles, true)
+            && $this->ownerCount() <= 1) {
+            return ['ok' => false, 'reason' => 'last_owner'];
+        }
+
+        $this->db->beginTransaction();
+
+        try {
+            $this->writeRoles($id, $roles);
+            $this->db->prepare("UPDATE admin_users SET role = :role WHERE id = :id")
+                ->execute(['role' => $roles[0], 'id' => $id]);
+
+            $this->db->commit();
+        } catch (Exception $e) {
+            $this->db->rollBack();
+            throw $e;
+        }
+
+        return ['ok' => true, 'reason' => 'updated', 'email' => $target['email'], 'old' => $old, 'new' => $roles];
     }
 
     /**
@@ -253,24 +390,65 @@ class InviteModel {
             return ['ok' => false, 'reason' => 'missing'];
         }
 
-        if ($target['role'] === 'owner') {
-            $ownerCount = (int) $this->db->query(
-                "SELECT COUNT(*) FROM admin_users WHERE role = 'owner'"
-            )->fetchColumn();
+        $roles = $this->rolesFor($id, $target['role']);
 
-            if ($ownerCount <= 1) {
-                return ['ok' => false, 'reason' => 'last_owner'];
-            }
+        if (in_array('owner', $roles, true) && $this->ownerCount() <= 1) {
+            return ['ok' => false, 'reason' => 'last_owner'];
         }
 
-        $del = $this->db->prepare("DELETE FROM admin_users WHERE id = :id");
-        $del->execute(['id' => $id]);
+        $this->db->beginTransaction();
+
+        try {
+            // Explicit, so removal does not depend on the FK cascade existing.
+            $this->db->prepare("DELETE FROM admin_user_roles WHERE admin_id = :id")
+                ->execute(['id' => $id]);
+
+            $del = $this->db->prepare("DELETE FROM admin_users WHERE id = :id");
+            $del->execute(['id' => $id]);
+
+            $this->db->commit();
+        } catch (Exception $e) {
+            $this->db->rollBack();
+            throw $e;
+        }
 
         return [
             'ok'     => $del->rowCount() === 1,
             'reason' => 'removed',
             'email'  => $target['email'],
-            'role'   => $target['role'],
+            'role'   => implode(', ', $roles),
         ];
+    }
+
+    /** An account's roles from admin_user_roles, falling back to its primary role. */
+    private function rolesFor($adminId, $primaryRole) {
+        $stmt = $this->db->prepare("SELECT role FROM admin_user_roles WHERE admin_id = :id");
+        $stmt->execute(['id' => (int) $adminId]);
+
+        $roles = self::normalizeRoles($stmt->fetchAll(PDO::FETCH_COLUMN));
+        return $roles ?: self::normalizeRoles($primaryRole);
+    }
+
+    /** How many accounts currently hold the owner role. */
+    private function ownerCount() {
+        return (int) $this->db->query(
+            "SELECT COUNT(DISTINCT admin_id) FROM admin_user_roles WHERE role = 'owner'"
+        )->fetchColumn();
+    }
+
+    /**
+     * Make admin_user_roles match $roles exactly for one account. Callers wrap
+     * this in their own transaction.
+     */
+    private function writeRoles($adminId, array $roles) {
+        $this->db->prepare("DELETE FROM admin_user_roles WHERE admin_id = :id")
+            ->execute(['id' => (int) $adminId]);
+
+        $insert = $this->db->prepare(
+            "INSERT INTO admin_user_roles (admin_id, role) VALUES (:id, :role)"
+        );
+        foreach ($roles as $role) {
+            $insert->execute(['id' => (int) $adminId, 'role' => $role]);
+        }
     }
 }
