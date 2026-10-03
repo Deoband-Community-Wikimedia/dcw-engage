@@ -4,11 +4,13 @@ require_once __DIR__ . '/../../includes/auth.php';
 require_once __DIR__ . '/../../includes/mailer.php';
 require_once __DIR__ . '/../../includes/audit.php';
 require_once __DIR__ . '/../../models/InviteModel.php';
+require_once __DIR__ . '/../../models/MemberModel.php';
 
 // Authenticated *and* an owner. Everything below can grant or remove access.
 Auth::requireOwner();
 
 $invites = new InviteModel();
+$members = new MemberModel();
 
 /**
  * Flash messages survive the redirect after a POST, which keeps a refresh
@@ -52,6 +54,31 @@ function team_role_checkboxes(array $checked) {
     return $html . '</div>';
 }
 
+/**
+ * Chapter checkboxes for a membership coordinator. Always rendered; a little
+ * script at the bottom hides the block unless "Membership coordinator" is
+ * ticked in the same form (with scripting off it simply stays visible).
+ */
+function team_chapter_checkboxes(array $checked) {
+    $html = '<div class="chapter-box"><span class="field-label">Chapters this coordinator can see</span>'
+          . '<div class="role-grid">';
+    foreach (InviteModel::CHAPTERS as $key => $label) {
+        $html .= '<label class="check"><input type="checkbox" name="chapters[]" value="'
+              . htmlspecialchars($key) . '"' . (in_array($key, $checked, true) ? ' checked' : '')
+              . '> ' . htmlspecialchars($label) . '</label>';
+    }
+    return $html . '</div></div>';
+}
+
+/** "Wiki Club AMU, Wiki Club Jamia" for a list of chapter keys. */
+function team_chapter_names(array $keys) {
+    $names = [];
+    foreach ($keys as $key) {
+        $names[] = InviteModel::CHAPTERS[$key] ?? $key;
+    }
+    return implode(', ', $names);
+}
+
 function team_role_names(array $roles) {
     return implode(', ', array_map('team_role_label', $roles));
 }
@@ -82,18 +109,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // all (Auth::requireOwner() above), which is what satisfies the
         // model's "only an owner may invite" caller contract.
         $roles = InviteModel::normalizeRoles($_POST['roles'] ?? []);
+        $isCoordinator = in_array('membership_coordinator', $roles, true);
+        $chapters = $isCoordinator ? InviteModel::normalizeChapters($_POST['chapters'] ?? []) : [];
 
         if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
             team_flash('error', 'That is not a valid email address.');
         } elseif (!$roles) {
             team_flash('error', 'Pick at least one role.');
+        } elseif ($isCoordinator && !$chapters) {
+            team_flash('error', 'Pick at least one chapter for a membership coordinator, or they will see nothing.');
         } elseif ($invites->emailHasAccount($email)) {
             // The reader is an owner-trusted colleague, so naming the reason
             // is helpful here rather than an account-enumeration risk.
             team_flash('error', $email . ' already has an account.');
         } else {
-            $invite = $invites->create($email, $roles, Auth::id(), Auth::email());
-            AuditLog::record('invite.created', Auth::id(), Auth::email(), $email, 'Roles: ' . implode(', ', $roles));
+            $invite = $invites->create($email, $roles, Auth::id(), Auth::email(), $chapters);
+            AuditLog::record(
+                'invite.created', Auth::id(), Auth::email(), $email,
+                'Roles: ' . implode(', ', $roles) . ($chapters ? '; Chapters: ' . implode(', ', $chapters) : '')
+            );
 
             $config = require __DIR__ . '/../../includes/config.php';
             $link = $config['app']['url'] . '/admin/accept-invite?token=' . urlencode($invite['token']);
@@ -120,14 +154,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
     } elseif ($action === 'update_roles') {
-        $result = $invites->setRoles($_POST['admin_id'] ?? 0, $_POST['roles'] ?? [], Auth::id());
+        $newRoles = InviteModel::normalizeRoles($_POST['roles'] ?? []);
+        $isCoordinator = in_array('membership_coordinator', $newRoles, true);
+        $chapters = $isCoordinator ? InviteModel::normalizeChapters($_POST['chapters'] ?? []) : [];
+
+        if ($isCoordinator && !$chapters) {
+            // Checked before anything is saved, so a refusal changes nothing.
+            team_flash('error', 'Pick at least one chapter for a membership coordinator, or they will see nothing.');
+            header('Location: /admin/team');
+            exit;
+        }
+
+        $result = $invites->setRoles($_POST['admin_id'] ?? 0, $newRoles, Auth::id());
 
         if ($result['ok']) {
+            // Roles are saved. Chapters go through the same MemberModel call
+            // Membership Access uses. Chapters are left untouched when the
+            // coordinator role is removed: access is role-gated, and the
+            // owner will see the old ticks again if the role is re-added.
+            $chapterError = null;
+            if ($isCoordinator) {
+                try {
+                    $members->setChapters($result['email'], $chapters);
+                } catch (Throwable $e) {
+                    $chapterError = $e->getMessage();
+                }
+            }
+
             AuditLog::record(
                 'organizer.roles_changed', Auth::id(), Auth::email(), $result['email'],
                 'Roles: ' . implode(', ', $result['old']) . ' -> ' . implode(', ', $result['new'])
+                    . ($isCoordinator && !$chapterError ? '; Chapters: ' . implode(', ', $chapters) : '')
             );
-            team_flash('success', 'Roles updated for ' . $result['email'] . '. They take effect on their next page load.');
+
+            if ($chapterError) {
+                team_flash('warning', 'Roles updated for ' . $result['email'] . ', but chapters could not be saved ('
+                    . $chapterError . '). Set them on Membership Access.');
+            } else {
+                team_flash('success', 'Roles updated for ' . $result['email'] . '. They take effect on their next page load.');
+            }
         } elseif ($result['reason'] === 'empty') {
             team_flash('error', 'Pick at least one role. To take away all access, remove the account instead.');
         } elseif ($result['reason'] === 'self') {
@@ -240,6 +305,8 @@ $organizers = $invites->listOrganizers();
         .pill-membership_reviewer { background: #f5f3ff; color: #5b21b6; }
         .pill-expired { background: #fef2f2; color: #991b1b; }
 
+        .chapter-box { margin-top: 4px; }
+        .meta { display: block; margin-top: 6px; font-size: 12px; color: #64748b; }
         details.edit { margin-top: 8px; }
         details.edit summary { font-size: 12px; color: var(--primary-color); cursor: pointer; }
         details.edit form { margin: 10px 0 0; padding: 12px; background: #f8fafc; border: 1px solid var(--border-color); border-radius: 8px; }
@@ -288,6 +355,7 @@ $organizers = $invites->listOrganizers();
 
                 <span class="field-label">Roles (pick one or more)</span>
                 <?= team_role_checkboxes(['organizer']) ?>
+                <?= team_chapter_checkboxes([]) ?>
 
                 <p class="hint">
                     Organizers manage forms and applications. Finance can process
@@ -296,7 +364,9 @@ $organizers = $invites->listOrganizers();
                     review membership applications only for the chapters an owner
                     assigns them under Membership Access. Membership reviewers
                     (DCW Generic Reviewers) review membership applications from every
-                    chapter. Owners can additionally invite people, change roles and
+                    chapter. Choose the chapters when you tick Membership coordinator;
+                    they are applied as soon as the invitation is accepted. Owners can
+                    additionally invite people, change roles and
                     revoke invitations from this page. Someone with several roles gets
                     the access of each.
                 </p>
@@ -326,7 +396,12 @@ $organizers = $invites->listOrganizers();
                     <?php foreach ($pending as $invite): ?>
                         <tr>
                             <td><?= htmlspecialchars($invite['email']) ?></td>
-                            <td><?= team_role_pills($invite['role_list']) ?></td>
+                            <td>
+                                <?= team_role_pills($invite['role_list']) ?>
+                                <?php if (!empty($invite['chapter_list'])): ?>
+                                    <span class="meta">Chapters: <?= htmlspecialchars(team_chapter_names($invite['chapter_list'])) ?></span>
+                                <?php endif; ?>
+                            </td>
                             <td><?= htmlspecialchars($invite['invited_by_email']) ?></td>
                             <td>
                                 <?php if ($invite['is_expired']): ?>
@@ -366,7 +441,18 @@ $organizers = $invites->listOrganizers();
                 </thead>
                 <tbody>
                 <?php foreach ($organizers as $person): ?>
-                    <?php $isSelf = (int) $person['id'] === (int) Auth::id(); ?>
+                    <?php
+                        $isSelf = (int) $person['id'] === (int) Auth::id();
+                        $isCoord = in_array('membership_coordinator', $person['role_list'], true);
+                        $personChapters = [];
+                        if ($isCoord) {
+                            try {
+                                $personChapters = InviteModel::normalizeChapters($members->chaptersFor($person['email']));
+                            } catch (Throwable $e) {
+                                $personChapters = [];
+                            }
+                        }
+                    ?>
                     <tr>
                         <td>
                             <?= htmlspecialchars($person['email']) ?>
@@ -376,6 +462,13 @@ $organizers = $invites->listOrganizers();
                         </td>
                         <td>
                             <?= team_role_pills($person['role_list']) ?>
+                            <?php if ($isCoord): ?>
+                                <span class="meta">
+                                    <?= $personChapters
+                                        ? 'Chapters: ' . htmlspecialchars(team_chapter_names($personChapters))
+                                        : '<span style="color:#b45309;">No chapters yet: sees nothing</span>' ?>
+                                </span>
+                            <?php endif; ?>
                             <?php if (!$isSelf): ?>
                                 <details class="edit">
                                     <summary>Edit roles</summary>
@@ -385,6 +478,7 @@ $organizers = $invites->listOrganizers();
                                         <input type="hidden" name="action" value="update_roles">
                                         <input type="hidden" name="admin_id" value="<?= (int) $person['id'] ?>">
                                         <?= team_role_checkboxes($person['role_list']) ?>
+                                        <?= team_chapter_checkboxes($personChapters) ?>
                                         <button type="submit" class="save">Save roles</button>
                                     </form>
                                 </details>
@@ -418,6 +512,18 @@ $organizers = $invites->listOrganizers();
         </div>
     </div>
     <script>
+        // Show the chapter picker only while "Membership coordinator" is ticked
+        // in that form. With scripting off the picker just stays visible, and
+        // the server ignores chapters unless the role is ticked.
+        document.querySelectorAll('.chapter-box').forEach(function (box) {
+            var form = box.closest('form');
+            var coordinator = form && form.querySelector('input[value=membership_coordinator]');
+            if (!coordinator) return;
+            function sync() { box.style.display = coordinator.checked ? '' : 'none'; }
+            coordinator.addEventListener('change', sync);
+            sync();
+        });
+
         // Progressive enhancement only. With scripting off, the single-use
         // submit token on the server still makes a second POST a no-op.
         document.querySelectorAll('form').forEach(function (form) {
