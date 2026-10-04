@@ -35,8 +35,8 @@ try {
     $reimbursementOpen = false;
 }
 
-// Support is for signed-in members. Is one signed in? Guarded so the public landing page can never
-// break, for example before sql/member_login.sql has been run.
+// Support is for signed-in members. Is one signed in? Guarded so the public landing page can
+// never break, for example before sql/member_login.sql has been run.
 try {
     $signedInMember = MemberSession::current();
 } catch (Throwable $e) {
@@ -69,7 +69,6 @@ $galleryImages = [
         // Embassy of Ukraine in India site: its footer says all content is CC BY 4.0, which needs the
         // photographer's name and a link to the licence (the caption link below). This points at their
         // server; for reliability save a copy under /assets/img/ and change 'src' to that path.
-        // TODO: replace the alt text with a description of what the photo shows.
         'src'    => 'https://india.mfa.gov.ua/storage/app/thumbnails/29f/219/429/69ef2b793300d191148887_820x360.jpg',
         'alt'    => 'Ukrainian Diplomacy Month offline Wikipedia workshop led by DCW members at Embassy of Ukraine in New Delhi',
         'credit' => 'Photo: Volodymyr Prytula, Embassy of Ukraine in India, CC BY 4.0',
@@ -87,15 +86,17 @@ $icons = [
     'help'   => '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/><line x1="4.93" y1="4.93" x2="9.17" y2="9.17"/><line x1="14.83" y1="14.83" x2="19.07" y2="19.07"/><line x1="14.83" y1="9.17" x2="19.07" y2="4.93"/><line x1="4.93" y1="19.07" x2="9.17" y2="14.83"/>',
 ];
 
-// One flat list of cards, so the page never has a lonely card sitting in a section of its own.
-// tone = the card's accent colour, tag = the small label on top.
+// $cards holds only the featured Membership banner.
+// $programs holds one card per open program; they sit under a single "Open programs"
+// heading, so the cards themselves carry no tag.
 // Reimbursement and internet support are not cards: they live in the "Looking for support?" tile
 // of the help strip further down (see the markup), shown only while each is switched on.
 $cards = [];
+$programs = [];
 
 if ($membershipOpen) {
     $cards[] = [
-        'featured' => true, 'tone' => '#97161b', 'tag' => 'Membership', 'icon' => 'people',
+        'tone' => '#97161b', 'tag' => 'Membership', 'icon' => 'people',
         'title' => 'Become a DCW member',
         'desc'  => 'Join Deoband Community Wikimedia or one of our clubs, or renew your existing membership.',
         'cta'   => 'Join or renew', 'href' => '/membership',
@@ -109,8 +110,8 @@ foreach ($activeForms as $form) {
     // can never cut a tag in half or leave raw wikitext
     // punctuation ('' / == / : / []) in the card blurb.
     $desc = $form['description'] ? MiniWikiText::stripToPlainText($form['description']) : 'Open for applications now.';
-    $cards[] = [
-        'featured' => false, 'tone' => '#106b9a', 'tag' => 'Open programs', 'icon' => 'doc',
+    $programs[] = [
+        'tone'  => '#106b9a', 'icon' => 'doc',
         'title' => $title,
         'desc'  => mb_strimwidth($desc, 0, 120, '…'),
         'cta'   => 'Apply now', 'href' => '/' . $form['form_type'],
@@ -205,6 +206,14 @@ foreach ($activeForms as $form) {
         .prog .go span { transition: transform .15s; }
         .prog:hover .go span { transform: translateX(4px); }
 
+        /* One heading above the group of program cards (instead of a tag on every card) */
+        .section-title {
+            margin: 30px 0 16px; text-align: center; font-size: 13px; letter-spacing: .12em;
+            text-transform: uppercase; color: var(--muted); font-weight: 700;
+        }
+        /* With no Membership banner above it, the heading sits on the blue hero edge */
+        .section-title.first { margin-top: 0; color: #fff; }
+
         /* The membership card is the featured one: a full-width banner, as tall as its content */
         .prog.featured {
             flex: 1 1 100%; max-width: 100%; color: #fff; border: none;
@@ -218,7 +227,7 @@ foreach ($activeForms as $form) {
             background: linear-gradient(135deg, var(--accent) 0%, #b3262c 55%, #c2410c 140%);
         }
         .prog.featured::before { display: none; }
-        .prog.featured .tag   { grid-area: tag; margin: 0 0 6px; color: #fff; background: rgba(255,255,255,.2); }
+        .prog.featured .tag   { grid-area: tag; justify-self: start; margin: 0 0 6px; color: #fff; background: rgba(255,255,255,.2); }
         .prog.featured .tick  { grid-area: tick; align-self: center; margin: 0; width: 56px; height: 56px; background: rgba(255,255,255,.2); }
         .prog.featured .tick svg { width: 28px; height: 28px; stroke: #fff; }
         .prog.featured h3     { grid-area: title; margin: 0 0 4px; font-size: 24px; }
@@ -304,15 +313,17 @@ foreach ($activeForms as $form) {
     </header>
 
     <main class="wrap cards-wrap">
-        <?php if (empty($cards)): ?>
+        <?php if (empty($cards) && empty($programs)): ?>
             <div class="empty">
                 <h3>No open programs right now</h3>
                 <p>There are no forms accepting submissions at the moment. Please check back soon — new opportunities are added here as they open.</p>
             </div>
-        <?php else: ?>
+        <?php endif; ?>
+
+        <?php if (!empty($cards)): ?>
             <div class="grid">
                 <?php foreach ($cards as $c): ?>
-                    <a class="prog<?= !empty($c['featured']) ? ' featured' : '' ?>" href="<?= htmlspecialchars($c['href']) ?>" style="--tone: <?= htmlspecialchars($c['tone']) ?>;">
+                    <a class="prog featured" href="<?= htmlspecialchars($c['href']) ?>" style="--tone: <?= htmlspecialchars($c['tone']) ?>;">
                         <span class="tag"><?= htmlspecialchars($c['tag']) ?></span>
                         <span class="tick">
                             <svg viewBox="0 0 24 24" aria-hidden="true"><?= $icons[$c['icon']] ?></svg>
@@ -320,6 +331,22 @@ foreach ($activeForms as $form) {
                         <h3><?= htmlspecialchars($c['title']) ?></h3>
                         <p><?= htmlspecialchars($c['desc']) ?></p>
                         <span class="go"><?= htmlspecialchars($c['cta']) ?> <span aria-hidden="true">→</span></span>
+                    </a>
+                <?php endforeach; ?>
+            </div>
+        <?php endif; ?>
+
+        <?php if (!empty($programs)): ?>
+            <h2 class="section-title<?= empty($cards) ? ' first' : '' ?>">Open programs</h2>
+            <div class="grid">
+                <?php foreach ($programs as $p): ?>
+                    <a class="prog" href="<?= htmlspecialchars($p['href']) ?>" style="--tone: <?= htmlspecialchars($p['tone']) ?>;">
+                        <span class="tick">
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><?= $icons[$p['icon']] ?></svg>
+                        </span>
+                        <h3><?= htmlspecialchars($p['title']) ?></h3>
+                        <p><?= htmlspecialchars($p['desc']) ?></p>
+                        <span class="go"><?= htmlspecialchars($p['cta']) ?> <span aria-hidden="true">→</span></span>
                     </a>
                 <?php endforeach; ?>
             </div>
