@@ -24,6 +24,7 @@
  */
 require_once __DIR__ . '/../includes/init.php';
 require_once __DIR__ . '/../includes/app_log.php';
+require_once __DIR__ . '/../includes/engage_page.php';
 require_once __DIR__ . '/../models/ApplicationModel.php';
 require_once __DIR__ . '/../models/ReimbursementModel.php';
 require_once __DIR__ . '/../models/InternetSupportModel.php';
@@ -136,123 +137,108 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 }
+
+// Tracking is public; a signed-in member just gets their name in the top bar.
+$member = null;
+try {
+    require_once __DIR__ . '/../includes/member_session.php';
+    $member = MemberSession::current();
+} catch (Throwable $ex) {
+    $member = null;
+}
+
+engage_header([
+    'title'   => 'Track your request',
+    'heading' => 'Track your request',
+    'kicker'  => 'Status check',
+    'lead'    => 'Application IDs start with DCW-, reimbursement IDs with RB- and internet support IDs with IS-.',
+    'member'  => $member,
+    'crumbs'  => [['Home', '/'], ['Track your request']],
+]);
+$e = fn($s) => htmlspecialchars((string) $s);
 ?>
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Track Your Application - DCW Engage</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/assets/css/forms.css?v=2">
-</head>
-<body>
-    <div class="container">
-        <h1>Track Your Application, Reimbursement or Internet Support</h1>
-        <p style="margin-top:-20px; color:#64748b; font-size:14.5px;">
-            Enter the tracking ID you were given, along with the email address you used, to check the current status.
-            Application IDs start with <strong>DCW-</strong>, reimbursement IDs with <strong>RB-</strong>
-            and internet support IDs with <strong>IS-</strong>.
-        </p>
+<div class="fcard">
+    <?php if ($error): ?><div class="alert error"><strong>Notice:</strong> <?= $e($error) ?></div><?php endif; ?>
+    <?php if ($uploadMessage): ?><div class="alert ok"><?= $e($uploadMessage) ?></div><?php endif; ?>
 
-        <?php if ($error): ?>
-            <div class="alert-error"><strong>Notice:</strong> <?= htmlspecialchars($error) ?></div>
-        <?php endif; ?>
+    <?php if ($application): ?>
+        <div class="result">
+            <h3><?= $e($application['form_title'] ?: 'Application') ?></h3>
+            Tracking ID: <code><?= $e($application['tracking_id']) ?></code><br>
+            Status: <strong><?= $e($application['status']) ?></strong><br>
+            Submitted: <?= $e(date('F j, Y', strtotime($application['created_at']))) ?>
+        </div>
+    <?php endif; ?>
 
-        <?php if ($uploadMessage): ?>
-            <div class="alert-success"><?= htmlspecialchars($uploadMessage) ?></div>
-        <?php endif; ?>
-
-        <?php if ($application): ?>
-            <div class="alert-success">
-                <strong><?= htmlspecialchars($application['form_title'] ?: 'Application') ?></strong><br>
-                Tracking ID: <?= htmlspecialchars($application['tracking_id']) ?><br>
-                Status: <strong><?= htmlspecialchars($application['status']) ?></strong><br>
-                Submitted: <?= htmlspecialchars(date('F j, Y', strtotime($application['created_at']))) ?>
-            </div>
-        <?php endif; ?>
-
-        <?php if ($reimbursement): ?>
-            <div class="alert-success">
-                <strong>Reimbursement — <?= htmlspecialchars($reimbursement['event_name']) ?></strong><br>
-                Tracking ID: <?= htmlspecialchars($reimbursement['tracking_id']) ?><br>
-                Amount: ₹<?= number_format($reimbursement['total_amount_paise'] / 100, 2) ?><br>
-                Status: <strong><?= htmlspecialchars($reimbursement['status']) ?></strong><br>
-                <?php if ($reimbursement['status'] === 'Paid'): ?>
-                    <?php if (!empty($reimbursement['payment_reference'])): ?>
-                        Transaction reference: <strong><?= htmlspecialchars($reimbursement['payment_reference']) ?></strong><br>
-                    <?php endif; ?>
-                    <?php if (!empty($reimbursement['paid_at'])): ?>
-                        Paid on: <?= htmlspecialchars(date('F j, Y', strtotime($reimbursement['paid_at']))) ?><br>
-                    <?php endif; ?>
-                <?php endif; ?>
-                <?php if ($reimbursement['status'] === 'Rejected' && !empty($reimbursement['admin_notes'])): ?>
-                    Reviewer notes: <?= nl2br(htmlspecialchars($reimbursement['admin_notes'])) ?><br>
-                <?php endif; ?>
-                Submitted: <?= htmlspecialchars(date('F j, Y', strtotime($reimbursement['created_at']))) ?>
-            </div>
-        <?php endif; ?>
-
-        <?php if ($internet): ?>
-            <div class="alert-success">
-                <strong>Internet support — <?= htmlspecialchars($internet['operator']) ?>, <?= htmlspecialchars($internet['package_name']) ?></strong><br>
-                Tracking ID: <?= htmlspecialchars($internet['tracking_id']) ?><br>
-                Amount requested: ₹<?= number_format($internet['package_price_paise'] / 100, 2) ?><br>
-                Status: <strong><?= htmlspecialchars($internet['status']) ?></strong><br>
-                <?php if ($internet['status'] === 'Rejected' && !empty($internet['admin_notes'])): ?>
-                    Reviewer notes: <?= nl2br(htmlspecialchars($internet['admin_notes'])) ?><br>
-                <?php endif; ?>
-                <?php if (!empty($internet['recharge_reference']) && in_array($internet['status'], ['Awaiting Receipt', 'Receipt Submitted', 'Closed'], true)): ?>
-                    Recharge reference: <strong><?= htmlspecialchars($internet['recharge_reference']) ?></strong><br>
-                <?php endif; ?>
-                Submitted: <?= htmlspecialchars(date('F j, Y', strtotime($internet['created_at']))) ?>
-            </div>
-
-            <?php if ($internet['status'] === 'Awaiting Receipt'): ?>
-                <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:20px; margin-bottom:20px;">
-                    <h3 style="margin-top:0;">Upload your recharge receipt</h3>
-                    <?php if (!empty($internet['finance_notes'])): ?>
-                        <div class="alert-error" style="margin-bottom:15px;">
-                            <strong>Your last receipt wasn't accepted:</strong><br>
-                            <?= nl2br(htmlspecialchars($internet['finance_notes'])) ?>
-                        </div>
-                    <?php endif; ?>
-                    <p style="font-size:14px; color:#475569; margin-top:0;">
-                        Your number has been recharged. Please upload the operator's receipt or confirmation
-                        (PDF, JPG or PNG, up to 10 MB) so we can close the request.
-                    </p>
-                    <form method="POST" enctype="multipart/form-data">
-                        <?= CSRF::getInputField() ?>
-                        <input type="hidden" name="action" value="upload_receipt">
-                        <input type="hidden" name="tracking_id" value="<?= htmlspecialchars($internet['tracking_id']) ?>">
-                        <input type="hidden" name="email" value="<?= htmlspecialchars($email) ?>">
-                        <div class="form-group">
-                            <input type="file" name="receipt" accept=".pdf,.jpg,.jpeg,.png" required>
-                        </div>
-                        <button type="submit">Upload receipt</button>
-                    </form>
-                </div>
-            <?php elseif ($internet['status'] === 'Receipt Submitted'): ?>
-                <p style="font-size:14px; color:#475569;">Your receipt is with our finance team. Nothing more is needed from you.</p>
+    <?php if ($reimbursement): ?>
+        <div class="result">
+            <h3>Reimbursement — <?= $e($reimbursement['event_name']) ?></h3>
+            Tracking ID: <code><?= $e($reimbursement['tracking_id']) ?></code><br>
+            Amount: ₹<?= number_format($reimbursement['total_amount_paise'] / 100, 2) ?><br>
+            Status: <strong><?= $e($reimbursement['status']) ?></strong><br>
+            <?php if ($reimbursement['status'] === 'Paid'): ?>
+                <?php if (!empty($reimbursement['payment_reference'])): ?>Transaction reference: <strong><?= $e($reimbursement['payment_reference']) ?></strong><br><?php endif; ?>
+                <?php if (!empty($reimbursement['paid_at'])): ?>Paid on: <?= $e(date('F j, Y', strtotime($reimbursement['paid_at']))) ?><br><?php endif; ?>
             <?php endif; ?>
+            <?php if ($reimbursement['status'] === 'Rejected' && !empty($reimbursement['admin_notes'])): ?>
+                Reviewer notes: <?= nl2br($e($reimbursement['admin_notes'])) ?><br>
+            <?php endif; ?>
+            Submitted: <?= $e(date('F j, Y', strtotime($reimbursement['created_at']))) ?>
+        </div>
+    <?php endif; ?>
+
+    <?php if ($internet): ?>
+        <div class="result">
+            <h3>Internet support — <?= $e($internet['operator']) ?>, <?= $e($internet['package_name']) ?></h3>
+            Tracking ID: <code><?= $e($internet['tracking_id']) ?></code><br>
+            Amount requested: ₹<?= number_format($internet['package_price_paise'] / 100, 2) ?><br>
+            Status: <strong><?= $e($internet['status']) ?></strong><br>
+            <?php if ($internet['status'] === 'Rejected' && !empty($internet['admin_notes'])): ?>
+                Reviewer notes: <?= nl2br($e($internet['admin_notes'])) ?><br>
+            <?php endif; ?>
+            <?php if (!empty($internet['recharge_reference']) && in_array($internet['status'], ['Awaiting Receipt', 'Receipt Submitted', 'Closed'], true)): ?>
+                Recharge reference: <strong><?= $e($internet['recharge_reference']) ?></strong><br>
+            <?php endif; ?>
+            Submitted: <?= $e(date('F j, Y', strtotime($internet['created_at']))) ?>
+        </div>
+
+        <?php if ($internet['status'] === 'Awaiting Receipt'): ?>
+            <fieldset class="group" style="padding-bottom:18px;">
+                <legend>Upload your recharge receipt</legend>
+                <?php if (!empty($internet['finance_notes'])): ?>
+                    <div class="alert error">
+                        <strong>Your last receipt wasn't accepted:</strong><br><?= nl2br($e($internet['finance_notes'])) ?>
+                    </div>
+                <?php endif; ?>
+                <p style="font-size:14px; color:var(--muted); margin-top:0;">
+                    Your number has been recharged. Please upload the operator's receipt or confirmation
+                    (PDF, JPG or PNG, up to 10 MB) so we can close the request.
+                </p>
+                <form method="POST" enctype="multipart/form-data">
+                    <?= CSRF::getInputField() ?>
+                    <input type="hidden" name="action" value="upload_receipt">
+                    <input type="hidden" name="tracking_id" value="<?= $e($internet['tracking_id']) ?>">
+                    <input type="hidden" name="email" value="<?= $e($email) ?>">
+                    <div class="field"><input type="file" name="receipt" accept=".pdf,.jpg,.jpeg,.png" required></div>
+                    <button type="submit">Upload receipt</button>
+                </form>
+            </fieldset>
+        <?php elseif ($internet['status'] === 'Receipt Submitted'): ?>
+            <p style="font-size:14px; color:var(--muted);">Your receipt is with our finance team. Nothing more is needed from you.</p>
         <?php endif; ?>
+    <?php endif; ?>
 
-        <form method="POST">
-            <?= CSRF::getInputField() ?>
-            <div class="form-group">
-                <label>Tracking ID</label>
-                <input type="text" name="tracking_id" placeholder="DCW-XXXXXXXX, RB-XXXXXXXX or IS-XXXXXXXX" value="<?= htmlspecialchars($trackingId) ?>" required>
-            </div>
-            <div class="form-group">
-                <label>Email Address</label>
-                <input type="email" name="email" value="<?= htmlspecialchars($email) ?>" required>
-            </div>
-            <button type="submit">Check Status</button>
-        </form>
-
-        <p style="text-align:center; margin-top:20px;">
-            <a href="/" style="color:var(--primary-color); text-decoration:none; font-size:14px;">&larr; Back to programs</a>
-        </p>
-    </div>
-</body>
-</html>
+    <form method="POST">
+        <?= CSRF::getInputField() ?>
+        <div class="field">
+            <label>Tracking ID <span class="req-star">*</span></label>
+            <input type="text" name="tracking_id" placeholder="DCW-XXXXXXXX, RB-XXXXXXXX or IS-XXXXXXXX" value="<?= $e($trackingId) ?>" required>
+        </div>
+        <div class="field">
+            <label>Email address <span class="req-star">*</span></label>
+            <input type="email" name="email" value="<?= $e($email) ?>" required>
+        </div>
+        <button type="submit">Check status</button>
+    </form>
+</div>
+<?php engage_footer(); ?>
