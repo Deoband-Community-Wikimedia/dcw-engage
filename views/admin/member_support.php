@@ -1,133 +1,261 @@
 <?php
 require_once __DIR__ . '/../../includes/init.php';
 require_once __DIR__ . '/../../includes/auth.php';
-require_once __DIR__ . '/../../includes/audit.php';
 require_once __DIR__ . '/../../includes/require_role.php';
-require_once __DIR__ . '/../../includes/engage_staff.php';
+require_once __DIR__ . '/../../includes/audit.php';
+require_once __DIR__ . '/../../includes/engage_page.php';
+require_once __DIR__ . '/../../includes/member_support_helpers.php';
 require_once __DIR__ . '/../../models/MemberTicketModel.php';
 
-// Nobody else, by design: complaints are confidential.
-requireRole(['member_support', 'owner']);
+/**
+ * DCW Engage - DCW Support queue for member complaints, suggestions and questions
+ * (/admin/member-support, and ?id=N for one conversation).
+ *
+ * Role check: DCW Support or owner. DCW Support never sees conversations flagged about_staff;
+ * that is enforced in MemberTicketModel's queries, so a guessed ID returns "not found".
+ * The audit log records who did what, never what was written.
+ */
+requireRole([MemberTicketModel::SUPPORT_ROLE, 'owner']);
 
-// Owners also see tickets about team members; DCW Support never does.
-$isOwner = Auth::isOwner();
+$isOwner    = Auth::isOwner();
+$staffEmail = strtolower(currentAdminIdentifier());
+$model      = new MemberTicketModel();
+$self       = '/admin/member-support';
 
-$model = new MemberTicketModel();
-$h = fn($v) => htmlspecialchars((string) $v);
-$id = (int) ($_GET['id'] ?? $_POST['id'] ?? 0);
-$ticket = $id ? $model->getForStaff($id, $isOwner) : false;
-if ($id && !$ticket) { http_response_code(404); die('Not found.'); }   // also what DCW Support gets for owner-only tickets
-$notice = $error = '';
+// ---------------------------------------------------------------- actions (POST, then redirect)
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $pid = (int) ($_POST['id'] ?? 0);
+    $back = $self . ($pid ? '?id=' . $pid : '');
 
-if ($ticket && $_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (!CSRF::validate($_POST['csrf_token'] ?? '')) die('Invalid CSRF token.');
-    if (!CSRF::consumeSubmitToken($_POST['submit_token'] ?? '')) { header('Location: /admin/member-support?id=' . $id); exit; }
-    $act = $_POST['action'] ?? '';
-    $body = trim((string) ($_POST['body'] ?? ''));
-
-    if ($act === 'reply' || $act === 'note') {
-        if ($body === '') $error = 'Write something first.';
-        else {
-            $model->staffReply($ticket, Auth::email(), $body, $act === 'note');
-            if ($act === 'reply') ticket_notify($ticket, 'reply');
-            $notice = $act === 'reply' ? 'Reply sent.' : 'Note saved. The member cannot see it.';
-        }
-    } elseif ($act === 'status') {
-        $new = (string) ($_POST['status'] ?? '');
-        if ($model->setStatus($ticket, $new)) {
-            AuditLog::record('ticket.status', Auth::id(), Auth::email(), $ticket['member_email'], $ticket['tracking_id'] . ' -> ' . $new);
-            if ($ticket['type'] === 'suggestion' || MemberTicketModel::isClosed($new)) ticket_notify($ticket, 'status');
-            $notice = 'Status updated.';
-        }
-    } elseif ($act === 'assign') {
-        $model->assign($id, (string) ($_POST['assignee'] ?? ''));
-        AuditLog::record('ticket.assigned', Auth::id(), Auth::email(), null, $ticket['tracking_id'] . ' -> ' . (($_POST['assignee'] ?? '') ?: 'nobody'));
-        $notice = 'Assignment saved.';
+    if (!ms_csrf_valid()) {
+        ms_flash('error', 'Your session expired. Please try again.');
+        header('Location: ' . $back); exit;
     }
-    $ticket = $model->getForStaff($id, $isOwner);
+    // A double click fires two valid requests. Only the first gets through; the duplicate is
+    // dropped before anything is saved or emailed, with no flash of its own.
+    if (!ms_submit_once()) {
+        header('Location: ' . $back); exit;
+    }
+
+    $ticket = $model->getForStaff($pid, $isOwner);
+    if (!$ticket) {
+        ms_flash('error', 'Conversation not found.');
+        header('Location: ' . $self); exit;
+    }
+    $tracking = $ticket['tracking_id'];
+
+    switch ((string) ($_POST['action'] ?? '')) {
+        case 'reply':
+            $note = !empty($_POST['internal']);
+            if ($model->staffReply($ticket, $staffEmail, (string) ($_POST['body'] ?? ''), $note)) {
+                AuditLog::record($note ? 'support.note_added' : 'support.replied', Auth::id(), Auth::email(), $tracking, null);
+                if (!$note) ticket_notify($pid, 'reply');
+                ms_flash('ok', $note ? 'Internal note saved. The member cannot see it.' : 'Reply sent. The member has been emailed.');
+            } else {
+                ms_flash('error', 'Write a message first (up to ' . MemberTicketModel::MAX_BODY . ' characters).');
+            }
+            break;
+
+        case 'status':
+            $new = (string) ($_POST['status'] ?? '');
+            if ($new === $ticket['status']) {
+                ms_flash('ok', 'Status unchanged.');
+            } elseif ($model->setStatus($ticket, $new)) {
+                AuditLog::record('support.status_changed', Auth::id(), Auth::email(), $tracking, $ticket['status'] . ' -> ' . $new);
+                ticket_notify($pid, 'status');
+                ms_flash('ok', 'Status changed to ' . $new . '. The member has been emailed.');
+            } else {
+                ms_flash('error', 'That status is not valid for this conversation.');
+            }
+            break;
+
+        case 'assign':
+            $to = (string) ($_POST['assignee'] ?? '');
+            if ($model->assign($ticket, $to)) {
+                AuditLog::record('support.assigned', Auth::id(), Auth::email(), $tracking, $to !== '' ? 'Assigned to ' . strtolower($to) : 'Unassigned');
+                ms_flash('ok', 'Assignment saved.');
+            } else {
+                ms_flash('error', 'That person cannot be assigned to this conversation.');
+            }
+            break;
+    }
+    header('Location: ' . $self . '?id=' . $pid); exit;
 }
 
-$fmt = fn($utc) => (new DateTimeImmutable($utc, new DateTimeZone('UTC')))->setTimezone(new DateTimeZone('Asia/Kolkata'))->format('j M Y, g:i a');
-$age = function ($utc) {
-    $d = (int) floor((time() - strtotime($utc . ' UTC')) / 86400);
-    return $d <= 0 ? 'today' : $d . 'd';
-};
-// Anonymous suggestions: DCW Support sees no name or email. Owners can still trace abuse.
-$who = fn($t) => ($t['hide_name'] && !$isOwner) ? 'Anonymous member' : ($t['member_name'] ?: $t['member_id']);
+$id = isset($_GET['id']) ? (int) $_GET['id'] : 0;
 
-engage_open('Member support', 'Member support',
-    'Complaints, suggestions and questions from members. Complaints are visible only to DCW Support and owners.',
-    $ticket ? [['Workspace', '/admin/dashboard'], ['Queue', '/admin/member-support'], [$ticket['tracking_id'], null]]
-            : [['Workspace', '/admin/dashboard'], ['Member support', null]], 'wide');
-?>
-<?php if ($notice): ?><div class="alert ok"><?= $h($notice) ?></div><?php endif; ?>
-<?php if ($error): ?><div class="alert error"><?= $h($error) ?></div><?php endif; ?>
+// ---------------------------------------------------------------- one conversation
+if ($id > 0) {
+    $ticket = $model->getForStaff($id, $isOwner);
+    if (!$ticket) {
+        ms_flash('error', 'Conversation not found.');
+        header('Location: ' . $self); exit;
+    }
+    $messages  = $model->messagesForStaff($ticket);
+    $assignees = $model->assignees(!empty($ticket['about_staff']));
+    $label     = MemberTicketModel::LABELS[$ticket['type']] ?? 'Conversation';
+    $closed    = MemberTicketModel::isClosed((string) $ticket['status']);
+    $from      = !empty($ticket['hide_name'])
+        ? 'Name hidden by the member'
+        : trim($ticket['member_name'] . ' (' . $ticket['member_id'] . ')');
 
-<?php if ($ticket): $thread = $model->messagesForStaff((int) $ticket['id']); ?>
-    <div class="qcard" style="--tone: <?= $ticket['type'] === 'complaint' ? '#97161b' : ($ticket['type'] === 'suggestion' ? '#b45309' : '#106b9a') ?>;">
-        <div class="qhead"><h3><?= $h($ticket['subject']) ?></h3><code><?= $h($ticket['tracking_id']) ?></code></div>
-        <p class="qmeta"><?= $h(MemberTicketModel::LABELS[$ticket['type']]) ?> · from <strong><?= $h($who($ticket)) ?></strong>
-            <?= (!$ticket['hide_name'] || $isOwner) ? '· ' . $h($ticket['member_id']) . ' · ' . $h($ticket['member_email']) : '' ?>
-            · opened <?= $h($fmt($ticket['created_at'])) ?></p>
-        <?php if ($ticket['about_staff']): ?><p class="alert-note">About a team member. Visible to owners only.</p><?php endif; ?>
-
-        <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px;">
-            <form method="POST" class="rowform"><?= CSRF::getInputField() ?><?= CSRF::getSubmitField() ?>
-                <input type="hidden" name="id" value="<?= (int) $ticket['id'] ?>"><input type="hidden" name="action" value="status">
-                <select name="status"><?php foreach (MemberTicketModel::STATUSES[$ticket['type']] as $s): ?>
-                    <option <?= $s === $ticket['status'] ? 'selected' : '' ?>><?= $h($s) ?></option><?php endforeach; ?></select>
-                <button class="btn-ghost">Set status</button>
-            </form>
-            <form method="POST" class="rowform"><?= CSRF::getInputField() ?><?= CSRF::getSubmitField() ?>
-                <input type="hidden" name="id" value="<?= (int) $ticket['id'] ?>"><input type="hidden" name="action" value="assign">
-                <select name="assignee"><option value="">Unassigned</option>
-                    <?php foreach ($model->assignees() as $a): ?><option <?= $a === $ticket['assigned_to'] ? 'selected' : '' ?>><?= $h($a) ?></option><?php endforeach; ?></select>
-                <button class="btn-ghost">Assign</button>
-            </form>
-        </div>
-
-        <?php foreach ($thread as $m):
-            $style = $m['sender'] === 'note' ? 'background:#fffbeb;border-color:#fde68a;' : ($m['sender'] === 'staff' ? 'background:#eff6ff;border-color:#bfdbfe;' : '');
-            $name = $m['sender'] === 'member' ? $who($ticket) : ($m['sender'] === 'note' ? 'Internal note · ' . $m['author'] : 'Reply · ' . $m['author']); ?>
-            <div class="quote" style="<?= $style ?>">
-                <div class="qmeta" style="margin:0 0 4px;"><strong><?= $h($name) ?></strong> · <?= $h($fmt($m['created_at'])) ?>
-                    <?= $m['sender'] === 'staff' ? ' · the member sees "DCW Support"' : '' ?></div>
-                <?= nl2br($h($m['body'])) ?>
+    engage_header([
+        'title'   => $ticket['tracking_id'],
+        'heading' => (string) $ticket['subject'],
+        'kicker'  => MemberTicketModel::SUPPORT_LABEL . ' · ' . $label,
+        'lead'    => $ticket['tracking_id'] . ' · started ' . ms_date($ticket['created_at']),
+        'wide'    => true,
+        'crumbs'  => [['Workspace', '/admin/dashboard'], [MemberTicketModel::SUPPORT_LABEL, $self], [$ticket['tracking_id']]],
+    ]);
+    echo ms_styles();
+    echo ms_flash_html();
+    ?>
+        <section class="panel">
+            <div class="panel-head">
+                <span class="pill" style="--tone: <?= ms_e(ms_tone((string) $ticket['status'])) ?>;"><?= ms_e($ticket['status']) ?></span>
+                <?php if (!empty($ticket['about_staff'])): ?><span class="ms-tag">About the team · owners only</span><?php endif; ?>
+                <p class="ms-meta">From: <?= ms_e($from) ?> · Assigned to: <?= ms_e($ticket['assigned_to'] ?: 'nobody') ?> · Last updated <?= ms_e(ms_date($ticket['updated_at'], true)) ?></p>
             </div>
-        <?php endforeach; ?>
 
-        <form method="POST" class="qform" style="margin-top:14px;"><?= CSRF::getInputField() ?><?= CSRF::getSubmitField() ?>
-            <input type="hidden" name="id" value="<?= (int) $ticket['id'] ?>">
-            <textarea name="body" rows="3" placeholder="Reply to the member, or save as an internal note."></textarea>
-            <button type="submit" name="action" value="reply" class="btn-ok">Send reply</button>
-            <button type="submit" name="action" value="note" class="btn-ghost">Save internal note</button>
-        </form>
-    </div>
+            <div class="ms-thread">
+                <?php foreach ($messages as $m):
+                    $cls = $m['sender'] === 'note' ? ' note' : ($m['sender'] === 'staff' ? ' mine' : '');
+                    $who = $m['sender'] === 'member' ? ($m['author'] !== '' ? 'Member ' . $m['author'] : 'Member')
+                         : ($m['sender'] === 'note' ? 'Internal note · ' . $m['author'] : MemberTicketModel::SUPPORT_LABEL . ' · ' . $m['author']);
+                ?>
+                    <div class="ms-msg<?= $cls ?>">
+                        <small><?= ms_e($who) ?> · <?= ms_e(ms_date($m['created_at'], true)) ?></small>
+                        <?= ms_e($m['body']) ?>
+                    </div>
+                <?php endforeach; ?>
+            </div>
+        </section>
 
-<?php else:
-    $fType = (string) ($_GET['type'] ?? ''); $fStatus = (string) ($_GET['status'] ?? 'open'); $fAssignee = (string) ($_GET['assignee'] ?? '');
-    $rows = $model->listForStaff($isOwner, $fType, $fStatus, $fAssignee); ?>
-    <form method="GET" class="box" style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:14px 18px;">
-        <select name="type"><option value="">All types</option>
-            <?php foreach (MemberTicketModel::LABELS as $k => $l): ?><option value="<?= $k ?>" <?= $k === $fType ? 'selected' : '' ?>><?= $h($l) ?></option><?php endforeach; ?></select>
-        <select name="status"><option value="open" <?= $fStatus === 'open' ? 'selected' : '' ?>>Open only</option><option value="" <?= $fStatus === '' ? 'selected' : '' ?>>All statuses</option></select>
-        <select name="assignee"><option value="">Anyone</option><option value="none" <?= $fAssignee === 'none' ? 'selected' : '' ?>>Unassigned</option>
-            <?php foreach ($model->assignees() as $a): ?><option <?= $a === $fAssignee ? 'selected' : '' ?>><?= $h($a) ?></option><?php endforeach; ?></select>
-        <button class="btn-ghost">Filter</button>
-    </form>
-    <div class="tbl-wrap"><table class="tbl">
-        <thead><tr><th>Type</th><th>Subject</th><th>From</th><th>Status</th><th>Assigned</th><th>Last activity</th></tr></thead><tbody>
-        <?php foreach ($rows as $r): $waiting = $r['last_sender'] === 'member' && !MemberTicketModel::isClosed($r['status']); ?>
-            <tr>
-                <td><?= $h(MemberTicketModel::LABELS[$r['type']]) ?><?= $r['about_staff'] ? ' <span class="pill" style="--tone:#97161b;">Owner only</span>' : '' ?></td>
-                <td><a href="?id=<?= (int) $r['id'] ?>" style="color:var(--primary);font-weight:700;text-decoration:none;"><?= $h($r['subject']) ?></a>
-                    <span class="sub"><?= $h($r['tracking_id']) ?></span></td>
-                <td><?= $h($who($r)) ?></td>
-                <td><?= $h($r['status']) ?><?= $waiting ? ' <span class="pill" style="--tone:#b45309;">Needs reply</span>' : '' ?></td>
-                <td><?= $h($r['assigned_to'] ?: '—') ?></td>
-                <td><?= $h($age($r['updated_at'])) ?></td>
-            </tr>
-        <?php endforeach; if (!$rows): ?><tr><td colspan="6" style="text-align:center;color:var(--muted);padding:26px;">Nothing here.</td></tr><?php endif; ?>
-        </tbody></table></div>
-<?php endif; ?>
-<?php engage_close(); ?>
+        <section class="panel">
+            <div class="panel-head">
+                <h2>Reply</h2>
+                <p>The member gets an email that something is waiting. The email never contains your message.</p>
+            </div>
+            <form method="post" action="<?= ms_e($self) ?>" class="ms-form" autocomplete="off">
+                <?= ms_csrf_field() ?>
+                <input type="hidden" name="id" value="<?= (int) $ticket['id'] ?>">
+                <input type="hidden" name="action" value="reply">
+                <textarea name="body" maxlength="<?= MemberTicketModel::MAX_BODY ?>" required aria-label="Your reply"></textarea>
+                <label class="ms-check" for="internal">
+                    <input type="checkbox" id="internal" name="internal" value="1">
+                    <span>Internal note only. The member will not see it and will not be emailed.</span>
+                </label>
+                <div class="ms-actions"><button type="submit" class="btn-pill">Send</button></div>
+            </form>
+        </section>
+
+        <section class="panel">
+            <div class="panel-head"><h2>Manage</h2></div>
+            <form method="post" action="<?= ms_e($self) ?>" class="ms-form ms-filters">
+                <?= ms_csrf_field() ?>
+                <input type="hidden" name="id" value="<?= (int) $ticket['id'] ?>">
+                <input type="hidden" name="action" value="status">
+                <label for="status">Status</label>
+                <select id="status" name="status">
+                    <?php foreach (MemberTicketModel::STATUSES[$ticket['type']] as $s): ?>
+                        <option value="<?= ms_e($s) ?>"<?= $s === $ticket['status'] ? ' selected' : '' ?>><?= ms_e($s) ?></option>
+                    <?php endforeach; ?>
+                </select>
+                <button type="submit" class="btn-pill">Update status</button>
+            </form>
+
+            <form method="post" action="<?= ms_e($self) ?>" class="ms-form ms-filters">
+                <?= ms_csrf_field() ?>
+                <input type="hidden" name="id" value="<?= (int) $ticket['id'] ?>">
+                <input type="hidden" name="action" value="assign">
+                <label for="assignee">Assigned to</label>
+                <select id="assignee" name="assignee">
+                    <option value="">Nobody</option>
+                    <?php foreach ($assignees as $a): ?>
+                        <option value="<?= ms_e($a) ?>"<?= strtolower((string) $ticket['assigned_to']) === strtolower($a) ? ' selected' : '' ?>><?= ms_e($a) ?></option>
+                    <?php endforeach; ?>
+                </select>
+                <button type="submit" class="btn-pill">Assign</button>
+            </form>
+            <?php if ($closed): ?><p class="ms-meta">This conversation is closed. If the member writes again, a complaint or question reopens automatically.</p><?php endif; ?>
+        </section>
+    <?php
+    engage_footer();
+    exit;
+}
+
+// ---------------------------------------------------------------- the queue
+$fType     = (string) ($_GET['type'] ?? '');
+$fStatus   = (string) ($_GET['status'] ?? 'open');
+$fAssignee = (string) ($_GET['assignee'] ?? '');
+if (!isset(MemberTicketModel::LABELS[$fType])) $fType = '';
+$allStatuses = array_values(array_unique(array_merge(...array_values(MemberTicketModel::STATUSES))));
+if ($fStatus !== 'open' && $fStatus !== '' && !in_array($fStatus, $allStatuses, true)) $fStatus = 'open';
+$assignees = $model->assignees(false);
+if ($fAssignee !== 'none' && $fAssignee !== '' && !in_array($fAssignee, $assignees, true)) $fAssignee = '';
+
+$tickets = $model->listForStaff($isOwner, $fType, $fStatus, $fAssignee);
+
+engage_header([
+    'title'   => MemberTicketModel::SUPPORT_LABEL,
+    'heading' => MemberTicketModel::SUPPORT_LABEL,
+    'kicker'  => 'Organizer workspace',
+    'lead'    => 'Complaints, suggestions and questions from members. Oldest activity first.',
+    'wide'    => true,
+    'crumbs'  => [['Workspace', '/admin/dashboard'], [MemberTicketModel::SUPPORT_LABEL]],
+]);
+echo ms_styles();
+echo ms_flash_html();
+?>
+        <section class="panel">
+            <form method="get" action="<?= ms_e($self) ?>" class="ms-form ms-filters">
+                <select name="type" aria-label="Type">
+                    <option value="">All types</option>
+                    <?php foreach (MemberTicketModel::LABELS as $k => $l): ?>
+                        <option value="<?= ms_e($k) ?>"<?= $fType === $k ? ' selected' : '' ?>><?= ms_e($l) ?></option>
+                    <?php endforeach; ?>
+                </select>
+                <select name="status" aria-label="Status">
+                    <option value="open"<?= $fStatus === 'open' ? ' selected' : '' ?>>Open</option>
+                    <option value=""<?= $fStatus === '' ? ' selected' : '' ?>>Everything</option>
+                    <?php foreach ($allStatuses as $s): ?>
+                        <option value="<?= ms_e($s) ?>"<?= $fStatus === $s ? ' selected' : '' ?>><?= ms_e($s) ?></option>
+                    <?php endforeach; ?>
+                </select>
+                <select name="assignee" aria-label="Assigned to">
+                    <option value="">Anyone</option>
+                    <option value="none"<?= $fAssignee === 'none' ? ' selected' : '' ?>>Unassigned</option>
+                    <?php foreach ($assignees as $a): ?>
+                        <option value="<?= ms_e($a) ?>"<?= $fAssignee === $a ? ' selected' : '' ?>><?= ms_e($a) ?></option>
+                    <?php endforeach; ?>
+                </select>
+                <button type="submit" class="btn-pill">Filter</button>
+            </form>
+
+            <?php if (empty($tickets)): ?>
+                <div class="empty-note">Nothing here. Try a different filter.</div>
+            <?php else: ?>
+                <div class="ms-scroll">
+                <table class="ms-table">
+                    <thead><tr><th>Reference</th><th>Type</th><th>Subject</th><th>From</th><th>Status</th><th>Assigned</th><th>Updated</th></tr></thead>
+                    <tbody>
+                    <?php foreach ($tickets as $t):
+                        $waiting = $t['last_sender'] === 'member' && !MemberTicketModel::isClosed((string) $t['status']);
+                    ?>
+                        <tr class="<?= $waiting ? 'wait' : '' ?>">
+                            <td><a href="<?= ms_e($self) ?>?id=<?= (int) $t['id'] ?>"><?= ms_e($t['tracking_id']) ?></a></td>
+                            <td><?= ms_e(MemberTicketModel::LABELS[$t['type']] ?? $t['type']) ?><?= !empty($t['about_staff']) ? '<span class="ms-tag">Team</span>' : '' ?></td>
+                            <td><?= ms_e($t['subject']) ?><?= $waiting ? '<br><small style="color:#b45309;font-weight:600;">Waiting for a reply</small>' : '' ?></td>
+                            <td><?= !empty($t['hide_name']) ? '<em>Hidden</em>' : ms_e($t['member_name'] !== '' ? $t['member_name'] : $t['member_id']) ?></td>
+                            <td><span class="pill" style="--tone: <?= ms_e(ms_tone((string) $t['status'])) ?>;"><?= ms_e($t['status']) ?></span></td>
+                            <td><?= ms_e($t['assigned_to'] ?: '—') ?></td>
+                            <td><?= ms_e(ms_date($t['updated_at'], true)) ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+                </div>
+                <?php if (count($tickets) >= 300): ?><p class="ms-meta">Showing the first 300. Narrow the filter to see more.</p><?php endif; ?>
+            <?php endif; ?>
+        </section>
+<?php engage_footer(); ?>
