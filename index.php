@@ -70,6 +70,14 @@ if ($route === '/' || $route === '/index.php') {
 } elseif ($route === '/member/dashboard') {
     // Signed-in members only: the view calls MemberSession::requireLogin() itself.
     require __DIR__ . '/views/member/dashboard.php';
+
+// Member support conversations (complaints, suggestions, questions).
+// Signed-in members only; each view calls MemberSession::requireLogin().
+} elseif ($route === '/member/talk') {
+    require __DIR__ . '/views/member/ticket_new.php';
+} elseif ($route === '/member/talk/ticket') {
+    require __DIR__ . '/views/member/ticket.php';
+
 } elseif (preg_match('/^\/member\/set-password\/([a-f0-9]{64})$/', $route, $matches)) {
     global $memberSetToken;
     $memberSetToken = $matches[1];
@@ -85,6 +93,11 @@ if ($route === '/' || $route === '/index.php') {
 // Owner-only: which chapters each membership coordinator may see.
 } elseif ($route === '/admin/membership-access') {
     require __DIR__ . '/views/admin/membership_access.php';
+
+// DCW Support queue for member complaints, suggestions and questions.
+// Role check is inside the view: requireRole(['member_support', 'owner']).
+} elseif ($route === '/admin/member-support') {
+    require __DIR__ . '/views/admin/member_support.php';
 
 } elseif ($route === '/track') {
     // Public "check my application status" lookup (see #32) — a form's
