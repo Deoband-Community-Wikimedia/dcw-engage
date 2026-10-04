@@ -15,6 +15,12 @@ require_once __DIR__ . '/../includes/crypto.php';
  *   Awaiting Receipt --(applicant, via /track)--> Receipt Submitted
  *   Receipt Submitted --(finance)--> Closed | Awaiting Receipt (receipt bounced)
  *
+ * "Info Requested" sends the request back to the applicant AS A DRAFT: on
+ * /track they see the reviewer's question and their own editable answers
+ * (getDraftForApplicant()), correct them, add a note and resubmit in one
+ * step (resubmitDraft()). The phone number, pack and price are never shown
+ * or changed from there.
+ *
  * Same conventions as ReimbursementModel: every transition is a conditional
  * UPDATE that re-checks the current status and reports success via
  * rowCount() === 1, so a double click or two people acting at once can never
@@ -422,9 +428,13 @@ class InternetSupportModel {
     }
 
     /**
-     * Applicant answers via /track (tracking ID + email pair). Moves Info
-     * Requested -> Submitted so it returns to the reviewers' queue. Returns
-     * false if the pair doesn't match or the request isn't waiting on them.
+     * Applicant answers via /track (tracking ID + email pair) WITHOUT editing
+     * anything. Moves Info Requested -> Submitted so it returns to the
+     * reviewers' queue. Returns false if the pair doesn't match or the
+     * request isn't waiting on them.
+     *
+     * /track now uses resubmitDraft() instead, which also saves corrected
+     * answers. This stays for any caller that only wants to send a reply.
      *
      * @throws \InvalidArgumentException if the message is too short or long
      */
@@ -456,6 +466,168 @@ class InternetSupportModel {
             }
 
             $this->insertMessage($id, 'applicant', null, $message);
+            $this->db->commit();
+            return true;
+        } catch (\Throwable $e) {
+            if ($this->db->inTransaction()) {
+                $this->db->rollBack();
+            }
+            throw $e;
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Send-back-as-draft: the applicant edits their own answers
+    // ------------------------------------------------------------------
+
+    /**
+     * Same rules as createRequest() for the answers an applicant may edit.
+     * Phone, pack, price and operator are NOT editable here.
+     *
+     * @throws \InvalidArgumentException
+     * @return array normalised values, eligibility flags as 1/0
+     */
+    private function cleanEditableAnswers(array $in) {
+        $reason = trim((string) ($in['reason'] ?? ''));
+        $len = mb_strlen($reason);
+        if ($len < self::MIN_REASON_LENGTH) {
+            throw new \InvalidArgumentException('Please tell us a little more about why you need this.');
+        }
+        if ($len > self::MAX_REASON_LENGTH) {
+            throw new \InvalidArgumentException('Reason is too long (' . self::MAX_REASON_LENGTH . ' characters max).');
+        }
+
+        $wikiUser = trim(preg_replace('/\s+/', ' ', str_replace('_', ' ', (string) ($in['wikimedia_username'] ?? ''))));
+        $wikiUser = preg_replace('/^User:\s*/i', '', $wikiUser);
+        if ($wikiUser === '') {
+            throw new \InvalidArgumentException('Please enter your Wikimedia username.');
+        }
+        if (strlen($wikiUser) > 255 || preg_match('/[#<>\[\]|{}\/@]/', $wikiUser)) {
+            throw new \InvalidArgumentException('That doesn\'t look like a valid Wikimedia username. Enter the username only, without "User:" or a link.');
+        }
+
+        $yesNo = function ($key) use ($in) {
+            $v = $in[$key] ?? '';
+            return in_array($v, ['yes', 'no'], true) ? $v : null;
+        };
+        $edits80     = $yesNo('edits_80');
+        $attendedCH  = $yesNo('attended_ch');
+        $techContrib = $yesNo('tech_contributor');
+        if ($edits80 === null || $attendedCH === null || $techContrib === null) {
+            throw new \InvalidArgumentException('Please answer all the eligibility questions.');
+        }
+        if ($techContrib !== 'yes' && !($edits80 === 'yes' && $attendedCH === 'yes')) {
+            throw new \InvalidArgumentException(
+                "With these answers you would not be eligible for internet support. To qualify you need 80+ manual edits "
+                . "in the past month and attendance at the last 3 DCW Conversation Hours, "
+                . "or be actively contributing to DCW technical projects."
+            );
+        }
+
+        $contributions = trim((string) ($in['contributions'] ?? ''));
+        $plans         = trim((string) ($in['plans'] ?? ''));
+        foreach ([$contributions, $plans] as $text) {
+            $n = mb_strlen($text);
+            if ($n < self::MIN_NARRATIVE_LENGTH || $n > self::MAX_NARRATIVE_LENGTH) {
+                throw new \InvalidArgumentException(
+                    'Please answer both questions about your contributions and plans ('
+                    . self::MIN_NARRATIVE_LENGTH . ' to ' . self::MAX_NARRATIVE_LENGTH . ' characters each).'
+                );
+            }
+        }
+
+        return [
+            'wikimedia_username' => $wikiUser,
+            'reason'             => $reason,
+            'contributions'      => $contributions,
+            'plans'              => $plans,
+            'edits_80'           => $edits80 === 'yes' ? 1 : 0,
+            'attended_ch'        => $attendedCH === 'yes' ? 1 : 0,
+            'tech_contributor'   => $techContrib === 'yes' ? 1 : 0,
+        ];
+    }
+
+    /**
+     * The applicant's own editable answers, for the draft form on /track.
+     * Only returned while 'Info Requested' and the tracking ID + email pair
+     * matches. Never selects the phone number or anything finance-side.
+     */
+    public function getDraftForApplicant($trackingId, $email) {
+        $stmt = $this->db->prepare(
+            "SELECT wikimedia_username, reason, contributions, plans,
+                    edits_80, attended_ch, tech_contributor
+             FROM internet_requests
+             WHERE tracking_id = :t AND email = :email AND status = 'Info Requested'"
+        );
+        $stmt->execute(['t' => $trackingId, 'email' => strtolower(trim($email))]);
+        return $stmt->fetch() ?: null;
+    }
+
+    /**
+     * Applicant corrects their answers and answers the reviewer, via /track.
+     * Saves the edits, stores the note (with a line listing which answers
+     * changed, visible to the reviewer in the thread) and moves
+     * Info Requested -> Submitted in one transaction. Returns false if the
+     * pair doesn't match or the request is no longer waiting on the applicant.
+     *
+     * @param array $answers keys as in createRequest()'s $eligibility, plus 'reason'
+     * @throws \InvalidArgumentException on any validation failure
+     */
+    public function resubmitDraft($trackingId, $email, array $answers, $note) {
+        $note = $this->cleanMessage($note);
+        $new  = $this->cleanEditableAnswers($answers);
+
+        $labels = [
+            'wikimedia_username' => 'Wikimedia username',
+            'reason'             => 'Why you need support',
+            'contributions'      => 'Contributions',
+            'plans'              => 'Plans',
+            'edits_80'           => '80+ edits answer',
+            'attended_ch'        => 'Conversation Hours answer',
+            'tech_contributor'   => 'Technical projects answer',
+        ];
+
+        $this->db->beginTransaction();
+        try {
+            $find = $this->db->prepare(
+                "SELECT id, " . implode(', ', array_keys($labels)) . "
+                 FROM internet_requests
+                 WHERE tracking_id = :t AND email = :email AND status = 'Info Requested'
+                 FOR UPDATE"
+            );
+            $find->execute(['t' => $trackingId, 'email' => strtolower(trim($email))]);
+            $current = $find->fetch();
+            if (!$current) {
+                $this->db->rollBack();
+                return false;
+            }
+
+            $changed = [];
+            foreach ($labels as $col => $label) {
+                if ((string) $current[$col] !== (string) $new[$col]) {
+                    $changed[] = $label;
+                }
+            }
+
+            $update = $this->db->prepare(
+                "UPDATE internet_requests
+                 SET wikimedia_username = :wikimedia_username, reason = :reason,
+                     contributions = :contributions, plans = :plans,
+                     edits_80 = :edits_80, attended_ch = :attended_ch, tech_contributor = :tech_contributor,
+                     status = 'Submitted'
+                 WHERE id = :id AND status = 'Info Requested'"
+            );
+            $update->execute($new + ['id' => (int) $current['id']]);
+            if ($update->rowCount() !== 1) {
+                $this->db->rollBack();
+                return false;
+            }
+
+            $body = $note . "\n\n" . ($changed
+                ? '[Answers updated: ' . implode(', ', $changed) . ']'
+                : '[No answers changed]');
+            $this->insertMessage($current['id'], 'applicant', null, $body);
+
             $this->db->commit();
             return true;
         } catch (\Throwable $e) {
