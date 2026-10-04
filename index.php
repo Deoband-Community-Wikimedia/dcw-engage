@@ -56,6 +56,22 @@ if ($route === '/' || $route === '/index.php') {
 } elseif ($route === '/membership') {
     require __DIR__ . '/views/membership.php';
 
+// --- Member login (Member ID + password) -------------------------------
+// Public pages for members: sign in, sign out, and set or reset a password
+// from an emailed one-time link. Separate from /admin: members and organizers
+// have their own sessions. Literal routes (and the token pattern), so they must
+// come before the catch-all dynamic form route below.
+} elseif ($route === '/member/login') {
+    require __DIR__ . '/views/member/login.php';
+} elseif ($route === '/member/logout') {
+    require __DIR__ . '/views/member/logout.php';
+} elseif ($route === '/member/forgot') {
+    require __DIR__ . '/views/member/forgot.php';
+} elseif (preg_match('/^\/member\/set-password\/([a-f0-9]{64})$/', $route, $matches)) {
+    global $memberSetToken;
+    $memberSetToken = $matches[1];
+    require __DIR__ . '/views/member/set_password.php';
+
 // Coordinator / reviewer queue for membership applications. Role check is
 // inside the view: requireRole(['membership_coordinator', 'membership_reviewer',
 // 'organizer', 'owner']); coordinators only ever see their assigned chapters.
