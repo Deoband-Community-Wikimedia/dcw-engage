@@ -296,6 +296,9 @@ engage_header([
     'kicker'  => 'Member support',
     'lead'    => $type ? $typeMeta[$type]['blurb'] : 'Tell us what kind of support you need.',
     'member'  => $member,
+    'crumbs'  => $type
+        ? [['Home', '/'], ['Support', '/support'], [$typeMeta[$type]['title']]]
+        : [['Home', '/'], ['Support']],
 ]);
 ?>
 
