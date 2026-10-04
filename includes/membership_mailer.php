@@ -21,6 +21,7 @@ if (file_exists(__DIR__ . '/../vendor/autoload.php')) {
     require_once __DIR__ . '/../vendor/autoload.php';
 }
 require_once __DIR__ . '/../models/MemberModel.php';
+require_once __DIR__ . '/../models/MemberAuthModel.php';
 
 class MembershipMailer {
     /** Full name of DCW, used wherever the applicant is joining DCW itself. */
@@ -144,6 +145,32 @@ class MembershipMailer {
     }
 
     /**
+     * Decision email built from the application row, so callers cannot forget the chapter or the
+     * renewal flag. On approval it also emails a one-time "set your password" link when the new
+     * member has no password yet (renewing members who already have one get no second email).
+     * $detail is the expiry for 'approved' and the reviewer's reason for 'rejected', as in sendDecision().
+     */
+    public static function sendDecisionFor(array $app, $decision, $memberId = null, $detail = '') {
+        $chapter = MemberModel::chapterOf($app);
+        $sent = self::sendDecision($app['email'], $app['applicant_name'], $decision, $memberId, $detail,
+                                   $chapter, MemberModel::isRenewal($app));
+
+        if ($decision === 'approved' && $memberId) {
+            $link = (new MemberAuthModel())->setLinkIfNeeded((string) $memberId);
+            if ($link) {
+                self::sendPasswordLink($app['email'], $app['applicant_name'], $memberId, $link['token'], 'set', $chapter);
+            }
+        }
+        return $sent;
+    }
+
+    /** Info-request email built from the application row (chapter and renewal wording handled for you). */
+    public static function sendInfoRequestFor(array $app, $message, $token) {
+        return self::sendInfoRequest($app['email'], $app['applicant_name'], $message, $token,
+                                     MemberModel::chapterOf($app), MemberModel::isRenewal($app));
+    }
+
+    /**
      * Sends an application back with the coordinator's message and a fresh link to edit and
      * resubmit it (the existing /resume/{token} page).
      * $chapter is the chapter key (MemberModel::chapterOf($app)), or null.
@@ -179,6 +206,49 @@ class MembershipMailer {
             " . self::signHtml($chapter);
 
         $alt = "Hello $name,\n\n" . sprintf($thanks, $org) . ". $looked\n\n$message\n\nUpdate your application here:\n$url\n\nThis link is private to you and will expire, so please don't share it.\n\n" . self::signText($chapter);
+
+        return self::send($email, $name, $subject, $inner, $alt, $chapter);
+    }
+
+    /**
+     * One-time link to choose a password for the Member ID login.
+     * $purpose: 'set' (new member, sent after approval) or 'reset' (forgotten password).
+     * $token is the raw token from MemberAuthModel::createToken(); it is only ever stored hashed.
+     * $chapter is the chapter key (MemberModel::chapterOf($app) or the member's chapter), or null.
+     */
+    public static function sendPasswordLink($email, $name, $memberId, $token, $purpose = 'set', $chapter = null) {
+        $config = require __DIR__ . '/config.php';
+        $url = $config['app']['url'] . '/member/set-password/' . $token;
+        $safeUrl = htmlspecialchars($url, ENT_QUOTES, 'UTF-8');
+        $n = htmlspecialchars((string) $name, ENT_QUOTES, 'UTF-8');
+        $id = htmlspecialchars((string) $memberId, ENT_QUOTES, 'UTF-8');
+        $org = self::org($chapter);
+        $safeOrg = htmlspecialchars($org, ENT_QUOTES, 'UTF-8');
+
+        if ($purpose === 'reset') {
+            $subject = 'Reset your DCW Engage password';
+            $intro = "We got a request to reset the password for Member ID <strong>$id</strong>. Choose a new one with the button below.";
+            $introText = "We got a request to reset the password for Member ID $memberId. Choose a new one here:";
+            $button = 'Choose a new password';
+            $ignore = "Didn't ask for this? You can ignore this email. Your password stays as it is.";
+        } else {
+            $subject = 'Set your password for DCW Engage';
+            $intro = "Welcome to <strong>$safeOrg</strong>! One last step: choose a password, and you can log in to DCW Engage with your Member ID <strong>$id</strong>.";
+            $introText = "Welcome to $org! One last step: choose a password, and you can log in to DCW Engage with your Member ID $memberId. Set it here:";
+            $button = 'Set my password';
+            $ignore = "Didn't expect this email? You can ignore it.";
+        }
+
+        $inner = "
+            <p>Hello <strong>$n</strong>,</p>
+            <p>$intro</p>
+            <div class='btn-wrapper'><a href='$safeUrl' class='btn'>$button</a></div>
+            <p>If the button doesn't work, copy and paste this link into your browser:<br><br>
+               <a href='$safeUrl' style='color: #106b9a; word-break: break-all;'>$safeUrl</a></p>
+            <p>This link is private to you, works once and will expire, so please don't share it. $ignore</p>
+            " . self::signHtml($chapter);
+
+        $alt = "Hello $name,\n\n$introText\n$url\n\nThis link is private to you, works once and will expire, so please don't share it. $ignore\n\n" . self::signText($chapter);
 
         return self::send($email, $name, $subject, $inner, $alt, $chapter);
     }
