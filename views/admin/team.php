@@ -3,6 +3,7 @@ require_once __DIR__ . '/../../includes/init.php';
 require_once __DIR__ . '/../../includes/auth.php';
 require_once __DIR__ . '/../../includes/mailer.php';
 require_once __DIR__ . '/../../includes/audit.php';
+require_once __DIR__ . '/../../includes/engage_page.php';
 require_once __DIR__ . '/../../models/InviteModel.php';
 require_once __DIR__ . '/../../models/MemberModel.php';
 
@@ -44,14 +45,14 @@ function team_role_pills(array $roles) {
 }
 
 /** The role checkboxes, shared by the invite form and the per-person editor. */
-function team_role_checkboxes(array $checked) {
-    $html = '<div class="role-grid">';
+function team_role_checkboxes(array $checked, $legend = 'Roles (pick one or more)') {
+    $html = '<fieldset class="group"><legend>' . htmlspecialchars($legend) . '</legend><div class="role-grid">';
     foreach (InviteModel::ROLES as $role) {
         $html .= '<label class="check"><input type="checkbox" name="roles[]" value="'
               . htmlspecialchars($role) . '"' . (in_array($role, $checked, true) ? ' checked' : '')
               . '> ' . htmlspecialchars(team_role_label($role)) . '</label>';
     }
-    return $html . '</div>';
+    return $html . '</div></fieldset>';
 }
 
 /**
@@ -60,14 +61,14 @@ function team_role_checkboxes(array $checked) {
  * ticked in the same form (with scripting off it simply stays visible).
  */
 function team_chapter_checkboxes(array $checked) {
-    $html = '<div class="chapter-box"><span class="field-label">Chapters this coordinator can see</span>'
+    $html = '<fieldset class="group chapter-box"><legend>Chapters this coordinator can see</legend>'
           . '<div class="role-grid">';
     foreach (InviteModel::CHAPTERS as $key => $label) {
         $html .= '<label class="check"><input type="checkbox" name="chapters[]" value="'
               . htmlspecialchars($key) . '"' . (in_array($key, $checked, true) ? ' checked' : '')
               . '> ' . htmlspecialchars($label) . '</label>';
     }
-    return $html . '</div></div>';
+    return $html . '</div></fieldset>';
 }
 
 /** "Wiki Club AMU, Wiki Club Jamia" for a list of chapter keys. */
@@ -236,310 +237,272 @@ unset($_SESSION['team_flash']);
 
 $pending    = $invites->listPending();
 $organizers = $invites->listOrganizers();
+
+engage_header([
+    'title'   => 'Team',
+    'heading' => 'Team',
+    'kicker'  => 'Organizer workspace',
+    'lead'    => 'Organizers, finance and support staff can read applications. Membership roles only see membership applications. Invite carefully.',
+    'tools'   => '<a class="chip-btn" href="/admin/audit">Audit log</a>',
+    'wide'    => true,
+    'crumbs'  => [['Workspace', '/admin/dashboard'], ['Team']],
+]);
 ?>
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <link rel="icon" type="image/png" href="https://dcwwiki.org/dcwwiki/images/5/56/DCW_logo.png">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="robots" content="noindex, nofollow">
-    <title>Team - DCW Engage</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <style>
-        :root { --primary-color: #106b9a; --border-color: #e2e8f0; }
-        * { box-sizing: border-box; }
-        body { font-family: 'Inter', -apple-system, sans-serif; background: #f8fafc; color: #1e293b; margin: 0; padding: 40px 20px; }
-        .container { max-width: 860px; margin: auto; }
-        .header { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 8px; }
-        h1 { margin: 0; color: var(--primary-color); font-size: 28px; }
-        .lede { color: #64748b; font-size: 14px; margin: 0 0 30px; }
-        .back { color: #64748b; font-size: 14px; text-decoration: none; }
-        .back:hover { color: var(--primary-color); }
+<style>
+    /* Team page only. Everything else comes from /assets/css/engage.css */
+    .ctitle { margin: 0 0 6px; font-size: 20px; font-weight: 800; letter-spacing: -.02em; }
+    .invite-form .field { max-width: 460px; }
 
-        .panel { background: #fff; border: 1px solid var(--border-color); border-radius: 12px; padding: 24px; margin-bottom: 24px; }
-        h2 { font-size: 16px; margin: 0 0 4px; }
-        .panel-sub { font-size: 13px; color: #64748b; margin: 0 0 20px; line-height: 1.55; }
+    .role-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 8px 16px; margin: 4px 0 14px; }
+    label.check { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 14px; font-weight: 500; cursor: pointer; }
+    label.check input { width: 16px; height: 16px; margin: 0; accent-color: var(--primary); }
 
-        label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
-        input[type=email] {
-            width: 100%; padding: 11px; border: 1px solid var(--border-color);
-            border-radius: 6px; font-family: inherit; font-size: 15px; background: #fff;
-        }
-        input:focus { outline: 2px solid var(--primary-color); outline-offset: -1px; border-color: transparent; }
-        .hint { font-size: 12px; color: #64748b; margin: 10px 0 0; line-height: 1.55; }
+    .pills { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+    .pill-owner { --tone: var(--primary); }
+    .pill-organizer { --tone: #475569; }
+    .pill-finance { --tone: #3730a3; }
+    .pill-support_reviewer { --tone: #b45309; }
+    .pill-membership_reviewer { --tone: #6d28d9; }
+    .pill-membership_coordinator { --tone: #047857; }
+    .pill-expired { --tone: #b91c1c; }
 
-        .role-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 8px 16px; margin-top: 4px; }
-        label.check { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 500; margin: 0; cursor: pointer; }
-        label.check input { width: 16px; height: 16px; margin: 0; accent-color: var(--primary-color); }
-        .field-label { display: block; font-size: 13px; font-weight: 600; margin: 18px 0 6px; }
+    .tbl .sub { margin-top: 6px; }
+    .warn-text { color: #b45309; }
+    .tbl th.r, .tbl td.r { text-align: right; }
 
-        button.primary {
-            margin-top: 18px; padding: 12px 22px; background: var(--primary-color); color: #fff;
-            border: none; border-radius: 6px; font-family: inherit; font-size: 15px; font-weight: 600; cursor: pointer;
-        }
-        button.primary:hover { background: #0d587f; }
-        button.save {
-            margin-top: 12px; padding: 7px 14px; background: var(--primary-color); color: #fff;
-            border: none; border-radius: 6px; font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
-        }
-        button.save:hover { background: #0d587f; }
-        button.link {
-            background: none; border: none; color: #b91c1c; font-family: inherit;
-            font-size: 13px; cursor: pointer; padding: 0; text-decoration: underline;
-        }
+    /* engage.css gives every submit button inside .fcard the full-width gradient look.
+       These rules turn the small in-table buttons and the invite button back into compact ones. */
+    .fcard .invite-form .send { width: auto; padding: 12px 30px; }
+    .fcard .tbl .tb-btn { width: auto; padding: 6px 16px; font-size: 13px; box-shadow: none; }
+    .fcard .tbl .tb-btn:hover:not(:disabled) { transform: none; box-shadow: none; }
+    .fcard .tbl .tb-danger { background: #fff; color: #991b1b; border: 1px solid #f87171; }
+    .fcard .tbl .tb-danger:hover:not(:disabled) { background: #fef2f2; }
+    .tb-save { margin-top: 12px; }
 
-        table { width: 100%; border-collapse: collapse; font-size: 14px; }
-        th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: #64748b; padding: 0 0 10px; font-weight: 600; }
-        td { padding: 12px 0; border-top: 1px solid var(--border-color); vertical-align: top; }
-        td.right, th.right { text-align: right; }
-        .empty { font-size: 14px; color: #64748b; margin: 0; }
+    details.edit { margin-top: 10px; }
+    details.edit summary { font-size: 13px; font-weight: 600; color: var(--primary); cursor: pointer; }
+    details.edit form { margin: 10px 0 0; padding: 14px; background: #f8fafc; border: 1px solid var(--border); border-radius: 12px; }
+    details.edit fieldset.group { background: #fff; margin-bottom: 0; }
 
-        .pills { display: inline-flex; flex-wrap: wrap; gap: 4px; }
-        .pill { display: inline-block; font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 999px; }
-        .pill-owner { background: rgba(16,107,154,0.1); color: var(--primary-color); }
-        .pill-organizer { background: #f1f5f9; color: #475569; }
-        .pill-finance { background: #f0f5ff; color: #3730a3; }
-        .pill-support_reviewer { background: #fffbeb; color: #92400e; }
-        .pill-membership_coordinator { background: #ecfdf5; color: #065f46; }
-        .pill-membership_reviewer { background: #f5f3ff; color: #5b21b6; }
-        .pill-expired { background: #fef2f2; color: #991b1b; }
+    .flash-link { display: block; flex-basis: 100%; margin-top: 10px; padding: 10px; background: rgba(0,0,0,.06); border-radius: 6px; font-size: 12px; word-break: break-all; }
+</style>
 
-        .chapter-box { margin-top: 4px; }
-        .meta { display: block; margin-top: 6px; font-size: 12px; color: #64748b; }
-        details.edit { margin-top: 8px; }
-        details.edit summary { font-size: 12px; color: var(--primary-color); cursor: pointer; }
-        details.edit form { margin: 10px 0 0; padding: 12px; background: #f8fafc; border: 1px solid var(--border-color); border-radius: 8px; }
-
-        .flash { padding: 13px 15px; border-radius: 6px; font-size: 14px; margin-bottom: 24px; line-height: 1.55; }
-        .flash-success { background: #f0fdf4; border: 1px solid #bbf7d0; color: #166534; }
-        .flash-error { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; }
-        .flash-warning { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; }
-        .flash code { display: block; margin-top: 10px; padding: 10px; background: rgba(0,0,0,0.06); border-radius: 4px; font-size: 12px; word-break: break-all; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>Team</h1>
-            <span style="display:flex; gap:18px; align-items:center;">
-                <a class="back" href="/admin/audit">Audit log</a>
-                <a class="back" href="/admin/dashboard">&larr; Back to workspace</a>
-            </span>
-        </div>
-        <p class="lede">Organizers, finance and support staff can read applications. Membership roles only see membership applications. Invite carefully.</p>
-
-        <?php if ($flash): ?>
-            <div class="flash flash-<?= htmlspecialchars($flash['type']) ?>">
-                <?= htmlspecialchars($flash['message']) ?>
-                <?php if (!empty($flash['link'])): ?>
-                    <code><?= htmlspecialchars($flash['link']) ?></code>
-                <?php endif; ?>
-            </div>
+<?php if ($flash):
+    $flashClass = $flash['type'] === 'success' ? 'alert ok' : ($flash['type'] === 'error' ? 'alert error' : 'action-banner'); ?>
+    <div class="<?= $flashClass ?>">
+        <span><?= htmlspecialchars($flash['message']) ?></span>
+        <?php if (!empty($flash['link'])): ?>
+            <code class="flash-link"><?= htmlspecialchars($flash['link']) ?></code>
         <?php endif; ?>
+    </div>
+<?php endif; ?>
 
-        <div class="panel">
-            <h2>Invite an organizer</h2>
-            <p class="panel-sub">
-                They receive a one-time link and choose their own password.
-                No account exists until they open it.
-            </p>
+<section class="fcard wide">
+    <h2 class="ctitle">Invite an organizer</h2>
+    <p class="intro">
+        They receive a one-time link and choose their own password.
+        No account exists until they open it.
+    </p>
 
-            <form method="POST" autocomplete="off">
-                <?= CSRF::getInputField() ?>
-                <?= CSRF::getSubmitField() ?>
-                <input type="hidden" name="action" value="invite">
+    <form method="POST" autocomplete="off" class="invite-form">
+        <?= CSRF::getInputField() ?>
+        <?= CSRF::getSubmitField() ?>
+        <input type="hidden" name="action" value="invite">
 
-                <label for="email">Email address</label>
-                <input type="email" name="email" id="email" required placeholder="name@dcwwiki.org">
-
-                <span class="field-label">Roles (pick one or more)</span>
-                <?= team_role_checkboxes(['organizer']) ?>
-                <?= team_chapter_checkboxes([]) ?>
-
-                <p class="hint">
-                    Organizers manage forms and applications. Finance can process
-                    reimbursement payments and internet support recharges. Support
-                    reviewers decide internet support requests. Membership coordinators
-                    review membership applications only for the chapters an owner
-                    assigns them under Membership Access. Membership reviewers
-                    (DCW Generic Reviewers) review membership applications from every
-                    chapter. Choose the chapters when you tick Membership coordinator;
-                    they are applied as soon as the invitation is accepted. Owners can
-                    additionally invite people, change roles and
-                    revoke invitations from this page. Someone with several roles gets
-                    the access of each.
-                </p>
-
-                <button type="submit" class="primary">Send invitation</button>
-            </form>
+        <div class="field">
+            <label for="email">Email address</label>
+            <input type="email" name="email" id="email" required placeholder="name@dcwwiki.org">
         </div>
 
-        <div class="panel">
-            <h2>Pending invitations</h2>
-            <p class="panel-sub">Not yet accepted. Revoking one kills its link immediately.</p>
+        <?= team_role_checkboxes(['organizer']) ?>
+        <?= team_chapter_checkboxes([]) ?>
 
-            <?php if (empty($pending)): ?>
-                <p class="empty">No invitations are waiting.</p>
-            <?php else: ?>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Email</th>
-                            <th>Roles</th>
-                            <th>Invited by</th>
-                            <th>Expires</th>
-                            <th class="right">Action</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                    <?php foreach ($pending as $invite): ?>
-                        <tr>
-                            <td><?= htmlspecialchars($invite['email']) ?></td>
-                            <td>
-                                <?= team_role_pills($invite['role_list']) ?>
-                                <?php if (!empty($invite['chapter_list'])): ?>
-                                    <span class="meta">Chapters: <?= htmlspecialchars(team_chapter_names($invite['chapter_list'])) ?></span>
-                                <?php endif; ?>
-                            </td>
-                            <td><?= htmlspecialchars($invite['invited_by_email']) ?></td>
-                            <td>
-                                <?php if ($invite['is_expired']): ?>
-                                    <span class="pill pill-expired">Expired</span>
-                                <?php else: ?>
-                                    <?= htmlspecialchars(Mailer::formatExpiryIST($invite['expires_at'])) ?>
-                                <?php endif; ?>
-                            </td>
-                            <td class="right">
-                                <form method="POST" style="margin:0;">
-                                    <?= CSRF::getInputField() ?>
-                                    <?= CSRF::getSubmitField() ?>
-                                    <input type="hidden" name="action" value="revoke">
-                                    <input type="hidden" name="invite_id" value="<?= (int) $invite['id'] ?>">
-                                    <button type="submit" class="link">Revoke</button>
-                                </form>
-                            </td>
-                        </tr>
-                    <?php endforeach; ?>
-                    </tbody>
-                </table>
-            <?php endif; ?>
-        </div>
+        <p class="note">
+            Organizers manage forms and applications. Finance can process
+            reimbursement payments and internet support recharges. Support
+            reviewers decide internet support requests. Membership coordinators
+            review membership applications only for the chapters an owner
+            assigns them under Membership Access. Membership reviewers
+            (DCW Generic Reviewers) review membership applications from every
+            chapter. Choose the chapters when you tick Membership coordinator;
+            they are applied as soon as the invitation is accepted. Owners can
+            additionally invite people, change roles and
+            revoke invitations from this page. Someone with several roles gets
+            the access of each.
+        </p>
 
-        <div class="panel">
-            <h2>Organizers</h2>
-            <p class="panel-sub">Accounts that can currently sign in to this workspace.</p>
+        <button type="submit" class="send">Send invitation</button>
+    </form>
+</section>
 
-            <table>
+<section class="fcard wide">
+    <h2 class="ctitle">Pending invitations</h2>
+    <p class="intro">Not yet accepted. Revoking one kills its link immediately.</p>
+
+    <?php if (empty($pending)): ?>
+        <div class="empty-note">No invitations are waiting.</div>
+    <?php else: ?>
+        <div class="tbl-wrap">
+            <table class="tbl">
                 <thead>
                     <tr>
                         <th>Email</th>
                         <th>Roles</th>
-                        <th>Last signed in</th>
-                        <th class="right">Action</th>
+                        <th>Invited by</th>
+                        <th>Expires</th>
+                        <th class="r">Action</th>
                     </tr>
                 </thead>
                 <tbody>
-                <?php foreach ($organizers as $person): ?>
-                    <?php
-                        $isSelf = (int) $person['id'] === (int) Auth::id();
-                        $isCoord = in_array('membership_coordinator', $person['role_list'], true);
-                        $personChapters = [];
-                        if ($isCoord) {
-                            try {
-                                $personChapters = InviteModel::normalizeChapters($members->chaptersFor($person['email']));
-                            } catch (Throwable $e) {
-                                $personChapters = [];
-                            }
-                        }
-                    ?>
+                <?php foreach ($pending as $invite): ?>
                     <tr>
+                        <td><?= htmlspecialchars($invite['email']) ?></td>
                         <td>
-                            <?= htmlspecialchars($person['email']) ?>
-                            <?php if ($isSelf): ?>
-                                <span style="color:#64748b; font-size:12px;">(you)</span>
+                            <?= team_role_pills($invite['role_list']) ?>
+                            <?php if (!empty($invite['chapter_list'])): ?>
+                                <span class="sub">Chapters: <?= htmlspecialchars(team_chapter_names($invite['chapter_list'])) ?></span>
                             <?php endif; ?>
                         </td>
+                        <td><?= htmlspecialchars($invite['invited_by_email']) ?></td>
                         <td>
-                            <?= team_role_pills($person['role_list']) ?>
-                            <?php if ($isCoord): ?>
-                                <span class="meta">
-                                    <?= $personChapters
-                                        ? 'Chapters: ' . htmlspecialchars(team_chapter_names($personChapters))
-                                        : '<span style="color:#b45309;">No chapters yet: sees nothing</span>' ?>
-                                </span>
-                            <?php endif; ?>
-                            <?php if (!$isSelf): ?>
-                                <details class="edit">
-                                    <summary>Edit roles</summary>
-                                    <form method="POST">
-                                        <?= CSRF::getInputField() ?>
-                                        <?= CSRF::getSubmitField() ?>
-                                        <input type="hidden" name="action" value="update_roles">
-                                        <input type="hidden" name="admin_id" value="<?= (int) $person['id'] ?>">
-                                        <?= team_role_checkboxes($person['role_list']) ?>
-                                        <?= team_chapter_checkboxes($personChapters) ?>
-                                        <button type="submit" class="save">Save roles</button>
-                                    </form>
-                                </details>
-                            <?php endif; ?>
-                        </td>
-                        <td>
-                            <?php if ($person['last_login']): ?>
-                                <?= htmlspecialchars(date('j M Y', strtotime($person['last_login']))) ?>
+                            <?php if ($invite['is_expired']): ?>
+                                <span class="pill pill-expired">Expired</span>
                             <?php else: ?>
-                                <span style="color:#94a3b8;">Never</span>
+                                <?= htmlspecialchars(Mailer::formatExpiryIST($invite['expires_at'])) ?>
                             <?php endif; ?>
                         </td>
-                        <td class="right">
-                            <?php if ($isSelf): ?>
-                                <span style="color:#cbd5e1;">&mdash;</span>
-                            <?php else: ?>
-                                <form method="POST" style="margin:0;">
-                                    <?= CSRF::getInputField() ?>
-                                    <?= CSRF::getSubmitField() ?>
-                                    <input type="hidden" name="action" value="remove">
-                                    <input type="hidden" name="admin_id" value="<?= (int) $person['id'] ?>">
-                                    <button type="submit" class="link"
-                                            onclick="return confirm('Remove this organizer? They will lose access immediately.');">Remove</button>
-                                </form>
-                            <?php endif; ?>
+                        <td class="r">
+                            <form method="POST" style="margin:0;">
+                                <?= CSRF::getInputField() ?>
+                                <?= CSRF::getSubmitField() ?>
+                                <input type="hidden" name="action" value="revoke">
+                                <input type="hidden" name="invite_id" value="<?= (int) $invite['id'] ?>">
+                                <button type="submit" class="tb-btn tb-danger">Revoke</button>
+                            </form>
                         </td>
                     </tr>
                 <?php endforeach; ?>
                 </tbody>
             </table>
         </div>
+    <?php endif; ?>
+</section>
+
+<section class="fcard wide">
+    <h2 class="ctitle">Organizers</h2>
+    <p class="intro">Accounts that can currently sign in to this workspace.</p>
+
+    <div class="tbl-wrap">
+        <table class="tbl">
+            <thead>
+                <tr>
+                    <th>Email</th>
+                    <th>Roles</th>
+                    <th>Last signed in</th>
+                    <th class="r">Action</th>
+                </tr>
+            </thead>
+            <tbody>
+            <?php foreach ($organizers as $person): ?>
+                <?php
+                    $isSelf = (int) $person['id'] === (int) Auth::id();
+                    $isCoord = in_array('membership_coordinator', $person['role_list'], true);
+                    $personChapters = [];
+                    if ($isCoord) {
+                        try {
+                            $personChapters = InviteModel::normalizeChapters($members->chaptersFor($person['email']));
+                        } catch (Throwable $e) {
+                            $personChapters = [];
+                        }
+                    }
+                ?>
+                <tr>
+                    <td>
+                        <?= htmlspecialchars($person['email']) ?>
+                        <?php if ($isSelf): ?>
+                            <span class="sub">(you)</span>
+                        <?php endif; ?>
+                    </td>
+                    <td>
+                        <?= team_role_pills($person['role_list']) ?>
+                        <?php if ($isCoord): ?>
+                            <?php if ($personChapters): ?>
+                                <span class="sub">Chapters: <?= htmlspecialchars(team_chapter_names($personChapters)) ?></span>
+                            <?php else: ?>
+                                <span class="sub warn-text">No chapters yet: sees nothing</span>
+                            <?php endif; ?>
+                        <?php endif; ?>
+                        <?php if (!$isSelf): ?>
+                            <details class="edit">
+                                <summary>Edit roles</summary>
+                                <form method="POST">
+                                    <?= CSRF::getInputField() ?>
+                                    <?= CSRF::getSubmitField() ?>
+                                    <input type="hidden" name="action" value="update_roles">
+                                    <input type="hidden" name="admin_id" value="<?= (int) $person['id'] ?>">
+                                    <?= team_role_checkboxes($person['role_list'], 'Roles') ?>
+                                    <?= team_chapter_checkboxes($personChapters) ?>
+                                    <button type="submit" class="tb-btn tb-save">Save roles</button>
+                                </form>
+                            </details>
+                        <?php endif; ?>
+                    </td>
+                    <td>
+                        <?php if ($person['last_login']): ?>
+                            <?= htmlspecialchars(date('j M Y', strtotime($person['last_login']))) ?>
+                        <?php else: ?>
+                            <span style="color:#94a3b8;">Never</span>
+                        <?php endif; ?>
+                    </td>
+                    <td class="r">
+                        <?php if ($isSelf): ?>
+                            <span style="color:#cbd5e1;">&mdash;</span>
+                        <?php else: ?>
+                            <form method="POST" style="margin:0;">
+                                <?= CSRF::getInputField() ?>
+                                <?= CSRF::getSubmitField() ?>
+                                <input type="hidden" name="action" value="remove">
+                                <input type="hidden" name="admin_id" value="<?= (int) $person['id'] ?>">
+                                <button type="submit" class="tb-btn tb-danger"
+                                        onclick="return confirm('Remove this organizer? They will lose access immediately.');">Remove</button>
+                            </form>
+                        <?php endif; ?>
+                    </td>
+                </tr>
+            <?php endforeach; ?>
+            </tbody>
+        </table>
     </div>
-    <script>
-        // Show the chapter picker only while "Membership coordinator" is ticked
-        // in that form. With scripting off the picker just stays visible, and
-        // the server ignores chapters unless the role is ticked.
-        document.querySelectorAll('.chapter-box').forEach(function (box) {
-            var form = box.closest('form');
-            var coordinator = form && form.querySelector('input[value=membership_coordinator]');
-            if (!coordinator) return;
-            function sync() { box.style.display = coordinator.checked ? '' : 'none'; }
-            coordinator.addEventListener('change', sync);
-            sync();
-        });
+</section>
 
-        // Progressive enhancement only. With scripting off, the single-use
-        // submit token on the server still makes a second POST a no-op.
-        document.querySelectorAll('form').forEach(function (form) {
-            form.addEventListener('submit', function () {
-                var button = form.querySelector('button[type=submit]');
-                if (!button || button.disabled) return;
+<script>
+    // Show the chapter picker only while "Membership coordinator" is ticked
+    // in that form. With scripting off the picker just stays visible, and
+    // the server ignores chapters unless the role is ticked.
+    document.querySelectorAll('.chapter-box').forEach(function (box) {
+        var form = box.closest('form');
+        var coordinator = form && form.querySelector('input[value=membership_coordinator]');
+        if (!coordinator) return;
+        function sync() { box.style.display = coordinator.checked ? '' : 'none'; }
+        coordinator.addEventListener('change', sync);
+        sync();
+    });
 
-                // Width is pinned before the label changes so the button does
-                // not resize and shift the row underneath it.
-                button.style.minWidth = button.offsetWidth + 'px';
-                button.disabled = true;
-                if (button.classList.contains('primary')) {
-                    button.textContent = 'Sending...';
-                }
-            });
+    // Progressive enhancement only. With scripting off, the single-use
+    // submit token on the server still makes a second POST a no-op.
+    document.querySelectorAll('form').forEach(function (form) {
+        form.addEventListener('submit', function () {
+            var button = form.querySelector('button[type=submit]');
+            if (!button || button.disabled) return;
+
+            // Width is pinned before the label changes so the button does
+            // not resize and shift the row underneath it.
+            button.style.minWidth = button.offsetWidth + 'px';
+            button.disabled = true;
+            if (button.classList.contains('send')) {
+                button.textContent = 'Sending...';
+            }
         });
-    </script>
-</body>
-</html>
+    });
+</script>
+<?php engage_footer(); ?>
