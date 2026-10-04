@@ -9,7 +9,8 @@ require_once __DIR__ . '/../../includes/membership_mailer.php';
 requireRole(['membership_coordinator', 'membership_reviewer', 'organizer', 'owner']);
 
 $model = new MemberModel();
-$scope = $model->scopeFor((string) Auth::role(), (string) Auth::email());   // null = every chapter
+// Pass the FULL role list: an account can hold several roles, and Auth::role() is only the primary one.
+$scope = $model->scopeFor(Auth::roles(), (string) Auth::email());   // null = every chapter
 $notice = ''; $error = '';
 $id = (int) ($_GET['id'] ?? $_POST['id'] ?? 0);
 $app = $id ? $model->getApplication($id, $scope) : false;
