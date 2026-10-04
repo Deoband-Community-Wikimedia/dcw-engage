@@ -3,6 +3,7 @@ require_once __DIR__ . '/../includes/wikitext.php';
 require_once __DIR__ . '/../models/FormModel.php';
 require_once __DIR__ . '/../models/InternetSupportModel.php';
 require_once __DIR__ . '/../models/ReimbursementSettingsModel.php';
+require_once __DIR__ . '/../includes/member_session.php';
 
 $formModel = new FormModel();
 $activeForms = $formModel->getActiveForms();
@@ -32,6 +33,14 @@ try {
     $reimbursementOpen = $reimbursementSettings && !empty($reimbursementSettings['is_active']);
 } catch (Throwable $e) {
     $reimbursementOpen = false;
+}
+
+// Support is for signed-in members. Is one signed in? Guarded so the public landing page can never
+// break, for example before sql/member_login.sql has been run.
+try {
+    $signedInMember = MemberSession::current();
+} catch (Throwable $e) {
+    $signedInMember = null;
 }
 
 /**
@@ -240,6 +249,9 @@ foreach ($activeForms as $form) {
             color: var(--tone); background: color-mix(in srgb, var(--tone) 12%, #fff); border: 1px solid color-mix(in srgb, var(--tone) 30%, #fff);
         }
         .help-chips a:hover { background: var(--tone); color: #fff; }
+        .help-sub { font-size: 13px; color: var(--muted); }
+        .help-sub a { color: var(--primary); font-weight: 600; text-decoration: none; }
+        .help-sub a:hover { text-decoration: underline; }
 
         /* Optional photo strip */
         .gallery { margin: 44px 0 6px; text-align: center; }
@@ -327,9 +339,15 @@ foreach ($activeForms as $form) {
                     <span class="help-text">
                         <strong>Looking for support?</strong>
                         <span class="help-chips">
-                            <?php if ($reimbursementOpen): ?><a href="/reimbursement">Reimbursement</a><?php endif; ?>
-                            <?php if ($internetOpen): ?><a href="/internet-support">Internet support</a><?php endif; ?>
+                            <?php if ($reimbursementOpen): ?><a href="/support?type=reimbursement">Reimbursement</a><?php endif; ?>
+                            <?php if ($internetOpen): ?><a href="/support?type=internet">Internet support</a><?php endif; ?>
                         </span>
+                        <?php if ($signedInMember): ?>
+                            <span class="help-sub">Signed in as <strong><?= htmlspecialchars($signedInMember['full_name'] ?: $signedInMember['member_id']) ?></strong>
+                                &middot; <a href="/member/logout">Sign out</a></span>
+                        <?php else: ?>
+                            <span class="help-sub">For DCW members. <a href="/member/login?next=%2Fsupport">Sign in with your Member ID</a></span>
+                        <?php endif; ?>
                     </span>
                 </div>
             <?php endif; ?>
