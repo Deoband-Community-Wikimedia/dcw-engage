@@ -5,6 +5,7 @@ require_once __DIR__ . '/../../includes/audit.php';
 require_once __DIR__ . '/../../includes/require_role.php';
 require_once __DIR__ . '/../../includes/app_log.php';
 require_once __DIR__ . '/../../includes/mailer.php';
+require_once __DIR__ . '/../../includes/engage_page.php';
 require_once __DIR__ . '/../../models/ReimbursementModel.php';
 require_once __DIR__ . '/../../models/InternetSupportModel.php';
 
@@ -183,225 +184,194 @@ if ($requestedTab === null) {
 }
 $tab = $requestedTab;
 
-$tabStyle = function ($active) {
-    return 'padding:8px 16px; border-radius:6px 6px 0 0; text-decoration:none; font-weight:600; font-size:14px; '
-        . ($active ? 'background:#106b9a; color:#fff;' : 'background:#e2e8f0; color:#334155;');
-};
+$e = fn($s) => htmlspecialchars((string) $s);
+
+engage_header([
+    'title'   => 'Finance queue',
+    'heading' => 'Finance queue',
+    'kicker'  => 'Finance',
+    'lead'    => 'Pay approved claims, recharge approved packs and check receipts.',
+    'wide'    => true,
+    'crumbs'  => [['Home', '/'], ['Finance queue']],
+    'tools'   => '<span class="who">' . $e(Auth::email()) . '</span>'
+               . '<a class="chip-btn" href="/finance/closed?tab=' . $e($tab) . '">Closed requests &amp; receipts &rarr;</a>',
+]);
 ?>
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Finance Queue</title>
-    <link rel="stylesheet" href="/assets/css/forms.css?v=2">
-</head>
-<body>
-    <div class="container">
-        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
-            <h1 style="margin:0;">Finance Queue</h1>
-            <a href="/finance/closed?tab=<?= htmlspecialchars($tab) ?>" style="color:#106b9a; font-size:14px; font-weight:600; text-decoration:none;">Closed requests &amp; receipts &rarr;</a>
+<div class="fcard wide">
+    <nav class="tabs" aria-label="Queue">
+        <a class="tab<?= $tab === 'reimbursement' ? ' on' : '' ?>" href="/finance?tab=reimbursement">Reimbursements <span class="count"><?= $reimbursementCount ?></span></a>
+        <a class="tab<?= $tab === 'internet' ? ' on' : '' ?>" href="/finance?tab=internet">Internet support <span class="count"><?= $internetCount ?></span></a>
+    </nav>
+
+    <?php if ($message): ?>
+        <div class="alert ok">
+            <?= $e($message) ?>
+            <?php if ($justPaidRequestId): ?>
+                <br><a href="/finance/reimbursements/receipt/<?= (int) $justPaidRequestId ?>" target="_blank" style="font-weight:700;">⬇ Download payment confirmation (PDF)</a>
+            <?php endif; ?>
+            <?php if ($justClosedId): ?>
+                <br><a href="/finance/internet-support/receipt/<?= (int) $justClosedId ?>" target="_blank" style="font-weight:700;">⬇ Download receipt (PDF)</a>
+            <?php endif; ?>
         </div>
-
-        <div style="display:flex; gap:6px; margin:20px 0 0; border-bottom:2px solid #106b9a; flex-wrap:wrap;">
-            <a href="/finance?tab=reimbursement" style="<?= $tabStyle($tab === 'reimbursement') ?>">Reimbursements (<?= $reimbursementCount ?>)</a>
-            <a href="/finance?tab=internet" style="<?= $tabStyle($tab === 'internet') ?>">Internet support (<?= $internetCount ?>)</a>
-        </div>
-
-        <?php if ($message): ?>
-            <div class="alert-success" style="margin-top:16px;">
-                <?= htmlspecialchars($message) ?>
-                <?php if ($justPaidRequestId): ?>
-                    <br>
-                    <a href="/finance/reimbursements/receipt/<?= (int) $justPaidRequestId ?>" target="_blank"
-                       style="display:inline-block; margin-top:8px; color:#106b9a; font-weight:600; text-decoration:none;">
-                        ⬇ Download payment confirmation (PDF)
-                    </a>
-                <?php endif; ?>
-                <?php if ($justClosedId): ?>
-                    <br>
-                    <a href="/finance/internet-support/receipt/<?= (int) $justClosedId ?>" target="_blank"
-                       style="display:inline-block; margin-top:8px; color:#106b9a; font-weight:600; text-decoration:none;">
-                        ⬇ Download receipt (PDF)
-                    </a>
-                <?php endif; ?>
-            </div>
-        <?php endif; ?>
-        <?php if ($error): ?>
-            <div class="alert-error" style="margin-top:16px;"><?= htmlspecialchars($error) ?></div>
-        <?php endif; ?>
-
-        <div style="margin-top:20px;">
+    <?php endif; ?>
+    <?php if ($error): ?><div class="alert error"><?= $e($error) ?></div><?php endif; ?>
 
 <?php if ($tab === 'reimbursement'): ?>
-        <!-- ================= REIMBURSEMENTS ================= -->
-        <p style="color:#64748b; font-size:14px;">
-            Approved claims awaiting payment. Expense details aren't shown here — that review
-            already happened. If receipts were attached, download them before marking a request
-            paid: they are deleted from the server afterwards.
-        </p>
+    <p class="note">
+        Approved claims awaiting payment. Expense details aren't shown here; that review already happened.
+        If receipts were attached, download them before marking a request paid, as they are deleted from the server afterwards.
+    </p>
 
-        <?php if (empty($reimbursementQueue)): ?>
-            <p>Nothing awaiting payment.</p>
-        <?php endif; ?>
+    <?php if (empty($reimbursementQueue)): ?><div class="empty-note">Nothing awaiting payment.</div><?php endif; ?>
 
-        <?php foreach ($reimbursementQueue as $req): ?>
-            <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:20px; margin-bottom:20px;">
-                <h3 style="margin-top:0;">
-                    <?= htmlspecialchars($req['applicant_name']) ?> — #<?= htmlspecialchars($req['tracking_id']) ?>
-                </h3>
-                <p style="color:#475569; font-size:14px; margin-top:-8px;">
-                    Event: <strong><?= htmlspecialchars($req['event_name']) ?></strong>
-                </p>
-                <p><strong>Amount: ₹<?= number_format($req['total_amount_paise'] / 100, 2) ?></strong></p>
-
-                <?php if ($req['payment_method'] === 'upi'): ?>
-                    <p>UPI ID: <strong><?= htmlspecialchars($req['upi_id']) ?></strong></p>
-                <?php elseif ($req['payment_method'] === 'bank'): ?>
-                    <p>
-                        Account name: <strong><?= htmlspecialchars($req['bank_account_name']) ?></strong><br>
-                        Account number: <strong><?= htmlspecialchars($req['bank_account_number'] ?? '') ?></strong><br>
-                        IFSC: <strong><?= htmlspecialchars($req['bank_ifsc']) ?></strong>
-                    </p>
-                <?php endif; ?>
-
-                <?php if (!empty($req['receipts'])): ?>
-                    <p style="font-size:14px; margin-bottom:6px;"><strong>Receipts</strong></p>
-                    <ul style="margin:0 0 12px; padding-left:20px; font-size:14px;">
-                        <?php foreach ($req['receipts'] as $n => $path): ?>
-                            <li><a href="/<?= htmlspecialchars($path) ?>" target="_blank" download>Receipt <?= $n + 1 ?></a></li>
-                        <?php endforeach; ?>
-                    </ul>
-                <?php else: ?>
-                    <p style="font-size:13px; color:#94a3b8;">No receipts attached.</p>
-                <?php endif; ?>
-
-                <p style="font-size:13px; color:#64748b;">
-                    Approved by <?= htmlspecialchars($req['decided_by']) ?> on <?= htmlspecialchars($req['decided_at']) ?>
-                </p>
-
-                <form method="POST" style="display:flex; gap:10px; align-items:flex-start; flex-wrap:wrap;">
-                    <?= CSRF::getInputField() ?>
-                    <?= CSRF::getSubmitField() ?>
-                    <input type="hidden" name="queue" value="reimbursement">
-                    <input type="hidden" name="tab" value="reimbursement">
-                    <input type="hidden" name="request_id" value="<?= (int) $req['id'] ?>">
-                    <!-- Required for "Mark paid". The "Payment failed" button has
-                         formnovalidate so it can still be submitted without one. -->
-                    <input type="text" name="payment_reference" required maxlength="255"
-                           placeholder="UTR / transaction reference (required to mark paid)"
-                           style="flex:1; min-width:180px;">
-                    <textarea name="notes" placeholder="Notes (required if marking failed)" style="flex:1; min-width:180px; min-height:40px;"></textarea>
-                    <?php if (!empty($req['receipts'])): ?>
-                        <label style="flex-basis:100%; font-size:13px; font-weight:500;">
-                            <input type="checkbox" name="receipts_downloaded" value="1">
-                            I have downloaded the receipts — OK to delete them from the server
-                        </label>
-                    <?php endif; ?>
-                    <button type="submit" name="result" value="paid" style="width:auto; background:#059669;">Mark paid</button>
-                    <button type="submit" name="result" value="failed" formnovalidate style="width:auto; background:#dc2626;">Payment failed</button>
-                </form>
+    <?php foreach ($reimbursementQueue as $req): ?>
+        <div class="qcard pay">
+            <div class="qhead">
+                <h3><?= $e($req['applicant_name']) ?> <code>#<?= $e($req['tracking_id']) ?></code></h3>
+                <span class="qamount">₹<?= number_format($req['total_amount_paise'] / 100, 2) ?></span>
             </div>
-        <?php endforeach; ?>
+
+            <div class="kv">
+                <div><span>Event</span><strong><?= $e($req['event_name']) ?></strong></div>
+                <?php if ($req['payment_method'] === 'upi'): ?>
+                    <div><span>UPI ID</span><strong><?= $e($req['upi_id']) ?></strong></div>
+                <?php elseif ($req['payment_method'] === 'bank'): ?>
+                    <div><span>Account name</span><strong><?= $e($req['bank_account_name']) ?></strong></div>
+                    <div><span>Account number</span><strong><?= $e($req['bank_account_number'] ?? '') ?></strong></div>
+                    <div><span>IFSC</span><strong><?= $e($req['bank_ifsc']) ?></strong></div>
+                <?php endif; ?>
+            </div>
+
+            <?php if (!empty($req['receipts'])): ?>
+                <div class="qlinks">
+                    <strong>Receipts:</strong>
+                    <?php foreach ($req['receipts'] as $n => $path): ?>
+                        <a href="/<?= $e($path) ?>" target="_blank" download>⬇ Receipt <?= $n + 1 ?></a>
+                    <?php endforeach; ?>
+                </div>
+            <?php else: ?>
+                <p class="qmeta">No receipts attached.</p>
+            <?php endif; ?>
+
+            <p class="qmeta">Approved by <?= $e($req['decided_by']) ?> on <?= $e($req['decided_at']) ?></p>
+
+            <form method="POST" class="qform">
+                <?= CSRF::getInputField() ?>
+                <?= CSRF::getSubmitField() ?>
+                <input type="hidden" name="queue" value="reimbursement">
+                <input type="hidden" name="tab" value="reimbursement">
+                <input type="hidden" name="request_id" value="<?= (int) $req['id'] ?>">
+                <!-- Required for "Mark paid". "Payment failed" has formnovalidate. -->
+                <input type="text" name="payment_reference" required maxlength="255" placeholder="UTR / transaction reference (required to mark paid)">
+                <textarea name="notes" placeholder="Notes (required if marking failed)"></textarea>
+                <?php if (!empty($req['receipts'])): ?>
+                    <label class="confirm">
+                        <input type="checkbox" name="receipts_downloaded" value="1">
+                        I have downloaded the receipts; OK to delete them from the server
+                    </label>
+                <?php endif; ?>
+                <button type="submit" name="result" value="paid" class="btn-ok">Mark paid</button>
+                <button type="submit" name="result" value="failed" formnovalidate class="btn-bad">Payment failed</button>
+            </form>
+        </div>
+    <?php endforeach; ?>
 
 <?php else: ?>
-        <!-- ================= INTERNET SUPPORT ================= -->
-        <p style="color:#64748b; font-size:14px;">
-            Approved requests waiting for a recharge, then receipts waiting to be checked.
-            The reason for a request isn't shown here; the review already happened.
-        </p>
+    <p class="note">
+        Approved requests waiting for a recharge, then receipts waiting to be checked.
+        The reason for a request isn't shown here; the review already happened.
+    </p>
 
-        <!-- ---- 1. Recharge queue ---- -->
-        <h2 style="font-size:17px;">1. To recharge (<?= count($rechargeQueue) ?>)</h2>
-        <?php if (empty($rechargeQueue)): ?><p>Nothing awaiting recharge.</p><?php endif; ?>
+    <h2 class="sec-title">1. To recharge <span class="pill"><?= count($rechargeQueue) ?></span></h2>
+    <?php if (empty($rechargeQueue)): ?><div class="empty-note">Nothing awaiting recharge.</div><?php endif; ?>
 
-        <?php foreach ($rechargeQueue as $req): ?>
-            <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:20px; margin-bottom:20px;">
-                <h3 style="margin-top:0;">
-                    <?= htmlspecialchars($req['applicant_name']) ?> — #<?= htmlspecialchars($req['tracking_id']) ?>
-                </h3>
-                <?php if ($req['phone_error']): ?>
-                    <div class="alert-error" style="margin:8px 0;">
-                        <strong>The phone number on this request can't be read</strong> (it was stored damaged),
-                        so it can't be recharged. Mark it as failed with a note. A reviewer can then reject it,
-                        and the volunteer can submit a new request straight away.
-                    </div>
-                <?php else: ?>
-                    <p style="font-size:20px; margin:6px 0;"><strong><?= htmlspecialchars($req['phone']) ?></strong></p>
+    <?php foreach ($rechargeQueue as $req): ?>
+        <div class="qcard pay">
+            <div class="qhead">
+                <h3><?= $e($req['applicant_name']) ?> <code>#<?= $e($req['tracking_id']) ?></code></h3>
+                <span class="qamount">₹<?= number_format($req['package_price_paise'] / 100, 2) ?></span>
+            </div>
+
+            <?php if ($req['phone_error']): ?>
+                <div class="alert error">
+                    <strong>The phone number on this request can't be read</strong> (it was stored damaged),
+                    so it can't be recharged. Mark it as failed with a note. A reviewer can then reject it,
+                    and the volunteer can submit a new request straight away.
+                </div>
+            <?php else: ?>
+                <div class="kv">
+                    <div><span>Mobile number</span><strong class="big"><?= $e($req['phone']) ?></strong></div>
+                    <div><span>Operator</span><strong><?= $e($req['operator']) ?></strong></div>
+                    <div><span>Pack</span><strong><?= $e($req['package_name']) ?><?= $req['package_validity_days'] ? ' · ' . (int) $req['package_validity_days'] . ' days' : '' ?></strong></div>
+                </div>
+            <?php endif; ?>
+
+            <p class="qmeta">
+                The applicant stated this pack and price. Confirm the operator's actual price before recharging,
+                and don't pay more than the approved amount.<br>
+                Approved by <?= $e($req['decided_by']) ?> on <?= $e($req['decided_at']) ?> UTC
+            </p>
+
+            <form method="POST" class="qform">
+                <?= CSRF::getInputField() ?>
+                <?= CSRF::getSubmitField() ?>
+                <input type="hidden" name="queue" value="internet">
+                <input type="hidden" name="tab" value="internet">
+                <input type="hidden" name="request_id" value="<?= (int) $req['id'] ?>">
+                <?php if (!$req['phone_error']): ?>
+                    <!-- Required for "Recharge done"; "Recharge failed" has formnovalidate. -->
+                    <input type="text" name="recharge_reference" required maxlength="255" placeholder="Operator reference / transaction ID (required when done)">
                 <?php endif; ?>
-                <p style="margin-bottom:4px;">
-                    <?= htmlspecialchars($req['operator']) ?> — <strong><?= htmlspecialchars($req['package_name']) ?></strong><br>
-                    Approved amount: <strong>₹<?= number_format($req['package_price_paise'] / 100, 2) ?></strong><?= $req['package_validity_days'] ? ' · ' . (int) $req['package_validity_days'] . ' days' : '' ?>
-                </p>
-                <p style="font-size:12px; color:#64748b; margin-top:0;">The applicant stated this pack and price. Confirm the operator's actual price before recharging, and don't pay more than the approved amount.</p>
-                <p style="font-size:13px; color:#64748b;">
-                    Approved by <?= htmlspecialchars($req['decided_by']) ?> on <?= htmlspecialchars($req['decided_at']) ?> UTC
-                </p>
-
-                <form method="POST" style="display:flex; gap:10px; align-items:flex-start; flex-wrap:wrap;">
-                    <?= CSRF::getInputField() ?>
-                    <?= CSRF::getSubmitField() ?>
-                    <input type="hidden" name="queue" value="internet">
-                    <input type="hidden" name="tab" value="internet">
-                    <input type="hidden" name="request_id" value="<?= (int) $req['id'] ?>">
-                    <?php if (!$req['phone_error']): ?>
-                        <!-- Required for "Recharge done"; "Recharge failed" has formnovalidate. -->
-                        <input type="text" name="recharge_reference" required maxlength="255"
-                               placeholder="Operator reference / transaction ID (required when done)"
-                               style="flex:1; min-width:180px;">
-                    <?php endif; ?>
-                    <textarea name="notes" placeholder="Notes (required if recharge failed)" style="flex:1; min-width:180px; min-height:40px;"></textarea>
-                    <?php if (!$req['phone_error']): ?>
-                        <button type="submit" name="result" value="done" style="width:auto; background:#059669;">Recharge done</button>
-                    <?php endif; ?>
-                    <button type="submit" name="result" value="failed" formnovalidate style="width:auto; background:#dc2626;">Recharge failed</button>
-                </form>
-            </div>
-        <?php endforeach; ?>
-
-        <!-- ---- 2. Receipt verification ---- -->
-        <h2 style="font-size:17px; margin-top:40px;">2. Receipts to check (<?= count($receiptQueue) ?>)</h2>
-        <?php if (empty($receiptQueue)): ?><p>No receipts waiting.</p><?php endif; ?>
-
-        <?php foreach ($receiptQueue as $req): ?>
-            <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:20px; margin-bottom:20px;">
-                <h3 style="margin-top:0;">
-                    <?= htmlspecialchars($req['applicant_name']) ?> — #<?= htmlspecialchars($req['tracking_id']) ?>
-                </h3>
-                <p>
-                    <?= $req['phone_error'] ? '(phone unreadable)' : htmlspecialchars($req['phone']) ?> ·
-                    <?= htmlspecialchars($req['operator']) ?> — <?= htmlspecialchars($req['package_name']) ?>
-                    (approved ₹<?= number_format($req['package_price_paise'] / 100, 2) ?>)<br>
-                    Recharge reference: <strong><?= htmlspecialchars((string) $req['recharge_reference']) ?></strong>
-                </p>
-                <p style="font-size:14px;">
-                    <?php if ($req['receipt_path'] !== ''): ?>
-                        <a href="/<?= htmlspecialchars($req['receipt_path']) ?>" target="_blank" download>⬇ Download receipt</a>
-                    <?php else: ?>
-                        <span style="color:#94a3b8;">Receipt file is missing.</span>
-                    <?php endif; ?>
-                    <span style="color:#64748b;"> — uploaded <?= htmlspecialchars((string) $req['receipt_submitted_at']) ?> UTC</span>
-                </p>
-
-                <form method="POST" style="display:flex; gap:10px; align-items:flex-start; flex-wrap:wrap;">
-                    <?= CSRF::getInputField() ?>
-                    <?= CSRF::getSubmitField() ?>
-                    <input type="hidden" name="queue" value="internet">
-                    <input type="hidden" name="tab" value="internet">
-                    <input type="hidden" name="request_id" value="<?= (int) $req['id'] ?>">
-                    <textarea name="notes" placeholder="Notes (required to send the receipt back — the applicant sees them)" style="flex:1; min-width:220px; min-height:40px;"></textarea>
-                    <label style="flex-basis:100%; font-size:13px; font-weight:500;">
-                        <input type="checkbox" name="receipt_downloaded" value="1">
-                        I have downloaded the receipt — OK to delete it from the server
-                    </label>
-                    <button type="submit" name="result" value="close" style="width:auto; background:#059669;">Verify &amp; close</button>
-                    <button type="submit" name="result" value="bounce" style="width:auto; background:#dc2626;">Send receipt back</button>
-                </form>
-            </div>
-        <?php endforeach; ?>
-<?php endif; ?>
-
+                <textarea name="notes" placeholder="Notes (required if recharge failed)"></textarea>
+                <?php if (!$req['phone_error']): ?>
+                    <button type="submit" name="result" value="done" class="btn-ok">Recharge done</button>
+                <?php endif; ?>
+                <button type="submit" name="result" value="failed" formnovalidate class="btn-bad">Recharge failed</button>
+            </form>
         </div>
-    </div>
-</body>
-</html>
+    <?php endforeach; ?>
+
+    <h2 class="sec-title">2. Receipts to check <span class="pill" style="--tone:#c2410c;"><?= count($receiptQueue) ?></span></h2>
+    <?php if (empty($receiptQueue)): ?><div class="empty-note">No receipts waiting.</div><?php endif; ?>
+
+    <?php foreach ($receiptQueue as $req): ?>
+        <div class="qcard check">
+            <div class="qhead">
+                <h3><?= $e($req['applicant_name']) ?> <code>#<?= $e($req['tracking_id']) ?></code></h3>
+                <span class="qamount">₹<?= number_format($req['package_price_paise'] / 100, 2) ?></span>
+            </div>
+
+            <div class="kv">
+                <div><span>Mobile number</span><strong><?= $req['phone_error'] ? '(phone unreadable)' : $e($req['phone']) ?></strong></div>
+                <div><span>Operator / pack</span><strong><?= $e($req['operator']) ?> — <?= $e($req['package_name']) ?></strong></div>
+                <div><span>Recharge reference</span><strong><?= $e((string) $req['recharge_reference']) ?></strong></div>
+            </div>
+
+            <div class="qlinks">
+                <?php if ($req['receipt_path'] !== ''): ?>
+                    <a href="/<?= $e($req['receipt_path']) ?>" target="_blank" download>⬇ Download receipt</a>
+                <?php else: ?>
+                    <span style="color:var(--muted);">Receipt file is missing.</span>
+                <?php endif; ?>
+                <span style="color:var(--muted);">Uploaded <?= $e((string) $req['receipt_submitted_at']) ?> UTC</span>
+            </div>
+
+            <form method="POST" class="qform">
+                <?= CSRF::getInputField() ?>
+                <?= CSRF::getSubmitField() ?>
+                <input type="hidden" name="queue" value="internet">
+                <input type="hidden" name="tab" value="internet">
+                <input type="hidden" name="request_id" value="<?= (int) $req['id'] ?>">
+                <textarea name="notes" placeholder="Notes (required to send the receipt back; the applicant sees them)"></textarea>
+                <label class="confirm">
+                    <input type="checkbox" name="receipt_downloaded" value="1">
+                    I have downloaded the receipt; OK to delete it from the server
+                </label>
+                <button type="submit" name="result" value="close" class="btn-ok">Verify &amp; close</button>
+                <button type="submit" name="result" value="bounce" class="btn-bad">Send receipt back</button>
+            </form>
+        </div>
+    <?php endforeach; ?>
+<?php endif; ?>
+</div>
+<?php engage_footer(); ?>
