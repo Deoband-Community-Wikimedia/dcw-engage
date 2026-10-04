@@ -14,6 +14,15 @@ require_once __DIR__ . '/../includes/crypto.php';
  *     receipts. Finance needs to know how much and where to send it, not
  *     what was bought.
  *
+ * Send-back-as-draft: a reviewer may return a claim with a question
+ * (requestInfo(): Submitted/Under Review -> Info Requested). On /track the
+ * applicant then sees the question plus their own editable claim
+ * (getDraftForApplicant()), corrects it, adds a note and resubmits in one
+ * step (resubmitDraft(): Info Requested -> Submitted). Payment details,
+ * expense categories and receipt files are never shown or changed from
+ * there. While Info Requested, a claim can only be rejected or discarded;
+ * it cannot be approved until it comes back.
+ *
  * One global form now, not one per event: the applicant types the event
  * name themselves (event_name, free text) rather than this being scoped to
  * a specific row in `forms`. That's why nothing here takes a $formId or
@@ -34,6 +43,13 @@ class ReimbursementModel {
 
     /** A claim is only valid if filed within this many days of the event. */
     public const CLAIM_WINDOW_DAYS = 5;
+
+    /** Bounds for reviewer questions and applicant replies (same as internet support). */
+    public const MIN_MESSAGE_LENGTH = 5;
+    public const MAX_MESSAGE_LENGTH = 1000;
+
+    /** Cap for an expense description edited from /track. */
+    public const MAX_ITEM_DESCRIPTION_LENGTH = 500;
 
     /** "Today" for the claim window is judged in India time, not server time. */
     private const CLAIM_TIMEZONE = 'Asia/Kolkata';
@@ -306,6 +322,9 @@ class ReimbursementModel {
      * Global now, not scoped to one event's config — one form covers every
      * event, so this lists every request across all of them, and
      * event_name (typed by the applicant) is just another column.
+     *
+     * Each request also carries its reviewer <-> applicant conversation
+     * under 'messages' (see getMessagesForReview()).
      */
     public function listForAdminReview($status = null) {
         $sql = "SELECT id, email, applicant_name, event_name, event_date,
@@ -328,6 +347,7 @@ class ReimbursementModel {
 
         foreach ($requests as &$req) {
             $req['line_items'] = $this->getLineItems($req['id']);
+            $req['messages'] = $this->getMessagesForReview($req['id']);
             // Informational only (see isEligible()'s docblock) — helps a
             // reviewer spot the requests discard() exists for, but never
             // blocks anything itself.
@@ -361,13 +381,14 @@ class ReimbursementModel {
      * amount, missing receipt, expense not covered, etc). The applicant
      * DID plausibly belong here, so they're notified — the caller
      * (reimbursement_review.php) sends the rejection email after this
-     * returns true.
+     * returns true. Also allowed while 'Info Requested', for an applicant
+     * who never replies.
      */
     public function reject($requestId, $adminIdentifier, $notes) {
         $stmt = $this->db->prepare(
             "UPDATE reimbursement_requests
              SET status = 'Rejected', decided_by = :who, decided_at = NOW(), admin_notes = :notes
-             WHERE id = :id AND status IN ('Submitted', 'Under Review', 'Payment Failed')"
+             WHERE id = :id AND status IN ('Submitted', 'Under Review', 'Payment Failed', 'Info Requested')"
         );
         $stmt->execute(['who' => $adminIdentifier, 'notes' => $notes, 'id' => $requestId]);
         return $stmt->rowCount() === 1;
@@ -391,10 +412,304 @@ class ReimbursementModel {
         $stmt = $this->db->prepare(
             "UPDATE reimbursement_requests
              SET status = 'Discarded', decided_by = :who, decided_at = NOW(), admin_notes = :notes
-             WHERE id = :id AND status IN ('Submitted', 'Under Review', 'Payment Failed')"
+             WHERE id = :id AND status IN ('Submitted', 'Under Review', 'Payment Failed', 'Info Requested')"
         );
         $stmt->execute(['who' => $adminIdentifier, 'notes' => $notes, 'id' => $requestId]);
         return $stmt->rowCount() === 1;
+    }
+
+    // ------------------------------------------------------------------
+    // Reviewer <-> applicant messages ("Info Requested")
+    //
+    // The applicant only ever sees "DCW reviewer". The reviewer's identifier
+    // is stored for audit and is deliberately NOT in any applicant-facing
+    // SELECT.
+    // ------------------------------------------------------------------
+
+    private function cleanMessage($message) {
+        $message = trim((string) $message);
+        $len = mb_strlen($message);
+        if ($len < self::MIN_MESSAGE_LENGTH) {
+            throw new \InvalidArgumentException('Please write a little more.');
+        }
+        if ($len > self::MAX_MESSAGE_LENGTH) {
+            throw new \InvalidArgumentException('Message is too long (' . self::MAX_MESSAGE_LENGTH . ' characters max).');
+        }
+        return $message;
+    }
+
+    private function insertMessage($requestId, $sender, $author, $body) {
+        $stmt = $this->db->prepare(
+            "INSERT INTO reimbursement_request_messages (request_id, sender, author, body)
+             VALUES (:rid, :sender, :author, :body)"
+        );
+        $stmt->execute([
+            'rid'    => (int) $requestId,
+            'sender' => $sender,
+            'author' => $author,
+            'body'   => $body,
+        ]);
+    }
+
+    /** "250" or "250.50" -> paise, or null if it isn't a positive amount. */
+    public static function rupeesToPaise($raw) {
+        $raw = trim((string) $raw);
+        if (!preg_match('/^\d{1,7}(\.\d{1,2})?$/', $raw)) {
+            return null;
+        }
+        $paise = (int) round(((float) $raw) * 100);
+        return $paise > 0 ? $paise : null;
+    }
+
+    /**
+     * Reviewer needs more input. Moves Submitted/Under Review -> Info
+     * Requested and stores the question in one transaction. Returns false if
+     * someone else got there first. The caller should email the applicant a
+     * "please check your request" nudge WITHOUT the message text.
+     *
+     * @throws \InvalidArgumentException if the message is too short or long
+     */
+    public function requestInfo($requestId, $reviewerIdentifier, $message) {
+        $message = $this->cleanMessage($message);
+
+        $this->db->beginTransaction();
+        try {
+            $stmt = $this->db->prepare(
+                "UPDATE reimbursement_requests SET status = 'Info Requested'
+                 WHERE id = :id AND status IN ('Submitted', 'Under Review')"
+            );
+            $stmt->execute(['id' => (int) $requestId]);
+            if ($stmt->rowCount() !== 1) {
+                $this->db->rollBack();
+                return false;
+            }
+
+            $this->insertMessage($requestId, 'reviewer', $reviewerIdentifier, $message);
+            $this->db->commit();
+            return true;
+        } catch (\Throwable $e) {
+            if ($this->db->inTransaction()) {
+                $this->db->rollBack();
+            }
+            throw $e;
+        }
+    }
+
+    /** Full thread for the reviewer screen, oldest first. Includes who asked, for audit. */
+    public function getMessagesForReview($requestId) {
+        $stmt = $this->db->prepare(
+            "SELECT sender, author, body, created_at
+             FROM reimbursement_request_messages
+             WHERE request_id = :id
+             ORDER BY id ASC"
+        );
+        $stmt->execute(['id' => (int) $requestId]);
+        return $stmt->fetchAll();
+    }
+
+    /** Thread for /track. No author column: reviewers stay anonymous. Discarded looks like "no record". */
+    public function getMessagesForApplicant($trackingId, $email) {
+        $stmt = $this->db->prepare(
+            "SELECT m.sender, m.body, m.created_at
+             FROM reimbursement_request_messages m
+             JOIN reimbursement_requests r ON r.id = m.request_id
+             WHERE r.tracking_id = :t AND r.email = :email AND r.status <> 'Discarded'
+             ORDER BY m.id ASC"
+        );
+        $stmt->execute(['t' => $trackingId, 'email' => strtolower(trim($email))]);
+        return $stmt->fetchAll();
+    }
+
+    /**
+     * The applicant's own editable claim, for the draft form on /track. Only
+     * returned while 'Info Requested' and the tracking ID + email pair
+     * matches. Event name/date and each expense's category, description and
+     * amount. No payment method, UPI/bank fields or receipt paths.
+     */
+    public function getDraftForApplicant($trackingId, $email) {
+        $stmt = $this->db->prepare(
+            "SELECT id, event_name, event_date
+             FROM reimbursement_requests
+             WHERE tracking_id = :t AND email = :email AND status = 'Info Requested'"
+        );
+        $stmt->execute(['t' => $trackingId, 'email' => strtolower(trim($email))]);
+        $req = $stmt->fetch();
+        if (!$req) {
+            return null;
+        }
+
+        $items = $this->db->prepare(
+            "SELECT id, category, description, amount_paise
+             FROM reimbursement_line_items WHERE request_id = :rid ORDER BY id ASC"
+        );
+        $items->execute(['rid' => (int) $req['id']]);
+
+        return [
+            'event_name' => $req['event_name'],
+            'event_date' => $req['event_date'],
+            'items'      => $items->fetchAll(),
+        ];
+    }
+
+    /**
+     * A corrected event date must still be a real past date, and within the
+     * claim window measured from when the claim was ORIGINALLY filed (the
+     * window was met then; resubmitting later must not retroactively fail).
+     */
+    private function validateEditedEventDate($raw, $createdAt) {
+        $raw = trim((string) $raw);
+        $tz = new \DateTimeZone(self::CLAIM_TIMEZONE);
+
+        $date = \DateTimeImmutable::createFromFormat('!Y-m-d', $raw, $tz);
+        if (!$date || $date->format('Y-m-d') !== $raw) {
+            throw new \InvalidArgumentException('Please enter the date of the event.');
+        }
+        $today = new \DateTimeImmutable('today', $tz);
+        if ($date > $today) {
+            throw new \InvalidArgumentException('The event date cannot be in the future.');
+        }
+        $filed = (new \DateTimeImmutable((string) $createdAt, $tz))->setTime(0, 0);
+        if ($date < $filed->modify('-' . self::CLAIM_WINDOW_DAYS . ' days')) {
+            throw new \InvalidArgumentException(
+                'The event date must be within ' . self::CLAIM_WINDOW_DAYS . ' days of when you first submitted this request.'
+            );
+        }
+        return $raw;
+    }
+
+    /**
+     * Applicant corrects the claim and answers the reviewer, via /track.
+     * Saves the event name/date and each expense's description and amount,
+     * recomputes the total HERE, stores the note (with a line listing what
+     * changed, visible to the reviewer) and moves Info Requested -> Submitted,
+     * all in one transaction. Returns false if the pair doesn't match or the
+     * request is no longer waiting on the applicant.
+     *
+     * Not editable here: payment method/details, expense categories, receipt
+     * files and the number of expenses. If the new total would exceed the UPI
+     * cap on a UPI claim, it is refused (the payment method can't be changed
+     * from this page).
+     *
+     * @param array $items id => ['description' => string, 'amount_paise' => int]
+     *                     (every existing expense must be present)
+     * @throws \InvalidArgumentException on any validation failure
+     */
+    public function resubmitDraft($trackingId, $email, $eventName, $eventDate, array $items, $note) {
+        $note = $this->cleanMessage($note);
+
+        $eventName = trim(preg_replace('/\s+/', ' ', (string) $eventName));
+        if ($eventName === '') {
+            throw new \InvalidArgumentException('Please enter the name of the event.');
+        }
+        if (mb_strlen($eventName) > 255) {
+            throw new \InvalidArgumentException('Event name is too long (255 characters max).');
+        }
+
+        $this->db->beginTransaction();
+        try {
+            $find = $this->db->prepare(
+                "SELECT id, email, event_name, event_date, total_amount_paise, payment_method, created_at
+                 FROM reimbursement_requests
+                 WHERE tracking_id = :t AND email = :email AND status = 'Info Requested'
+                 FOR UPDATE"
+            );
+            $find->execute(['t' => $trackingId, 'email' => strtolower(trim($email))]);
+            $req = $find->fetch();
+            if (!$req) {
+                $this->db->rollBack();
+                return false;
+            }
+
+            $eventDate = $this->validateEditedEventDate($eventDate, $req['created_at']);
+
+            // Same duplicate rule as a fresh claim, ignoring this request itself.
+            if ($eventName !== $req['event_name']) {
+                $dup = $this->db->prepare(
+                    "SELECT 1 FROM reimbursement_requests
+                     WHERE email = :email AND event_name = :event_name AND id <> :id
+                       AND status NOT IN ('Rejected', 'Discarded')"
+                );
+                $dup->execute(['email' => $req['email'], 'event_name' => $eventName, 'id' => (int) $req['id']]);
+                if ($dup->fetchColumn()) {
+                    throw new \InvalidArgumentException('You already have a request for an event with that name.');
+                }
+            }
+
+            $cur = $this->db->prepare(
+                "SELECT id, description, amount_paise FROM reimbursement_line_items
+                 WHERE request_id = :rid ORDER BY id ASC FOR UPDATE"
+            );
+            $cur->execute(['rid' => (int) $req['id']]);
+            $existing = $cur->fetchAll();
+
+            $changes = [];
+            if ($eventName !== $req['event_name']) { $changes[] = 'Event name'; }
+            if ($eventDate !== $req['event_date']) { $changes[] = 'Event date'; }
+
+            $total = 0;
+            $updates = [];
+            foreach ($existing as $n => $row) {
+                $in = $items[(int) $row['id']] ?? null;
+                $desc = trim((string) ($in['description'] ?? ''));
+                $amount = (int) ($in['amount_paise'] ?? 0);
+                if ($desc === '') {
+                    throw new \InvalidArgumentException('Every expense needs a description.');
+                }
+                if (mb_strlen($desc) > self::MAX_ITEM_DESCRIPTION_LENGTH) {
+                    throw new \InvalidArgumentException('An expense description is too long (' . self::MAX_ITEM_DESCRIPTION_LENGTH . ' characters max).');
+                }
+                if ($amount <= 0) {
+                    throw new \InvalidArgumentException('Every expense amount must be greater than zero.');
+                }
+                if ($desc !== $row['description']) { $changes[] = 'Expense ' . ($n + 1) . ' description'; }
+                if ($amount !== (int) $row['amount_paise']) { $changes[] = 'Expense ' . ($n + 1) . ' amount'; }
+                $total += $amount;
+                $updates[] = [(int) $row['id'], $desc, $amount];
+            }
+
+            if ($req['payment_method'] === 'upi' && $total > self::UPI_MAX_PAISE) {
+                $rupees = number_format(self::UPI_MAX_PAISE / 100);
+                throw new \InvalidArgumentException(
+                    "This total is above ₹$rupees, which is the limit for UPI payouts, and the payment method can't be changed here. "
+                    . "Please lower the amounts or write to the organisers."
+                );
+            }
+            if ($total !== (int) $req['total_amount_paise']) {
+                $changes[] = 'Total (₹' . number_format($req['total_amount_paise'] / 100, 2)
+                           . ' → ₹' . number_format($total / 100, 2) . ')';
+            }
+
+            $upItem = $this->db->prepare(
+                "UPDATE reimbursement_line_items SET description = :d, amount_paise = :a WHERE id = :id AND request_id = :rid"
+            );
+            foreach ($updates as [$itemId, $desc, $amount]) {
+                $upItem->execute(['d' => $desc, 'a' => $amount, 'id' => $itemId, 'rid' => (int) $req['id']]);
+            }
+
+            $upReq = $this->db->prepare(
+                "UPDATE reimbursement_requests
+                 SET event_name = :name, event_date = :date, total_amount_paise = :total, status = 'Submitted'
+                 WHERE id = :id AND status = 'Info Requested'"
+            );
+            $upReq->execute(['name' => $eventName, 'date' => $eventDate, 'total' => $total, 'id' => (int) $req['id']]);
+            if ($upReq->rowCount() !== 1) {
+                $this->db->rollBack();
+                return false;
+            }
+
+            $body = $note . "\n\n" . ($changes
+                ? '[Updated: ' . implode(', ', $changes) . ']'
+                : '[No details changed]');
+            $this->insertMessage($req['id'], 'applicant', null, $body);
+
+            $this->db->commit();
+            return true;
+        } catch (\Throwable $e) {
+            if ($this->db->inTransaction()) {
+                $this->db->rollBack();
+            }
+            throw $e;
+        }
     }
 
     // ------------------------------------------------------------------
