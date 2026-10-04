@@ -376,3 +376,17 @@ fieldset.group legend { padding: 0 8px; font-weight: 700; font-size: 14px; color
 .tbl .sub { display: block; font-size: 12px; color: var(--muted); }
 .tbl a.dl { color: var(--primary); font-weight: 700; text-decoration: none; white-space: nowrap; }
 .tbl a.dl:hover { text-decoration: underline; }
+
+/* ---------- Breadcrumb / back bar (inside the hero) ---------- */
+.crumbs {
+    max-width: 1060px; margin: -10px auto 20px; display: flex; flex-wrap: wrap; justify-content: center;
+    align-items: center; gap: 6px 8px; font-size: 13.5px; color: rgba(255,255,255,.8);
+}
+.crumbs a {
+    padding: 3px 11px; border-radius: 999px; color: #fff; text-decoration: none; font-weight: 600;
+    background: rgba(255,255,255,.14); border: 1px solid rgba(255,255,255,.25); transition: background .15s, color .15s;
+}
+.crumbs a:hover { background: #fff; color: var(--primary-dark); }
+.crumbs a.back { margin-right: 6px; border-color: rgba(255,255,255,.55); }
+.crumbs .sep { opacity: .55; }
+.crumbs .here { font-weight: 700; color: #fff; }
