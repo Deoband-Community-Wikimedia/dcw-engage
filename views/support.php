@@ -2,26 +2,29 @@
 require_once __DIR__ . '/../includes/init.php';
 require_once __DIR__ . '/../includes/wikitext.php';
 require_once __DIR__ . '/../includes/app_log.php';
+require_once __DIR__ . '/../includes/member_session.php';
 require_once __DIR__ . '/../models/InternetSupportModel.php';
 require_once __DIR__ . '/../models/ReimbursementSettingsModel.php';
 require_once __DIR__ . '/../models/ReimbursementModel.php';
-require_once __DIR__ . '/../models/EmailVerificationModel.php';
 
 /**
  * DCW Engage - unified support entry point (/support).
  *
- * One page, one email verification, then the participant picks what they
- * need. Replaces the separate /internet-support and /reimbursement pages
- * (the router now redirects those here, keeping ?verify= tokens working).
+ * MEMBERS ONLY. A volunteer signs in with their Member ID and password (/member/login), and the
+ * email on their membership is used for every request, so there is no email verification step here
+ * any more: the login already proves who they are. Old ?verify= links still in inboxes are simply
+ * ignored (the person is asked to sign in instead).
  *
- * Type is chosen with ?type=internet|reimbursement. All validation, privacy
- * rules and state machines stay in InternetSupportModel / ReimbursementModel;
- * this file only does routing, verification and rendering.
- *
- * Both old forms verified emails with form_id NULL, so one shared session key
- * ('verified_email_support') is enough.
+ * One page, then the member picks what they need. Type is chosen with ?type=internet|reimbursement.
+ * All validation, privacy rules and state machines stay in InternetSupportModel / ReimbursementModel;
+ * this file only does routing, sign-in checks and rendering.
  */
-const SUPPORT_FORM_ID = null;
+
+/**
+ * true  = only members whose membership is active (approved and not expired) can request support.
+ * false = any signed-in member can.
+ */
+const SUPPORT_REQUIRES_ACTIVE_MEMBER = true;
 
 $internetModel      = new InternetSupportModel();
 $reimbursementModel = new ReimbursementModel();
@@ -40,6 +43,17 @@ if (!in_array(true, $typeOpen, true)) {
     require __DIR__ . '/forms/not_found.php';
     die();
 }
+
+// ------------------------------------------------------------------
+// Members only: not signed in means off to /member/login (and back here afterwards).
+// ------------------------------------------------------------------
+MemberSession::requireLogin();
+$member = MemberSession::current();
+$memberActive = !SUPPORT_REQUIRES_ACTIVE_MEMBER || MemberAuthModel::isActive($member);
+
+// The member's own email is used for every request (it replaces the old email verification).
+$verifiedEmail = $memberActive ? strtolower((string) $member['email']) : '';
+$memberName = (string) ($member['full_name'] ?? '');
 
 $typeMeta = [
     'internet' => [
@@ -65,74 +79,9 @@ if ($action === 'submit_internet_request') {
 $requestedClosed = isset($typeOpen[$requested]) && !$typeOpen[$requested];
 $type = (isset($typeOpen[$requested]) && $typeOpen[$requested]) ? $requested : null;
 
-$typeQuery = function ($t) {
-    return $t ? '?type=' . urlencode($t) : '';
-};
-
 $errors = [];
 $success = null;
 $successType = null;
-
-// ------------------------------------------------------------------
-// Email verification: GET stages the token, POST confirms it
-// (scanner-prefetch safe, same as the old pages).
-// ------------------------------------------------------------------
-$verifiedEmail = '';
-$pendingVerifyToken = null;
-$verifySent = false;
-
-if (isset($_GET['verify'])) {
-    $pendingVerifyToken = (string) $_GET['verify'];
-} elseif ($action === 'confirm_verification') {
-    if (!CSRF::validate($_POST['csrf_token'] ?? '')) {
-        die("Invalid CSRF token.");
-    }
-
-    $verifiedFor = (new EmailVerificationModel())->consume(SUPPORT_FORM_ID, (string) ($_POST['verify_token'] ?? ''));
-
-    if ($verifiedFor) {
-        $_SESSION['verified_email_support'] = $verifiedFor;
-        header('Location: /support' . $typeQuery($type));
-        exit;
-    }
-
-    $errors['verify'] = "That verification link has expired or was already used. Enter your email below to get a new one.";
-}
-
-$verifiedEmail = $_SESSION['verified_email_support'] ?? '';
-
-if ($action === 'request_verification') {
-    if (!CSRF::validate($_POST['csrf_token'] ?? '')) {
-        die("Invalid CSRF token.");
-    }
-
-    $email = trim($_POST['email'] ?? '');
-    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-        $errors['email'] = "Please enter a valid email address.";
-    } else {
-        try {
-            require_once __DIR__ . '/../includes/mailer.php';
-            $config = require __DIR__ . '/../includes/config.php';
-            $email = strtolower($email);
-            $issued = (new EmailVerificationModel())->request(SUPPORT_FORM_ID, $email);
-
-            if ($issued) {
-                $params = $type ? ['type' => $type, 'verify' => $issued['token']] : ['verify' => $issued['token']];
-                $verifyUrl = rtrim($config['app']['url'], '/') . '/support?' . http_build_query($params);
-                // Generic label so the email reads correctly for either type.
-                Mailer::sendReimbursementVerification($email, 'your support request', $verifyUrl, $issued['expires_at']);
-            }
-            // Same response whether or not a link was issued.
-            $verifySent = true;
-        } catch (Exception $e) {
-            app_log("Support verification request failed for <$email>: " . $e->getMessage());
-            $errors['system'] = "Something went wrong sending your verification email. Please try again.";
-        }
-    }
-} elseif ($action === 'change_email') {
-    unset($_SESSION['verified_email_support']);
-    $verifiedEmail = '';
-}
 
 // ------------------------------------------------------------------
 // Submission: internet support
@@ -143,7 +92,7 @@ if ($action === 'submit_internet_request' && $type === 'internet') {
     }
 
     if ($verifiedEmail === '') {
-        $errors['system'] = "Please verify your email before submitting.";
+        $errors['system'] = "Support requests are for members with an active membership.";
     } else {
         try {
             $applicantName = trim($_POST['applicant_name'] ?? '');
@@ -207,7 +156,7 @@ if ($action === 'submit_reimbursement' && $type === 'reimbursement') {
     $dcwEvent  = $_POST['dcw_event'] ?? '';
 
     if ($verifiedEmail === '') {
-        $errors['system'] = "Please verify your email before submitting.";
+        $errors['system'] = "Support requests are for members with an active membership.";
     } elseif ($dcwEvent === '') {
         $errors['system'] = "Please tell us whether this was a DCW-aligned, DCW-organised or DCW-associated event.";
     } elseif ($dcwEvent !== 'yes') {
@@ -294,17 +243,27 @@ if ($action === 'submit_reimbursement' && $type === 'reimbursement') {
 // ------------------------------------------------------------------
 // View state
 // ------------------------------------------------------------------
-$showConfirm = $pendingVerifyToken !== null && $verifiedEmail === '';
-$showGate    = $verifiedEmail === '' && !$showConfirm;
-$showInternetForm      = !$success && !$showConfirm && !$showGate && $type === 'internet';
-$showReimbursementForm = !$success && !$showConfirm && !$showGate && $type === 'reimbursement';
+$showInternetForm      = !$success && $memberActive && $type === 'internet';
+$showReimbursementForm = !$success && $memberActive && $type === 'reimbursement';
 
 $old = function ($key) {
     return htmlspecialchars((string) ($_POST[$key] ?? ''));
 };
+// The name field starts with the member's name from their membership.
+$oldName = function () use ($memberName) {
+    return htmlspecialchars((string) ($_POST['applicant_name'] ?? $memberName));
+};
 $checked = function ($key, $value) {
     return (($_POST[$key] ?? '') === $value) ? 'checked' : '';
 };
+
+// Why a signed-in member who is not active cannot continue.
+$inactiveReason = '';
+if (!$memberActive) {
+    $inactiveReason = (($member['status'] ?? '') === 'active')
+        ? 'Your membership expired on ' . MemberAuthModel::formatIst((string) $member['expires_at'], 'j M Y') . '.'
+        : 'Your membership is not active.';
+}
 
 // Internet support
 $maxAmountRupees = $internetSettings ? (int) ($internetSettings['max_amount_paise'] / 100) : 0;
@@ -339,109 +298,85 @@ $pageHeading = $type ? $typeMeta[$type]['title'] . ' request' : 'Request support
     <div class="container">
         <h1 style="margin-top:0;"><?= htmlspecialchars($pageHeading) ?></h1>
 
-        <?php if ($type !== null && !$success && !$showConfirm): ?>
+        <p style="margin:-8px 0 20px; font-size:14px; color:#475569;">
+            Signed in as <strong><?= htmlspecialchars($memberName !== '' ? $memberName : (string) $member['email']) ?></strong>
+            (<?= htmlspecialchars((string) $member['member_id']) ?>) ✓
+            &middot; <a href="/member/logout" style="color:#106b9a;">Sign out</a>
+        </p>
+
+        <?php if ($type !== null && !$success && $memberActive): ?>
             <p style="margin:-8px 0 20px; font-size:14px;">
                 <a href="/support" style="color:#106b9a;">&larr; Choose a different kind of support</a>
             </p>
         <?php endif; ?>
 
-        <?php if ($type === 'internet'): ?>
-            <p style="color:#475569; font-size:15px; line-height:1.6; margin-bottom:30px;">
-                DCW volunteers can request help with a data pack. A reviewer checks the request, our finance team
-                does the recharge, and you then upload the operator's receipt so we can close it.
-                You can submit one request every <?= (int) InternetSupportModel::MIN_DAYS_BETWEEN_REQUESTS ?> days.
-            </p>
-        <?php elseif ($type === 'reimbursement' && !empty($reimbursementSettings['instructions'])): ?>
-            <div style="color:#475569; font-size:15px; margin-bottom:30px; line-height:1.6;">
-                <?= MiniWikiText::render($reimbursementSettings['instructions']) ?>
-            </div>
-        <?php elseif ($type === null && !$success): ?>
-            <p style="color:#475569; font-size:15px; line-height:1.6; margin-bottom:30px;">
-                Tell us what kind of support you need. You'll verify your email once and can follow your request on the
-                <a href="/track" style="color:#106b9a;">tracking page</a>.
-            </p>
-        <?php endif; ?>
-
-        <?php if ($success): ?>
-            <div class="alert-success">
-                <h3 style="margin-top:0">Request submitted</h3>
-                Your tracking ID is <strong><?= htmlspecialchars($success['tracking_id']) ?></strong>.
-                We've emailed you a confirmation. Use the
-                <a href="/track" style="color:#106b9a;">tracking page</a> with this ID and your email to follow it<?= $successType === 'reimbursement' ? " (we'll also email you once it's reviewed)." : '.' ?>
+        <?php if (!$memberActive): ?>
+            <div class="alert-error">
+                <strong>Notice:</strong> <?= htmlspecialchars($inactiveReason) ?>
+                Support requests are for members with an active membership.
+                <a href="/membership" style="color:#991b1b; font-weight:600;">Renew your membership</a> to continue.
             </div>
 
         <?php else: ?>
 
-            <?php if ($requestedClosed): ?>
-                <div class="alert-error">
-                    <strong>Notice:</strong> <?= htmlspecialchars($typeMeta[$requested]['title']) ?> requests are closed right now.
+            <?php if ($type === 'internet'): ?>
+                <p style="color:#475569; font-size:15px; line-height:1.6; margin-bottom:30px;">
+                    DCW volunteers can request help with a data pack. A reviewer checks the request, our finance team
+                    does the recharge, and you then upload the operator's receipt so we can close it.
+                    You can submit one request every <?= (int) InternetSupportModel::MIN_DAYS_BETWEEN_REQUESTS ?> days.
+                </p>
+            <?php elseif ($type === 'reimbursement' && !empty($reimbursementSettings['instructions'])): ?>
+                <div style="color:#475569; font-size:15px; margin-bottom:30px; line-height:1.6;">
+                    <?= MiniWikiText::render($reimbursementSettings['instructions']) ?>
                 </div>
+            <?php elseif ($type === null && !$success): ?>
+                <p style="color:#475569; font-size:15px; line-height:1.6; margin-bottom:30px;">
+                    Tell us what kind of support you need. You can follow your request on the
+                    <a href="/track" style="color:#106b9a;">tracking page</a> with your tracking ID and the email on your membership.
+                </p>
             <?php endif; ?>
 
-            <?php if (!empty($errors['system']) || !empty($errors['email']) || !empty($errors['verify'])): ?>
-                <div class="alert-error">
-                    <strong>Notice:</strong> <?= htmlspecialchars($errors['system'] ?? $errors['email'] ?? $errors['verify']) ?>
+            <?php if ($success): ?>
+                <div class="alert-success">
+                    <h3 style="margin-top:0">Request submitted</h3>
+                    Your tracking ID is <strong><?= htmlspecialchars($success['tracking_id']) ?></strong>.
+                    We've emailed you a confirmation. Use the
+                    <a href="/track" style="color:#106b9a;">tracking page</a> with this ID and your email to follow it<?= $successType === 'reimbursement' ? " (we'll also email you once it's reviewed)." : '.' ?>
                 </div>
-            <?php endif; ?>
-
-            <?php if ($showConfirm): ?>
-                <div class="alert-success" style="margin-bottom:20px;">
-                    <h3 style="margin-top:0">Confirm your email</h3>
-                    Click below to finish verifying and continue.
-                </div>
-                <form method="POST" action="/support<?= htmlspecialchars($typeQuery($type)) ?>" style="margin-bottom:30px;">
-                    <?= CSRF::getInputField() ?>
-                    <input type="hidden" name="action" value="confirm_verification">
-                    <input type="hidden" name="verify_token" value="<?= htmlspecialchars($pendingVerifyToken) ?>">
-                    <button type="submit">Continue</button>
-                </form>
-
-            <?php elseif ($type === null): ?>
-                <div style="display:flex; gap:14px; flex-wrap:wrap; margin-bottom:30px;">
-                    <?php foreach ($typeMeta as $key => $meta): ?>
-                        <?php if ($typeOpen[$key]): ?>
-                            <a href="/support?type=<?= urlencode($key) ?>"
-                               style="flex:1 1 240px; display:block; padding:18px 20px; border:1px solid #cbd5e1; border-radius:8px; text-decoration:none; color:inherit; background:#fff;">
-                                <strong style="display:block; font-size:16px; color:#106b9a; margin-bottom:6px;"><?= htmlspecialchars($meta['title']) ?></strong>
-                                <span style="font-size:14px; color:#475569; line-height:1.5;"><?= htmlspecialchars($meta['blurb']) ?></span>
-                            </a>
-                        <?php else: ?>
-                            <div style="flex:1 1 240px; padding:18px 20px; border:1px dashed #e2e8f0; border-radius:8px; background:#f8fafc; opacity:.7;">
-                                <strong style="display:block; font-size:16px; color:#64748b; margin-bottom:6px;"><?= htmlspecialchars($meta['title']) ?></strong>
-                                <span style="font-size:14px; color:#64748b;">Currently closed.</span>
-                            </div>
-                        <?php endif; ?>
-                    <?php endforeach; ?>
-                </div>
-
-            <?php elseif ($showGate): ?>
-                <?php if ($verifySent): ?>
-                    <div class="alert-success">
-                        <h3 style="margin-top:0">Check your inbox</h3>
-                        If <strong><?= htmlspecialchars($email ?? '') ?></strong> can receive email, a verification link is on its way.
-                    </div>
-                <?php endif; ?>
-                <form method="POST" action="/support<?= htmlspecialchars($typeQuery($type)) ?>" style="background:#f8fafc; padding:20px; border-radius:8px; margin-bottom:30px; border:1px solid #e2e8f0;">
-                    <?= CSRF::getInputField() ?>
-                    <input type="hidden" name="action" value="request_verification">
-                    <div class="form-group" style="margin-bottom:15px;">
-                        <label>Verify your email to begin <span style="color:#ef4444">*</span></label>
-                        <input type="email" name="email" value="<?= htmlspecialchars($email ?? '') ?>" required>
-                    </div>
-                    <button type="submit"><?= $verifySent ? 'Send a new link' : 'Send verification link' ?></button>
-                </form>
 
             <?php else: ?>
 
-                <form method="POST" action="/support<?= htmlspecialchars($typeQuery($type)) ?>" style="margin:0 0 20px; font-size:14px; color:#475569;">
-                    <?= CSRF::getInputField() ?>
-                    <input type="hidden" name="action" value="change_email">
-                    Verified as <strong><?= htmlspecialchars($verifiedEmail) ?></strong> ✓
-                    <button type="submit" formnovalidate
-                        style="background:none; border:none; color:#106b9a; padding:0 0 0 6px; width:auto; font-size:14px; font-weight:500; text-decoration:underline; cursor:pointer;">Use a different email</button>
-                </form>
+                <?php if ($requestedClosed): ?>
+                    <div class="alert-error">
+                        <strong>Notice:</strong> <?= htmlspecialchars($typeMeta[$requested]['title']) ?> requests are closed right now.
+                    </div>
+                <?php endif; ?>
 
-                <?php if ($type === 'internet'): ?>
+                <?php if (!empty($errors['system'])): ?>
+                    <div class="alert-error">
+                        <strong>Notice:</strong> <?= htmlspecialchars($errors['system']) ?>
+                    </div>
+                <?php endif; ?>
+
+                <?php if ($type === null): ?>
+                    <div style="display:flex; gap:14px; flex-wrap:wrap; margin-bottom:30px;">
+                        <?php foreach ($typeMeta as $key => $meta): ?>
+                            <?php if ($typeOpen[$key]): ?>
+                                <a href="/support?type=<?= urlencode($key) ?>"
+                                   style="flex:1 1 240px; display:block; padding:18px 20px; border:1px solid #cbd5e1; border-radius:8px; text-decoration:none; color:inherit; background:#fff;">
+                                    <strong style="display:block; font-size:16px; color:#106b9a; margin-bottom:6px;"><?= htmlspecialchars($meta['title']) ?></strong>
+                                    <span style="font-size:14px; color:#475569; line-height:1.5;"><?= htmlspecialchars($meta['blurb']) ?></span>
+                                </a>
+                            <?php else: ?>
+                                <div style="flex:1 1 240px; padding:18px 20px; border:1px dashed #e2e8f0; border-radius:8px; background:#f8fafc; opacity:.7;">
+                                    <strong style="display:block; font-size:16px; color:#64748b; margin-bottom:6px;"><?= htmlspecialchars($meta['title']) ?></strong>
+                                    <span style="font-size:14px; color:#64748b;">Currently closed.</span>
+                                </div>
+                            <?php endif; ?>
+                        <?php endforeach; ?>
+                    </div>
+
+                <?php elseif ($type === 'internet'): ?>
                     <form method="POST" action="/support?type=internet">
                         <?= CSRF::getInputField() ?>
                         <input type="hidden" name="action" value="submit_internet_request">
@@ -470,7 +405,7 @@ $pageHeading = $type ? $typeMeta[$type]['title'] . ' request' : 'Request support
 
                         <div class="form-group" style="margin-bottom:20px;">
                             <label>Your name <span style="color:#ef4444">*</span></label>
-                            <input type="text" name="applicant_name" required maxlength="255" value="<?= $old('applicant_name') ?>">
+                            <input type="text" name="applicant_name" required maxlength="255" value="<?= $oldName() ?>">
                         </div>
 
                         <div class="form-group" style="margin-bottom:20px;">
@@ -578,7 +513,7 @@ $pageHeading = $type ? $typeMeta[$type]['title'] . ' request' : 'Request support
 
                         <div class="form-group" style="margin-bottom:20px;">
                             <label>Your name <span style="color:#ef4444">*</span></label>
-                            <input type="text" name="applicant_name" required>
+                            <input type="text" name="applicant_name" required value="<?= $oldName() ?>">
                         </div>
 
                         <div class="form-group" style="margin-bottom:20px;">
