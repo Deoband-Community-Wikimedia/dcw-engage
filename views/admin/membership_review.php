@@ -3,6 +3,7 @@ require_once __DIR__ . '/../../includes/init.php';
 require_once __DIR__ . '/../../includes/require_role.php';
 require_once __DIR__ . '/../../includes/wikitext.php';
 require_once __DIR__ . '/../../includes/app_log.php';
+require_once __DIR__ . '/../../includes/engage_page.php';
 require_once __DIR__ . '/../../models/MemberModel.php';
 require_once __DIR__ . '/../../includes/membership_mailer.php';
 
@@ -182,173 +183,225 @@ $bulkVerb = ['approve' => 'approved', 'reject' => 'rejected', 'review' => 'marke
 $fSlug = (string) ($_GET['form'] ?? ''); $fStatus = (string) ($_GET['status'] ?? '');
 $h = fn($v) => htmlspecialchars((string) $v);
 $label = fn($s) => $s === 'Draft' ? 'Awaiting applicant' : $s;
+// Colour class for a status pill.
+$tone = fn($s) => ['New' => 'st-new', 'Submitted' => 'st-new', 'Under Review' => 'st-review',
+                   'Draft' => 'st-wait', 'Accepted' => 'st-ok', 'Rejected' => 'st-bad'][$s] ?? 'st-new';
+
+$scopeLine = $scope !== null
+    ? ($scope ? 'Your chapters: ' . implode(', ', $scope) : 'No chapters are assigned to you yet. Ask an owner.')
+    : '';
+$crumbs = $app
+    ? [['Workspace', '/admin/dashboard'], ['Membership review', '/admin/membership-review'], [$app['applicant_name'] ?: $app['email']]]
+    : [['Workspace', '/admin/dashboard'], ['Membership review']];
+
+engage_header([
+    'title'   => 'Membership review',
+    'heading' => 'Membership review',
+    'kicker'  => 'Organizer workspace',
+    'lead'    => $scopeLine,
+    'tools'   => '',
+    'wide'    => true,
+    'crumbs'  => $crumbs,
+]);
 ?>
-<!DOCTYPE html>
-<html lang="en"><head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<?php require __DIR__ . '/../../includes/favicon.php'; ?>
-<title>Membership review - DCW Engage</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
-body{font-family:Inter,sans-serif;background:#f8fafc;color:#1e293b;margin:0;padding:32px}
-.wrap{max-width:960px;margin:auto} h1{color:#106b9a;margin:0 0 6px} a{color:#106b9a}
-table{width:100%;border-collapse:collapse;background:#fff;border:1px solid #e2e8f0}
-th,td{text-align:left;padding:10px 12px;border-bottom:1px solid #e2e8f0;font-size:14px}
-th.pick,td.pick{width:36px;padding-right:0}
-td.pick input,th.pick input{width:16px;height:16px;cursor:pointer;accent-color:#106b9a}
-td.pick input:disabled{cursor:not-allowed}
-.box{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:18px;margin:16px 0}
-dt{font-weight:600;margin-top:12px;font-size:13px;color:#475569} dd{margin:2px 0 0;white-space:pre-wrap}
-.ok{background:#ecfdf5;border:1px solid #6ee7b7;padding:10px 14px;border-radius:6px;margin:12px 0}
-.bad{background:#fef2f2;border:1px solid #f87171;padding:10px 14px;border-radius:6px;margin:12px 0}
-.warn{background:#fffbeb;border:1px solid #fcd34d;padding:10px 14px;border-radius:6px;margin:12px 0}
-.warn ul{margin:6px 0 0;padding-left:18px}
-button{padding:9px 16px;border-radius:6px;border:0;font:600 14px Inter,sans-serif;cursor:pointer;color:#fff;background:#106b9a}
-button.no{background:#b91c1c} button.gray{background:#fff;color:#475569;border:1px solid #cbd5e1}
-button:disabled{opacity:.5;cursor:not-allowed}
-select,textarea,input[type=text]{font:inherit;padding:7px;border:1px solid #cbd5e1;border-radius:4px}
-textarea{width:100%;box-sizing:border-box}
-.bulkbar{position:sticky;top:0;z-index:5;background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;margin:0 0 10px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;box-shadow:0 2px 6px rgba(0,0,0,.04)}
-.bulkbar .count{font-size:14px;font-weight:600;color:#475569;min-width:90px}
-.bulkbar input[type=text]{flex:1 1 240px;min-width:200px}
-.rowform{display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap}
-.rowform input[type=text]{width:170px;padding:5px 8px;font-size:13px}
-.rowform select{padding:5px;font-size:13px}
-.rowform button{padding:6px 12px;font-size:13px}
-</style></head><body><div class="wrap">
-<p><a href="/admin/dashboard">&larr; Workspace</a><?= $app ? ' &middot; <a href="/admin/membership-review">Queue</a>' : '' ?></p>
-<h1>Membership review</h1>
-<?php if ($scope !== null): ?><p style="color:#64748b;margin:0"><?= $scope ? 'Your chapters: ' . $h(implode(', ', $scope)) : 'No chapters are assigned to you yet. Ask an owner.' ?></p><?php endif; ?>
-<?php if ($notice): ?><div class="ok"><?= $h($notice) ?></div><?php endif; ?>
-<?php if ($manualLink): ?><div class="ok">The email was not sent automatically. Give the applicant this one-time link:<br><code><?= $h($manualLink) ?></code></div><?php endif; ?>
+    /* Membership review only. Everything else comes from /assets/css/engage.css */
+    .sect { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 22px 24px; margin: 0 0 22px; box-shadow: 0 16px 34px rgba(15,23,42,.12); }
+    .sect select, .sect input[type=text] {
+        padding: 8px 12px; background: #fff; color: var(--ink);
+        border: 1px solid var(--border); border-radius: 10px; font: inherit; font-size: 14px;
+    }
+    .sect select:focus, .sect input[type=text]:focus { outline: 2px solid var(--primary); outline-offset: -1px; border-color: transparent; }
+    .btn-ghost.sm, .btn-solid.sm { width: auto; padding: 7px 16px; font-size: 13.5px; }
+
+    .pill.st-new { --tone: var(--primary); }
+    .pill.st-review { --tone: #6d28d9; }
+    .pill.st-wait { --tone: #b45309; }
+    .pill.st-ok { --tone: #047857; }
+    .pill.st-bad { --tone: #b91c1c; }
+
+    .action-banner ul { flex-basis: 100%; margin: 6px 0 0; padding-left: 18px; }
+    .flash-link { display: block; flex-basis: 100%; margin-top: 8px; padding: 10px; background: rgba(0,0,0,.06); border-radius: 6px; font-size: 12px; word-break: break-all; }
+
+    dl.answers { margin: 14px 0 0; }
+    dl.answers dt { margin-top: 14px; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+    dl.answers dd { margin: 3px 0 0; white-space: pre-wrap; }
+    .hist { margin: 10px 0 0; font-size: 14px; }
+
+    .actrow { display: flex; flex-wrap: wrap; gap: 10px; }
+    .actform { margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border); }
+    .actform .field { margin-bottom: 12px; }
+
+    .filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 0 0 16px; }
+    .bulkbar { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 0 0 14px; padding: 12px 14px; background: #fff; border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 4px 12px rgba(15,23,42,.08); }
+    .bulkbar .count { min-width: 90px; font-size: 14px; font-weight: 700; color: var(--muted); }
+    .bulkbar input[type=text] { flex: 1 1 240px; min-width: 200px; }
+    .rowform { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 0; }
+    .rowform input[type=text] { width: 170px; padding: 6px 10px; font-size: 13px; }
+    .rowform select { padding: 6px 8px; font-size: 13px; }
+    .tbl th.pick, .tbl td.pick { width: 36px; padding-right: 0; }
+    .tbl td.pick input, .tbl th.pick input { width: 16px; height: 16px; cursor: pointer; accent-color: var(--primary); }
+    .tbl td.pick input:disabled { cursor: not-allowed; }
+</style>
+
+<?php if ($notice): ?><div class="alert ok"><?= $h($notice) ?></div><?php endif; ?>
+<?php if ($manualLink): ?>
+    <div class="action-banner">
+        <span>The email was not sent automatically. Give the applicant this one-time link:</span>
+        <code class="flash-link"><?= $h($manualLink) ?></code>
+    </div>
+<?php endif; ?>
 <?php if ($bulk): ?>
-    <div class="<?= $bulk['done'] ? 'ok' : 'bad' ?>">
+    <div class="alert <?= $bulk['done'] ? 'ok' : 'error' ?>">
         <?= (int) $bulk['done'] ?> application<?= $bulk['done'] === 1 ? '' : 's' ?> <?= $h($bulkVerb[$bulk['act']] ?? 'updated') ?>.
         <?= $bulk['skipped'] ? count($bulk['skipped']) . ' skipped.' : '' ?>
     </div>
     <?php if ($bulk['skipped']): ?>
-        <div class="warn"><strong>Skipped</strong><ul><?php foreach ($bulk['skipped'] as $s): ?><li><?= $h($s) ?></li><?php endforeach; ?></ul></div>
+        <div class="action-banner"><strong>Skipped</strong><ul><?php foreach ($bulk['skipped'] as $s): ?><li><?= $h($s) ?></li><?php endforeach; ?></ul></div>
     <?php endif; ?>
     <?php if ($bulk['links']): ?>
-        <div class="warn"><strong>These emails were not sent automatically.</strong> Give each applicant their one-time link:
+        <div class="action-banner"><strong>These emails were not sent automatically.</strong> Give each applicant their one-time link:
             <ul><?php foreach ($bulk['links'] as $l): ?><li><?= $h($l['who']) ?>: <code><?= $h($l['url']) ?></code></li><?php endforeach; ?></ul>
         </div>
     <?php endif; ?>
 <?php endif; ?>
-<?php if ($error): ?><div class="bad"><?= $h($error) ?></div><?php endif; ?>
+<?php if ($error): ?><div class="alert error"><?= $h($error) ?></div><?php endif; ?>
 
 <?php if ($app):
     $schema = json_decode($app['schema_json'], true) ?: [];
     $data = json_decode($app['form_data'] ?? '', true) ?: [];
     $open = in_array($app['status'], MemberModel::OPEN, true); ?>
-    <div class="box">
-        <strong><?= $h($app['applicant_name']) ?></strong> &middot; <?= $h($app['email']) ?><br>
-        <?= MemberModel::isRenewal($app) ? 'Renewal' : 'New applicant' ?> &middot;
-        <?= $h($schema['title'] ?? $app['form_type']) ?> &middot;
-        <?= $h($app['tracking_id']) ?> &middot; Status: <strong><?= $h($label($app['status'])) ?></strong>
-        <dl>
+    <section class="sect">
+        <div class="qhead">
+            <h3><?= $h($app['applicant_name']) ?></h3>
+            <span class="pill <?= $tone($app['status']) ?>"><?= $h($label($app['status'])) ?></span>
+        </div>
+        <p class="qmeta">
+            <?= $h($app['email']) ?> &middot;
+            <?= MemberModel::isRenewal($app) ? 'Renewal' : 'New applicant' ?> &middot;
+            <?= $h($schema['title'] ?? $app['form_type']) ?> &middot;
+            <?= $h($app['tracking_id']) ?>
+        </p>
+        <dl class="answers">
         <?php foreach ($schema['fields'] ?? [] as $f): $v = $data[$f['name']] ?? ''; if (is_array($v)) $v = implode(', ', $v); ?>
             <dt><?= MiniWikiText::inline($h($f['label'] ?? $f['name'])) ?></dt>
             <dd><?= $v === '' ? '&mdash;' : (($f['type'] ?? '') === 'file' ? 'File uploaded: ' . $h($v) : $h($v)) ?></dd>
         <?php endforeach; ?>
         </dl>
-    </div>
+    </section>
+
     <?php if ($hist = $model->history((int) $app['id'])): ?>
-    <div class="box"><strong>History</strong>
+    <section class="sect">
+        <h3 style="margin:0 0 4px; font-size:17px; font-weight:800;">History</h3>
         <?php foreach ($hist as $e): ?>
-            <p style="margin:8px 0 0;font-size:14px"><?= $h(str_replace('_', ' ', $e['decision'])) ?> &middot;
+            <p class="hist"><?= $h(str_replace('_', ' ', $e['decision'])) ?> &middot;
                <?= $h($e['decided_by']) ?> &middot; <?= $h($e['decided_at']) ?>
                <?= $e['reason'] ? '<br><em>' . nl2br($h($e['reason'])) . '</em>' : '' ?></p>
         <?php endforeach; ?>
-    </div>
+    </section>
     <?php endif; ?>
+
     <?php if ($open): ?>
-    <div class="box">
-        <form method="POST" style="display:inline"><?= CSRF::getInputField() ?>
+    <section class="sect">
+        <form method="POST" class="actrow"><?= CSRF::getInputField() ?>
             <input type="hidden" name="id" value="<?= (int) $app['id'] ?>">
-            <button name="action" value="approve">Approve</button>
-            <button name="action" value="review" class="gray">Mark under review</button>
+            <button name="action" value="approve" class="btn-ok">Approve</button>
+            <button name="action" value="review" class="btn-ghost">Mark under review</button>
         </form>
-        <form method="POST" style="margin-top:14px"><?= CSRF::getInputField() ?>
+        <form method="POST" class="actform"><?= CSRF::getInputField() ?>
             <input type="hidden" name="id" value="<?= (int) $app['id'] ?>">
-            <label>Ask for more information (sent to the applicant with a link to edit and resubmit)</label>
-            <textarea name="message" rows="3" placeholder="e.g. Please upload a clearer photo of your student ID."></textarea><br><br>
-            <button name="action" value="info" class="gray">Send back for more information</button>
+            <div class="field">
+                <label>Ask for more information (sent to the applicant with a link to edit and resubmit)</label>
+                <textarea name="message" rows="3" placeholder="e.g. Please upload a clearer photo of your student ID."></textarea>
+            </div>
+            <button name="action" value="info" class="btn-ghost">Send back for more information</button>
         </form>
-        <form method="POST" style="margin-top:14px"><?= CSRF::getInputField() ?>
+        <form method="POST" class="actform"><?= CSRF::getInputField() ?>
             <input type="hidden" name="id" value="<?= (int) $app['id'] ?>">
-            <label>Reason for rejecting (sent to the applicant)</label>
-            <textarea name="reason" rows="3"></textarea><br><br>
-            <button name="action" value="reject" class="no">Reject</button>
+            <div class="field">
+                <label>Reason for rejecting (sent to the applicant)</label>
+                <textarea name="reason" rows="3"></textarea>
+            </div>
+            <button name="action" value="reject" class="btn-bad">Reject</button>
         </form>
-    </div>
+    </section>
     <?php elseif ($model->awaitingApplicant($app)): ?>
-    <div class="box">Waiting for the applicant to update and resubmit. It returns to the queue when they do.
-        <form method="POST" style="margin-top:10px"><?= CSRF::getInputField() ?>
+    <section class="sect">
+        <p style="margin:0 0 12px;">Waiting for the applicant to update and resubmit. It returns to the queue when they do.</p>
+        <form method="POST"><?= CSRF::getInputField() ?>
             <input type="hidden" name="id" value="<?= (int) $app['id'] ?>">
-            <button name="action" value="resend" class="gray">Send the link again</button>
-        </form></div>
-    <?php else: ?><p>This application has been decided and is locked.</p><?php endif; ?>
+            <button name="action" value="resend" class="btn-ghost">Send the link again</button>
+        </form>
+    </section>
+    <?php else: ?>
+        <div class="empty-note">This application has been decided and is locked.</div>
+    <?php endif; ?>
 
 <?php else: $rows = $model->listApplications($fSlug, $fStatus, $scope); ?>
-    <form method="GET" style="margin:14px 0">
-        <select name="form"><option value="">All memberships</option>
-            <?php foreach ($model->formSlugs() as $s): ?>
-                <option value="<?= $h($s) ?>" <?= $s === $fSlug ? 'selected' : '' ?>><?= $h($s) ?></option>
-            <?php endforeach; ?></select>
-        <select name="status"><option value="">All statuses</option>
-            <?php foreach (['New','Submitted','Under Review','Draft','Accepted','Rejected'] as $s): ?>
-                <option value="<?= $h($s) ?>" <?= $s === $fStatus ? 'selected' : '' ?>><?= $h($label($s)) ?></option>
-            <?php endforeach; ?></select>
-        <button class="gray">Filter</button>
-    </form>
+    <section class="sect">
+        <form method="GET" class="filters">
+            <select name="form"><option value="">All memberships</option>
+                <?php foreach ($model->formSlugs() as $s): ?>
+                    <option value="<?= $h($s) ?>" <?= $s === $fSlug ? 'selected' : '' ?>><?= $h($s) ?></option>
+                <?php endforeach; ?></select>
+            <select name="status"><option value="">All statuses</option>
+                <?php foreach (['New','Submitted','Under Review','Draft','Accepted','Rejected'] as $s): ?>
+                    <option value="<?= $h($s) ?>" <?= $s === $fStatus ? 'selected' : '' ?>><?= $h($label($s)) ?></option>
+                <?php endforeach; ?></select>
+            <button class="btn-ghost sm">Filter</button>
+        </form>
 
-    <?php /* Both forms post back to this same URL, so the active filters are kept. */ ?>
-    <form method="POST" id="bulkForm" class="bulkbar" style="display:none"><?= CSRF::getInputField() ?>
-        <input type="hidden" name="action" value="bulk">
-        <div id="bulkIdsContainer"></div>
-        <span class="count" id="bulkCount"></span>
-        <select name="bulk_action" id="bulkAction" required>
-            <option value="">Set status to&hellip;</option>
-            <option value="review">Under Review</option>
-            <option value="approve">Accepted</option>
-            <option value="info">Needs information</option>
-            <option value="reject">Rejected</option>
-        </select>
-        <input type="text" name="note" id="bulkNote"
-            placeholder="Note to applicants (required for Needs information / Rejected)">
-        <button type="submit" id="bulkApply">Apply to selected</button>
-    </form>
+        <?php /* Both forms post back to this same URL, so the active filters are kept. */ ?>
+        <form method="POST" id="bulkForm" class="bulkbar" style="display:none"><?= CSRF::getInputField() ?>
+            <input type="hidden" name="action" value="bulk">
+            <div id="bulkIdsContainer"></div>
+            <span class="count" id="bulkCount"></span>
+            <select name="bulk_action" id="bulkAction" required>
+                <option value="">Set status to&hellip;</option>
+                <option value="review">Under Review</option>
+                <option value="approve">Accepted</option>
+                <option value="info">Needs information</option>
+                <option value="reject">Rejected</option>
+            </select>
+            <input type="text" name="note" id="bulkNote"
+                placeholder="Note to applicants (required for Needs information / Rejected)">
+            <button type="submit" id="bulkApply" class="btn-solid sm">Apply to selected</button>
+        </form>
 
-    <table><tr>
-        <th class="pick"><input type="checkbox" id="pickAll" aria-label="Select all"></th>
-        <th>Applicant</th><th>Membership</th><th>Status</th><th>Submitted</th><th>Update</th></tr>
-    <?php foreach ($rows as $r):
-        $rowOpen = in_array($r['status'], MemberModel::OPEN, true); ?>
-        <tr>
-            <td class="pick"><input type="checkbox" class="pick-row" value="<?= (int) $r['id'] ?>"
-                <?= $rowOpen ? '' : 'disabled title="Already decided or waiting on the applicant"' ?>></td>
-            <td><a href="?id=<?= (int) $r['id'] ?>"><?= $h($r['applicant_name'] ?: $r['email']) ?></a><br>
-            <small><?= $h($r['email']) ?></small></td>
-            <td><?= $h($r['form_type']) ?></td><td><?= $h($label($r['status'])) ?></td><td><?= $h($r['created_at']) ?></td>
-            <td>
-            <?php if ($rowOpen): ?>
-                <form method="POST" class="rowform"><?= CSRF::getInputField() ?>
-                    <input type="hidden" name="action" value="bulk">
-                    <input type="hidden" name="ids[]" value="<?= (int) $r['id'] ?>">
-                    <select name="bulk_action" aria-label="Set status">
-                        <option value="review">Under Review</option>
-                        <option value="approve">Accepted</option>
-                        <option value="info">Needs information</option>
-                        <option value="reject">Rejected</option>
-                    </select>
-                    <input type="text" name="note" placeholder="Note to applicant">
-                    <button type="submit" class="gray">Apply</button>
-                </form>
-            <?php else: ?><span style="color:#94a3b8">&mdash;</span><?php endif; ?>
-            </td></tr>
-    <?php endforeach; if (!$rows): ?><tr><td colspan="6">No applications yet.</td></tr><?php endif; ?>
-    </table>
+        <div class="tbl-wrap">
+        <table class="tbl"><thead><tr>
+            <th class="pick"><input type="checkbox" id="pickAll" aria-label="Select all"></th>
+            <th>Applicant</th><th>Membership</th><th>Status</th><th>Submitted</th><th>Update</th></tr></thead><tbody>
+        <?php foreach ($rows as $r):
+            $rowOpen = in_array($r['status'], MemberModel::OPEN, true); ?>
+            <tr>
+                <td class="pick"><input type="checkbox" class="pick-row" value="<?= (int) $r['id'] ?>"
+                    <?= $rowOpen ? '' : 'disabled title="Already decided or waiting on the applicant"' ?>></td>
+                <td><a class="dl" href="?id=<?= (int) $r['id'] ?>"><?= $h($r['applicant_name'] ?: $r['email']) ?></a>
+                    <span class="sub"><?= $h($r['email']) ?></span></td>
+                <td><?= $h($r['form_type']) ?></td>
+                <td><span class="pill <?= $tone($r['status']) ?>"><?= $h($label($r['status'])) ?></span></td>
+                <td><?= $h($r['created_at']) ?></td>
+                <td>
+                <?php if ($rowOpen): ?>
+                    <form method="POST" class="rowform"><?= CSRF::getInputField() ?>
+                        <input type="hidden" name="action" value="bulk">
+                        <input type="hidden" name="ids[]" value="<?= (int) $r['id'] ?>">
+                        <select name="bulk_action" aria-label="Set status">
+                            <option value="review">Under Review</option>
+                            <option value="approve">Accepted</option>
+                            <option value="info">Needs information</option>
+                            <option value="reject">Rejected</option>
+                        </select>
+                        <input type="text" name="note" placeholder="Note to applicant">
+                        <button type="submit" class="btn-ghost sm">Apply</button>
+                    </form>
+                <?php else: ?><span style="color:#94a3b8">&mdash;</span><?php endif; ?>
+                </td></tr>
+        <?php endforeach; if (!$rows): ?><tr><td colspan="6">No applications yet.</td></tr><?php endif; ?>
+        </tbody></table>
+        </div>
+    </section>
 
     <script>
     (function () {
@@ -432,4 +485,4 @@ textarea{width:100%;box-sizing:border-box}
     })();
     </script>
 <?php endif; ?>
-</div></body></html>
+<?php engage_footer(); ?>
