@@ -29,6 +29,30 @@ $membershipStaffOnly = in_array(Auth::role(), ['membership_coordinator', 'member
 
 $canReviewAny  = $canReviewReimbursements || $canReviewInternet;
 $canSeeSupport = $canReviewAny || $canProcessFinance;
+
+// Inner SVG markup for the card icons (24x24 viewBox, stroke icons).
+$icons = [
+    'doc'    => '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>',
+    'plus'   => '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
+    'people' => '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+    'key'    => '<circle cx="8" cy="15" r="4"/><line x1="10.85" y1="12.15" x2="19" y2="4"/><line x1="18" y1="5" x2="20" y2="7"/><line x1="15" y1="8" x2="17" y2="10"/>',
+    'check'  => '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>',
+    'wifi'   => '<path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/>',
+    'card'   => '<rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/>',
+    'archive'=> '<polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/>',
+];
+
+/** Renders one compact tool tile. */
+function workspace_tile(array $icons, string $tone, string $icon, string $title, string $desc, string $href): void
+{
+    ?>
+    <a class="tile" href="<?= htmlspecialchars($href) ?>" style="--tone: <?= htmlspecialchars($tone) ?>;">
+        <span class="tick"><svg viewBox="0 0 24 24" aria-hidden="true"><?= $icons[$icon] ?></svg></span>
+        <span><h3><?= htmlspecialchars($title) ?></h3><p><?= htmlspecialchars($desc) ?></p></span>
+        <span class="arrow" aria-hidden="true">→</span>
+    </a>
+    <?php
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -36,199 +60,126 @@ $canSeeSupport = $canReviewAny || $canProcessFinance;
     <meta charset="UTF-8">
     <?php require __DIR__ . '/../../includes/favicon.php'; ?>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Organizer Workspace - DCW Engage</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" rel="stylesheet">
-    <style>
-        :root {
-            --primary-color: #106b9a;
-            --background: #f8fafc;
-            --card-bg: #ffffff;
-            --text-color: #1e293b;
-            --border-color: #e2e8f0;
-        }
-        body { font-family: 'Inter', sans-serif; background: var(--background); padding: 40px; color: var(--text-color); margin: 0;}
-        .container { max-width: 1200px; margin: auto; }
-
-        .header { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 30px; }
-        h1 { margin: 0; color: var(--primary-color); font-size: 28px;}
-
-        .toolbar { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 12px; font-size: 14px; color: #64748b; }
-        .toolbar form { margin: 0; }
-        .btn-outline {
-            background: none; color: #64748b; text-decoration: none;
-            border: 1px solid var(--border-color); padding: 6px 12px; border-radius: 6px;
-            font-family: inherit; font-size: 13px; cursor: pointer;
-        }
-        .btn-outline:hover { border-color: #cbd5e1; color: var(--text-color); }
-
-        :root { --heading-font: 'Plus Jakarta Sans', 'Inter', sans-serif; }
-        h1, .card-title { font-family: var(--heading-font); }
-
-        /* Cards keep a fixed max width and sit in the middle of the page. */
-        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 340px)); justify-content: center; gap: 24px; }
-
-        .card {
-            background: var(--card-bg);
-            border-radius: 12px;
-            border: 1px solid var(--border-color);
-            padding: 24px;
-            transition: all 0.2s ease;
-            text-decoration: none;
-            color: inherit;
-            display: flex;
-            flex-direction: column;
-            position: relative;
-        }
-        .card:hover { transform: translateY(-4px); box-shadow: 0 10px 15px -3px rgba(0,0,0,0.05); border-color: #cbd5e1;}
-
-        .card-new {
-            border: 2px dashed #cbd5e1;
-            background: transparent;
-            align-items: center;
-            justify-content: center;
-            color: var(--primary-color);
-        }
-        .card-new:hover { border-color: var(--primary-color); background: rgba(16, 107, 154, 0.02);}
-
-        .card-title { font-size: 18px; font-weight: 600; margin: 0 0 10px 0; line-height: 1.3;}
-        .card-meta { font-size: 13px; color: #64748b; margin: 0 0 15px 0;}
-
-        .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px;}
-        .status-active { background: #10b981; }
-        .status-closed { background: #ef4444; }
-
-        .card-footer { margin-top: auto; border-top: 1px solid var(--border-color); padding-top: 15px; display: flex; justify-content: space-between; font-size: 13px; color: #64748b; font-weight: 500;}
-
-        .section-head { text-align: center; margin: 56px auto 28px; max-width: 640px; }
-        .section-title {
-            font-family: var(--heading-font);
-            font-size: 28px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.2;
-            color: var(--text-color); margin: 0 0 10px;
-        }
-        .section-title::after {
-            content: ''; display: block; width: 44px; height: 3px; border-radius: 2px;
-            background: var(--primary-color); margin: 12px auto 0;
-        }
-        .section-intro { font-size: 15px; line-height: 1.6; color: #64748b; margin: 0; }
-        .group-label {
-            font-family: var(--heading-font);
-            text-align: center; font-size: 15px; font-weight: 700; letter-spacing: 0.02em;
-            color: var(--primary-color); margin: 32px 0 16px;
-        }
-    </style>
+    <meta name="theme-color" content="#0c567a">
+    <meta name="robots" content="noindex, nofollow">
+    <title>Organizer workspace - DCW Engage</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/assets/css/engage.css?v=1">
+    <style>.hero { padding-bottom: 44px; } .wrap.cards-wrap { margin-top: 34px; }</style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <h1>Workspace</h1>
-
-            <div class="toolbar">
-                <span><?= htmlspecialchars(Auth::email()) ?></span>
+    <header class="hero">
+        <div class="topbar">
+            <a class="brand" href="/admin/dashboard">
+                <img src="https://dcwwiki.org/dcwwiki/images/5/56/DCW_logo.png" alt="">
+                <span>DCW Engage</span>
+            </a>
+            <div class="tools">
+                <span class="who"><?= htmlspecialchars(Auth::email()) ?></span>
                 <?php if (Auth::isOwner()): ?>
-                    <a href="/admin/team" class="btn-outline">Team</a>
-                    <a href="/admin/audit" class="btn-outline">Audit Log</a>
+                    <a href="/admin/team" class="chip-btn">Team</a>
+                    <a href="/admin/audit" class="chip-btn">Audit log</a>
                 <?php endif; ?>
                 <form method="POST" action="/admin/logout">
                     <?= CSRF::getInputField() ?>
-                    <button type="submit" class="btn-outline">Sign Out</button>
+                    <button type="submit" class="chip-btn">Sign out</button>
                 </form>
             </div>
         </div>
+        <p class="kicker">Organizer workspace</p>
+        <h1>Workspace</h1>
+        <p class="lead">Everything you can review, approve and manage, in one place.</p>
+    </header>
+
+    <main class="wrap wide cards-wrap">
 
         <?php if (!$membershipStaffOnly): ?>
-        <div class="section-head" style="margin-top: 16px;">
-            <h2 class="section-title">Application forms</h2>
-            <p class="section-intro">Create, open, and close the forms volunteers apply through, and review their responses.</p>
-        </div>
-        <div class="grid">
-            <!-- Create New Form Card -->
-            <a href="/admin/builder" class="card card-new">
-                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom: 10px;"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-                <span style="font-weight: 600; font-size: 16px;">Create Blank Form</span>
-            </a>
-
-            <!-- Existing Forms -->
-            <?php foreach ($forms as $form): ?>
-                <a href="/admin/form_manager?id=<?= $form['id'] ?>" class="card">
-                    <h3 class="card-title"><?= htmlspecialchars($form['title']) ?></h3>
-                    <p class="card-meta">Slug: /<?= htmlspecialchars($form['form_type']) ?></p>
-
-                    <div class="card-footer">
-                        <div>
-                            <?php if ($form['is_active']): ?>
-                                <span class="status-dot status-active"></span>Active
-                            <?php else: ?>
-                                <span class="status-dot status-closed"></span>Closed
-                            <?php endif; ?>
-                        </div>
-                        <div><?= $form['applicant_count'] ?> Response<?= $form['applicant_count'] !== 1 ? 's' : '' ?></div>
-                    </div>
+        <section class="panel">
+            <div class="panel-head">
+                <h2>Application forms</h2>
+                <p>Create, open and close the forms volunteers apply through, and review responses.</p>
+            </div>
+            <div class="tiles">
+                <a href="/admin/builder" class="tile new" style="--tone: #106b9a;">
+                    <span class="tick"><svg viewBox="0 0 24 24" aria-hidden="true"><?= $icons['plus'] ?></svg></span>
+                    <span><h3>Create a blank form</h3></span>
                 </a>
-            <?php endforeach; ?>
-        </div>
+                <?php foreach ($forms as $form):
+                    $active = !empty($form['is_active']);
+                    $count  = (int) $form['applicant_count'];
+                    $tone   = $active ? '#0f766e' : '#94a3b8';
+                ?>
+                    <a class="tile" href="/admin/form_manager?id=<?= (int) $form['id'] ?>" style="--tone: <?= $tone ?>;">
+                        <span class="tick"><svg viewBox="0 0 24 24" aria-hidden="true"><?= $icons['doc'] ?></svg></span>
+                        <span>
+                            <h3><?= htmlspecialchars($form['title']) ?></h3>
+                            <p>/<?= htmlspecialchars($form['form_type']) ?> &middot; <?= $count ?> response<?= $count !== 1 ? 's' : '' ?></p>
+                        </span>
+                        <span class="pill"><?= $active ? 'Active' : 'Closed' ?></span>
+                    </a>
+                <?php endforeach; ?>
+            </div>
+        </section>
         <?php endif; ?>
 
         <?php if ($canReviewMembership): ?>
-            <div class="section-head"<?= $membershipStaffOnly ? ' style="margin-top: 16px;"' : '' ?>>
-                <h2 class="section-title">Membership</h2>
-                <p class="section-intro">
-                    Review new membership applications and renewals<?= Auth::role() === 'membership_coordinator' ? ' for your chapters' : '' ?>.
-                </p>
-            </div>
-            <div class="grid">
-                <a href="/admin/membership-review" class="card">
-                    <h3 class="card-title">Membership Review</h3>
-                    <p class="card-meta">Approve, reject, or send an application back for more information.</p>
-                </a>
-                <?php if ($canManageMembershipAccess): ?>
-                    <a href="/admin/membership-access" class="card">
-                        <h3 class="card-title">Membership Access</h3>
-                        <p class="card-meta">Choose which chapters each membership coordinator can see.</p>
-                    </a>
-                <?php endif; ?>
-            </div>
+            <section class="panel">
+                <div class="panel-head">
+                    <h2>Membership</h2>
+                    <p>Review new applications and renewals<?= Auth::role() === 'membership_coordinator' ? ' for your chapters' : '' ?>.</p>
+                </div>
+                <div class="tiles">
+                    <?php
+                    workspace_tile($icons, '#97161b', 'people', 'Membership review',
+                        'Approve, reject, or send an application back for more information.', '/admin/membership-review');
+                    if ($canManageMembershipAccess) {
+                        workspace_tile($icons, '#97161b', 'key', 'Membership access',
+                            'Choose which chapters each coordinator can see.', '/admin/membership-access');
+                    }
+                    ?>
+                </div>
+            </section>
         <?php endif; ?>
 
         <?php if ($canSeeSupport): ?>
-            <div class="section-head">
-                <h2 class="section-title">Volunteer Support Ecosystem</h2>
-                <p class="section-intro">
-                    Reimbursements and internet support through review to payment.
-                </p>
-            </div>
-
-            <?php if ($canReviewAny): ?>
-                <div class="group-label" style="margin-top: 0;">Review</div>
-                <div class="grid">
-                    <?php if ($canReviewReimbursements): ?>
-                        <a href="/admin/reimbursements/review" class="card">
-                            <h3 class="card-title">Reimbursement Review</h3>
-                            <p class="card-meta">Approve or reject claims — line items and receipts, no payment details.</p>
-                        </a>
-                    <?php endif; ?>
-                    <?php if ($canReviewInternet): ?>
-                        <a href="/admin/internet-review" class="card">
-                            <h3 class="card-title">Internet Support Review</h3>
-                            <p class="card-meta">Decide whether volunteer requests are reasonable — reasons and packages, no phone numbers.</p>
-                        </a>
-                    <?php endif; ?>
+            <section class="panel">
+                <div class="panel-head">
+                    <h2>Volunteer support</h2>
+                    <p>Reimbursements and internet support, from review to payment.</p>
+                    <div class="legend">
+                        <?php if ($canReviewAny): ?><span style="--tone:#0f766e"><i></i>Review</span><?php endif; ?>
+                        <?php if ($canProcessFinance): ?><span style="--tone:#b45309"><i></i>Finance</span><?php endif; ?>
+                    </div>
                 </div>
-            <?php endif; ?>
-
-            <?php if ($canProcessFinance): ?>
-                <div class="group-label">Finance</div>
-                <div class="grid">
-                    <a href="/finance" class="card">
-                        <h3 class="card-title">Finance Queue</h3>
-                        <p class="card-meta">Pay approved reimbursements, recharge approved numbers, and check uploaded receipts — one queue, a tab for each.</p>
-                    </a>
-                    <a href="/finance/closed" class="card">
-                        <h3 class="card-title">Closed Requests</h3>
-                        <p class="card-meta">Paid reimbursements and closed internet support requests, with a receipt PDF for each.</p>
-                    </a>
+                <div class="tiles">
+                    <?php
+                    if ($canReviewReimbursements) {
+                        workspace_tile($icons, '#0f766e', 'check', 'Reimbursement review',
+                            'Approve or reject claims. Line items and receipts only, no payment details.', '/admin/reimbursements/review');
+                    }
+                    if ($canReviewInternet) {
+                        workspace_tile($icons, '#0f766e', 'wifi', 'Internet support review',
+                            'Judge reasons and packages. No phone numbers shown.', '/admin/internet-review');
+                    }
+                    if ($canProcessFinance) {
+                        workspace_tile($icons, '#b45309', 'card', 'Finance queue',
+                            'Pay claims, recharge numbers and check receipts, one tab for each.', '/finance');
+                        workspace_tile($icons, '#b45309', 'archive', 'Closed requests',
+                            'Paid and closed requests, with a receipt PDF for each.', '/finance/closed');
+                    }
+                    ?>
                 </div>
-            <?php endif; ?>
+            </section>
         <?php endif; ?>
-    </div>
+
+    </main>
+
+    <footer>
+        <div class="org">
+            <img src="https://dcwwiki.org/dcwwiki/images/5/56/DCW_logo.png" alt="">
+            <span>Deoband Community Wikimedia</span>
+        </div>
+        <div>&copy; <?= date('Y') ?> · <a href="/">Public home page</a></div>
+    </footer>
 </body>
 </html>
