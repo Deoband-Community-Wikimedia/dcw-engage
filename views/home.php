@@ -110,7 +110,7 @@ foreach ($activeForms as $form) {
     // punctuation ('' / == / : / []) in the card blurb.
     $desc = $form['description'] ? MiniWikiText::stripToPlainText($form['description']) : 'Open for applications now.';
     $cards[] = [
-        'featured' => false, 'tone' => '#106b9a', 'tag' => 'Open program', 'icon' => 'doc',
+        'featured' => false, 'tone' => '#106b9a', 'tag' => 'Open programs', 'icon' => 'doc',
         'title' => $title,
         'desc'  => mb_strimwidth($desc, 0, 120, '…'),
         'cta'   => 'Apply now', 'href' => '/' . $form['form_type'],
@@ -344,9 +344,10 @@ foreach ($activeForms as $form) {
                         </span>
                         <?php if ($signedInMember): ?>
                             <span class="help-sub">Signed in as <strong><?= htmlspecialchars($signedInMember['full_name'] ?: $signedInMember['member_id']) ?></strong>
+                                &middot; <a href="/member/dashboard">My dashboard</a>
                                 &middot; <a href="/member/logout">Sign out</a></span>
                         <?php else: ?>
-                            <span class="help-sub">For DCW members. <a href="/member/login?next=%2Fsupport">Sign in with your Member ID</a></span>
+                            <span class="help-sub">For DCW members. <a href="/member/login?next=%2Fmember%2Fdashboard">Sign in with your Member ID</a></span>
                         <?php endif; ?>
                     </span>
                 </div>

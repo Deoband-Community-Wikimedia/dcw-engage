@@ -630,6 +630,23 @@ class ReimbursementModel {
     }
 
     /**
+     * Every reimbursement request this email has made, newest first, for
+     * the member dashboard. Same privacy rules as getStatusForApplicant():
+     * no payment details and no line items, and Discarded requests are left
+     * out so they look like "no record".
+     */
+    public function listForMember($email) {
+        $stmt = $this->db->prepare(
+            "SELECT tracking_id, event_name, total_amount_paise, status, created_at
+             FROM reimbursement_requests
+             WHERE email = :email AND status <> 'Discarded'
+             ORDER BY created_at DESC"
+        );
+        $stmt->execute(['email' => strtolower(trim($email))]);
+        return $stmt->fetchAll();
+    }
+
+    /**
      * For an APPLICANT looking up their own request by tracking ID — this
      * is the one place payment fields are legitimately returned in full,
      * since it's the applicant's own data. Never call this from an

@@ -3,10 +3,11 @@ require_once __DIR__ . '/../../includes/init.php';
 require_once __DIR__ . '/../../models/MemberAuthModel.php';
 require_once __DIR__ . '/../../includes/member_session.php';
 
-// Where to land after a successful sign in (only /support for now).
+// Where to land after a successful sign in. Members now land on their dashboard.
+// MemberSession::isSafeNext() must allow /member/dashboard (and /support) as targets.
 $next = $_GET['next'] ?? $_POST['next'] ?? '';
 if (!MemberSession::isSafeNext($next)) {
-    $next = '/support';
+    $next = '/member/dashboard';
 }
 
 // Already signed in, no reason to show the form.
@@ -47,23 +48,23 @@ $heading = 'Member sign in';
 $sub = 'Use the Member ID from your membership email and the password you chose.';
 require __DIR__ . '/_head.php';
 ?>
-        <form method="POST" autocomplete="off">
-            <?= CSRF::getInputField() ?>
-            <input type="hidden" name="next" value="<?= htmlspecialchars($next, ENT_QUOTES) ?>">
+            <form method="POST" autocomplete="off">
+                <?= CSRF::getInputField() ?>
+                <input type="hidden" name="next" value="<?= htmlspecialchars($next, ENT_QUOTES) ?>">
 
-            <label for="member_id">Member ID</label>
-            <input type="text" name="member_id" id="member_id" class="mono" required autofocus
-                   maxlength="12" placeholder="e.g. A48213977" autocapitalize="characters" spellcheck="false"
-                   value="<?= htmlspecialchars($memberId, ENT_QUOTES) ?>">
+                <label for="member_id">Member ID</label>
+                <input type="text" name="member_id" id="member_id" class="mono" required autofocus
+                       maxlength="12" placeholder="e.g. A48213977" autocapitalize="characters" spellcheck="false"
+                       value="<?= htmlspecialchars($memberId, ENT_QUOTES) ?>">
 
-            <label for="password">Password</label>
-            <input type="password" name="password" id="password" required autocomplete="current-password">
+                <label for="password">Password</label>
+                <input type="password" name="password" id="password" required autocomplete="current-password">
 
-            <button type="submit">Sign in</button>
-        </form>
+                <button type="submit">Sign in</button>
+            </form>
 
-        <p class="links">
-            <a href="/member/forgot">First time here, or forgot your password?</a><br>
-            <a href="/membership">Not a member yet? Join DCW</a>
-        </p>
+            <p class="links">
+                <a href="/member/forgot">First time here, or forgot your password?</a><br>
+                <a href="/membership">Not a member yet? Join DCW</a>
+            </p>
 <?php require __DIR__ . '/_foot.php'; ?>
