@@ -705,6 +705,23 @@ class InternetSupportModel {
     }
 
     /**
+     * Every request this email has made, newest first, for the member
+     * dashboard. Same privacy rules as getStatusForApplicant(): no phone,
+     * no reason, no internal notes, and Discarded requests are left out so
+     * they look like "no record".
+     */
+    public function listForMember($email) {
+        $stmt = $this->db->prepare(
+            "SELECT tracking_id, package_name, package_price_paise, status, created_at
+             FROM internet_requests
+             WHERE email = :email AND status <> 'Discarded'
+             ORDER BY created_at DESC"
+        );
+        $stmt->execute(['email' => strtolower(trim($email))]);
+        return $stmt->fetchAll();
+    }
+
+    /**
      * Attach the uploaded receipt. Only works while the request is
      * 'Awaiting Receipt' AND the tracking ID + email pair match, so the
      * upload link can't be used by someone who only knows one of them.
