@@ -15,8 +15,9 @@
  * status information: event, amount, status, dates, and the transaction
  * reference once paid. It never shows UPI / bank details. The internet
  * support result follows the same rule: it never shows the phone number or
- * the reason, and the only write it allows is attaching a receipt while a
- * request is in 'Awaiting Receipt'.
+ * the reason. The only writes it allows are attaching a receipt while a
+ * request is in 'Awaiting Receipt', and answering a reviewer's question
+ * while a request is in 'Info Requested'.
  *
  * Session-based lockout mirrors Auth::attempt()'s login cooldown, so a
  * script trying to brute-force the tracking ID space (or spam this page)
@@ -31,6 +32,7 @@ require_once __DIR__ . '/../models/InternetSupportModel.php';
 
 const TRACK_MAX_ATTEMPTS = 5;
 const TRACK_LOCKOUT_SECONDS = 900;
+const TRACK_REPLY_MAX_CHARS = 4000;
 
 function trackLockoutRemaining() {
     $until = $_SESSION['track_locked_until'] ?? 0;
@@ -56,6 +58,8 @@ function trackDiscardUpload($path) {
 $application = null;
 $reimbursement = null;
 $internet = null;
+$internetModel = null;
+$internetThread = [];
 $uploadMessage = '';
 $error = '';
 $trackingId = trim($_POST['tracking_id'] ?? '');
@@ -83,7 +87,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $reimbursement = (new ReimbursementModel())->getStatusForApplicant($trackingKey, $email);
         } elseif (strpos($trackingKey, 'IS-') === 0) {
             $internetModel = new InternetSupportModel();
-            // The pair must match before anything else happens, including an upload.
+            // The pair must match before anything else happens, including an upload or a reply.
             $internet = $internetModel->getStatusForApplicant($trackingKey, $email);
 
             if ($internet && $action === 'upload_receipt') {
@@ -119,6 +123,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         }
                     }
                 }
+            } elseif ($internet && $action === 'reply_info') {
+                // Answer to a reviewer's question. Only valid while the request is waiting on the applicant.
+                $reply = trim($_POST['reply'] ?? '');
+                if ($internet['status'] !== 'Info Requested') {
+                    $error = "This request isn't waiting for a reply right now.";
+                } elseif ($reply === '') {
+                    $error = "Please write your reply.";
+                } elseif (mb_strlen($reply) > TRACK_REPLY_MAX_CHARS) {
+                    $error = "Your reply is too long. Please keep it under " . TRACK_REPLY_MAX_CHARS . " characters.";
+                } else {
+                    try {
+                        if ($internetModel->submitApplicantReply($trackingKey, $email, $reply)) {
+                            $uploadMessage = "Thank you. Your reply has been sent and the reviewer will look at your request again.";
+                            $internet = $internetModel->getStatusForApplicant($trackingKey, $email);
+                        } else {
+                            $error = "This request isn't waiting for a reply right now.";
+                        }
+                    } catch (Exception $e) {
+                        app_log("Internet support reply save failed for $trackingKey: " . $e->getMessage());
+                        $error = "Something went wrong saving your reply. Please try again.";
+                    }
+                }
+            }
+
+            // Load the conversation for display only while a reply is being asked for.
+            if ($internet && $internet['status'] === 'Info Requested') {
+                $internetThread = $internetModel->getMessagesForApplicant($trackingKey, $email);
             }
         } else {
             $application = (new ApplicationModel())->getApplicationByTrackingIdAndEmail($trackingKey, $email);
@@ -225,6 +256,30 @@ $e = fn($s) => htmlspecialchars((string) $s);
             </fieldset>
         <?php elseif ($internet['status'] === 'Receipt Submitted'): ?>
             <p style="font-size:14px; color:var(--muted);">Your receipt is with our finance team. Nothing more is needed from you.</p>
+        <?php elseif ($internet['status'] === 'Info Requested'): ?>
+            <fieldset class="group" style="padding-bottom:18px;">
+                <legend>The reviewer needs more information</legend>
+                <?php foreach ($internetThread as $m): ?>
+                    <div style="margin-bottom:10px; padding:10px 12px; border:1px solid var(--border); border-radius:10px; font-size:14px;">
+                        <div style="font-size:12px; color:var(--muted);">
+                            <?= $m['sender'] === 'reviewer' ? 'DCW reviewer' : 'You' ?>
+                            · <?= $e(date('F j, Y H:i', strtotime($m['created_at']))) ?> UTC
+                        </div>
+                        <?= nl2br($e($m['body'])) ?>
+                    </div>
+                <?php endforeach; ?>
+                <form method="POST">
+                    <?= CSRF::getInputField() ?>
+                    <input type="hidden" name="action" value="reply_info">
+                    <input type="hidden" name="tracking_id" value="<?= $e($internet['tracking_id']) ?>">
+                    <input type="hidden" name="email" value="<?= $e($email) ?>">
+                    <div class="field">
+                        <label>Your reply <span class="req-star">*</span></label>
+                        <textarea name="reply" rows="5" maxlength="<?= TRACK_REPLY_MAX_CHARS ?>" required></textarea>
+                    </div>
+                    <button type="submit">Send reply</button>
+                </form>
+            </fieldset>
         <?php endif; ?>
     <?php endif; ?>
 
