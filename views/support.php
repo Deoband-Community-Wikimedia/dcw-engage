@@ -3,6 +3,7 @@ require_once __DIR__ . '/../includes/init.php';
 require_once __DIR__ . '/../includes/wikitext.php';
 require_once __DIR__ . '/../includes/app_log.php';
 require_once __DIR__ . '/../includes/member_session.php';
+require_once __DIR__ . '/../includes/engage_page.php';
 require_once __DIR__ . '/../models/InternetSupportModel.php';
 require_once __DIR__ . '/../models/ReimbursementSettingsModel.php';
 require_once __DIR__ . '/../models/ReimbursementModel.php';
@@ -243,9 +244,6 @@ if ($action === 'submit_reimbursement' && $type === 'reimbursement') {
 // ------------------------------------------------------------------
 // View state
 // ------------------------------------------------------------------
-$showInternetForm      = !$success && $memberActive && $type === 'internet';
-$showReimbursementForm = !$success && $memberActive && $type === 'reimbursement';
-
 $old = function ($key) {
     return htmlspecialchars((string) ($_POST[$key] ?? ''));
 };
@@ -281,416 +279,361 @@ $minEventDate = $_today->modify('-' . ReimbursementModel::CLAIM_WINDOW_DAYS . ' 
 $upiMaxRupees = ReimbursementModel::UPI_MAX_PAISE / 100;
 
 $pageHeading = $type ? $typeMeta[$type]['title'] . ' request' : 'Request support';
+
+// Icons and accent colours for the type cards.
+$icons = [
+    'wifi' => '<path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/>',
+    'card' => '<rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/>',
+];
+$typeStyle = [
+    'internet'      => ['tone' => '#0f766e', 'icon' => 'wifi'],
+    'reimbursement' => ['tone' => '#106b9a', 'icon' => 'card'],
+];
+
+engage_header([
+    'title'   => $pageHeading,
+    'heading' => $pageHeading,
+    'kicker'  => 'Member support',
+    'lead'    => $type ? $typeMeta[$type]['blurb'] : 'Tell us what kind of support you need.',
+    'member'  => $member,
+]);
 ?>
-<!DOCTYPE html>
-<html lang="en">
 
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title><?= htmlspecialchars($pageHeading) ?> - DCW Engage</title>
-    <?php require __DIR__ . '/../includes/favicon.php'; ?>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/assets/css/forms.css?v=2">
-</head>
+<?php if (!$memberActive): ?>
+    <div class="fcard">
+        <div class="alert error" style="margin:0;">
+            <strong>Notice:</strong> <?= htmlspecialchars($inactiveReason) ?>
+            Support requests are for members with an active membership.
+            <a href="/membership" style="color:#991b1b;">Renew your membership</a> to continue.
+        </div>
+    </div>
 
-<body>
-    <div class="container">
-        <h1 style="margin-top:0;"><?= htmlspecialchars($pageHeading) ?></h1>
+<?php elseif ($success): ?>
+    <div class="fcard">
+        <div class="result">
+            <h3>Request submitted</h3>
+            Your tracking ID is <code><?= htmlspecialchars($success['tracking_id']) ?></code>.<br>
+            We've emailed you a confirmation. Follow it on the
+            <a href="/track">tracking page</a> with this ID and your email<?= $successType === 'reimbursement' ? " (we'll also email you once it's reviewed)." : '.' ?>
+        </div>
+        <a class="back-link" href="/support">&larr; Back to support</a>
+    </div>
 
-        <p style="margin:-8px 0 20px; font-size:14px; color:#475569;">
-            Signed in as <strong><?= htmlspecialchars($memberName !== '' ? $memberName : (string) $member['email']) ?></strong>
-            (<?= htmlspecialchars((string) $member['member_id']) ?>) ✓
-            &middot; <a href="/member/logout" style="color:#106b9a;">Sign out</a>
-        </p>
+<?php elseif ($type === null): ?>
+    <?php if ($requestedClosed): ?>
+        <div class="fcard" style="max-width:none; padding:18px 22px;">
+            <div class="alert error" style="margin:0;">
+                <strong>Notice:</strong> <?= htmlspecialchars($typeMeta[$requested]['title']) ?> requests are closed right now.
+            </div>
+        </div>
+    <?php endif; ?>
+    <div class="grid">
+        <?php foreach ($typeMeta as $key => $meta): $open = $typeOpen[$key]; $st = $typeStyle[$key]; ?>
+            <<?= $open ? 'a href="/support?type=' . urlencode($key) . '"' : 'div' ?>
+                class="prog<?= $open ? '' : ' off' ?>" style="--tone: <?= $st['tone'] ?>;">
+                <span class="tag"><?= $open ? 'Open' : 'Closed' ?></span>
+                <span class="tick"><svg viewBox="0 0 24 24" aria-hidden="true"><?= $icons[$st['icon']] ?></svg></span>
+                <h3><?= htmlspecialchars($meta['title']) ?></h3>
+                <p><?= htmlspecialchars($meta['blurb']) ?></p>
+                <?php if ($open): ?><span class="go">Start a request <span aria-hidden="true">→</span></span><?php endif; ?>
+            </<?= $open ? 'a' : 'div' ?>>
+        <?php endforeach; ?>
+    </div>
+    <p style="text-align:center; margin-top:22px; font-size:14px; color:var(--muted);">
+        You can follow any request on the <a href="/track" style="color:var(--primary); font-weight:600;">tracking page</a>
+        with your tracking ID and the email on your membership.
+    </p>
 
-        <?php if ($type !== null && !$success && $memberActive): ?>
-            <p style="margin:-8px 0 20px; font-size:14px;">
-                <a href="/support" style="color:#106b9a;">&larr; Choose a different kind of support</a>
-            </p>
+<?php else: ?>
+    <div class="fcard">
+        <a class="back-link" href="/support">&larr; Choose a different kind of support</a>
+
+        <?php if (!empty($errors['system'])): ?>
+            <div class="alert error"><strong>Notice:</strong> <?= htmlspecialchars($errors['system']) ?></div>
         <?php endif; ?>
 
-        <?php if (!$memberActive): ?>
-            <div class="alert-error">
-                <strong>Notice:</strong> <?= htmlspecialchars($inactiveReason) ?>
-                Support requests are for members with an active membership.
-                <a href="/membership" style="color:#991b1b; font-weight:600;">Renew your membership</a> to continue.
-            </div>
+        <?php if ($type === 'internet'): ?>
+            <p class="intro">
+                A reviewer checks the request, our finance team does the recharge, and you then upload the
+                operator's receipt so we can close it. You can submit one request every
+                <?= (int) InternetSupportModel::MIN_DAYS_BETWEEN_REQUESTS ?> days.
+            </p>
 
-        <?php else: ?>
+            <form method="POST" action="/support?type=internet">
+                <?= CSRF::getInputField() ?>
+                <input type="hidden" name="action" value="submit_internet_request">
 
-            <?php if ($type === 'internet'): ?>
-                <p style="color:#475569; font-size:15px; line-height:1.6; margin-bottom:30px;">
-                    DCW volunteers can request help with a data pack. A reviewer checks the request, our finance team
-                    does the recharge, and you then upload the operator's receipt so we can close it.
-                    You can submit one request every <?= (int) InternetSupportModel::MIN_DAYS_BETWEEN_REQUESTS ?> days.
-                </p>
-            <?php elseif ($type === 'reimbursement' && !empty($reimbursementSettings['instructions'])): ?>
-                <div style="color:#475569; font-size:15px; margin-bottom:30px; line-height:1.6;">
-                    <?= MiniWikiText::render($reimbursementSettings['instructions']) ?>
+                <fieldset class="group">
+                    <legend>Eligibility</legend>
+                    <?php foreach ($eligibilityQuestions as $name => $label): ?>
+                        <div class="field">
+                            <label><?= htmlspecialchars($label) ?> <span class="req-star">*</span></label>
+                            <div class="choices">
+                                <label><input type="radio" name="<?= $name ?>" value="yes" required <?= $checked($name, 'yes') ?>> Yes</label>
+                                <label><input type="radio" name="<?= $name ?>" value="no" <?= $checked($name, 'no') ?>> No</label>
+                            </div>
+                        </div>
+                    <?php endforeach; ?>
+                    <div id="ineligible-note" class="alert error" style="display:none;">
+                        Based on your answers, you're not eligible for support right now. You need 80+ manual edits
+                        in the past month and attendance at the last 3 Conversation Hours, or active contribution
+                        to DCW technical projects.
+                    </div>
+                </fieldset>
+
+                <div class="row">
+                    <div class="field">
+                        <label>Your name <span class="req-star">*</span></label>
+                        <input type="text" name="applicant_name" required maxlength="255" value="<?= $oldName() ?>">
+                    </div>
+                    <div class="field">
+                        <label>Wikimedia username <span class="req-star">*</span></label>
+                        <input type="text" name="wikimedia_username" required maxlength="255" value="<?= $old('wikimedia_username') ?>">
+                        <span class="hint">The username only, without "User:" or a link.</span>
+                    </div>
                 </div>
-            <?php elseif ($type === null && !$success): ?>
-                <p style="color:#475569; font-size:15px; line-height:1.6; margin-bottom:30px;">
-                    Tell us what kind of support you need. You can follow your request on the
-                    <a href="/track" style="color:#106b9a;">tracking page</a> with your tracking ID and the email on your membership.
-                </p>
+
+                <div class="row">
+                    <div class="field">
+                        <label>Mobile number to be recharged <span class="req-star">*</span></label>
+                        <input type="tel" name="phone" required maxlength="20" placeholder="10-digit mobile number" value="<?= $old('phone') ?>">
+                        <span class="hint">Only the finance team can see this number.</span>
+                    </div>
+                    <div class="field">
+                        <label>Mobile operator <span class="req-star">*</span></label>
+                        <input type="text" name="operator" required maxlength="50" list="operator-list" placeholder="e.g. Jio" value="<?= $old('operator') ?>">
+                        <datalist id="operator-list">
+                            <option value="Jio">
+                            <option value="Airtel">
+                            <option value="Vi">
+                            <option value="BSNL">
+                        </datalist>
+                    </div>
+                </div>
+
+                <div class="field">
+                    <label>The pack you need <span class="req-star">*</span></label>
+                    <input type="text" name="package_name" required minlength="3" maxlength="120" placeholder="e.g. 1.5 GB/day recharge" value="<?= $old('package_name') ?>">
+                    <span class="hint">Describe the plan as your operator lists it.</span>
+                </div>
+
+                <div class="row">
+                    <div class="field">
+                        <label>Price of the pack (₹) <span class="req-star">*</span></label>
+                        <input type="number" name="amount" required min="1" max="<?= (int) $maxAmountRupees ?>" step="0.01" value="<?= $old('amount') ?>">
+                        <span class="hint">Up to ₹<?= number_format($maxAmountRupees) ?>.</span>
+                    </div>
+                    <div class="field">
+                        <label>Validity (days)</label>
+                        <input type="number" name="validity_days" min="1" max="365" step="1" placeholder="optional" value="<?= $old('validity_days') ?>">
+                    </div>
+                </div>
+
+                <h3>Your request</h3>
+                <div class="field">
+                    <label>Why do you need support with internet access? <span class="req-star">*</span></label>
+                    <textarea name="reason" required minlength="<?= (int) InternetSupportModel::MIN_REASON_LENGTH ?>" maxlength="<?= (int) InternetSupportModel::MAX_REASON_LENGTH ?>" rows="5"><?= $old('reason') ?></textarea>
+                    <span class="hint">We are particularly interested in the motivation behind the request. For example, the support will help you contribute in an xyz way.</span>
+                </div>
+                <div class="field">
+                    <label>Your contributions in the last three months relevant to the growth of DCW <span class="req-star">*</span></label>
+                    <textarea name="contributions" required minlength="<?= (int) InternetSupportModel::MIN_NARRATIVE_LENGTH ?>" maxlength="<?= (int) InternetSupportModel::MAX_NARRATIVE_LENGTH ?>" rows="5"><?= $old('contributions') ?></textarea>
+                </div>
+                <div class="field">
+                    <label>Your plans for the period you are seeking internet support for <span class="req-star">*</span></label>
+                    <textarea name="plans" required minlength="<?= (int) InternetSupportModel::MIN_NARRATIVE_LENGTH ?>" maxlength="<?= (int) InternetSupportModel::MAX_NARRATIVE_LENGTH ?>" rows="5"><?= $old('plans') ?></textarea>
+                </div>
+
+                <button type="submit">Submit request</button>
+            </form>
+
+            <script>
+                // Convenience only: the server (InternetSupportModel::createRequest) is the real gate.
+                (function () {
+                    var first = document.querySelector('input[name="edits_80"]');
+                    if (!first) return;
+                    var form = first.form;
+                    var note = document.getElementById('ineligible-note');
+                    var submit = form.querySelector('button[type="submit"]');
+                    function val(n) { var el = form.querySelector('input[name="' + n + '"]:checked'); return el ? el.value : ''; }
+                    function update() {
+                        var e = val('edits_80'), a = val('attended_ch'), t = val('tech_contributor');
+                        var blocked = e && a && t && !(t === 'yes' || (e === 'yes' && a === 'yes'));
+                        note.style.display = blocked ? 'block' : 'none';
+                        submit.disabled = !!blocked;
+                    }
+                    form.addEventListener('change', update);
+                    update();
+                })();
+            </script>
+
+        <?php else: /* reimbursement */ ?>
+            <?php if (!empty($reimbursementSettings['instructions'])): ?>
+                <div class="intro"><?= MiniWikiText::render($reimbursementSettings['instructions']) ?></div>
             <?php endif; ?>
 
-            <?php if ($success): ?>
-                <div class="alert-success">
-                    <h3 style="margin-top:0">Request submitted</h3>
-                    Your tracking ID is <strong><?= htmlspecialchars($success['tracking_id']) ?></strong>.
-                    We've emailed you a confirmation. Use the
-                    <a href="/track" style="color:#106b9a;">tracking page</a> with this ID and your email to follow it<?= $successType === 'reimbursement' ? " (we'll also email you once it's reviewed)." : '.' ?>
+            <form method="POST" action="/support?type=reimbursement" enctype="multipart/form-data" id="reimbursement-form">
+                <?= CSRF::getInputField() ?>
+                <input type="hidden" name="action" value="submit_reimbursement">
+
+                <div class="field">
+                    <label>Your name <span class="req-star">*</span></label>
+                    <input type="text" name="applicant_name" required value="<?= $oldName() ?>">
                 </div>
 
-            <?php else: ?>
-
-                <?php if ($requestedClosed): ?>
-                    <div class="alert-error">
-                        <strong>Notice:</strong> <?= htmlspecialchars($typeMeta[$requested]['title']) ?> requests are closed right now.
+                <div class="field">
+                    <label>Was this a DCW-aligned, DCW-organised or DCW-associated event? <span class="req-star">*</span></label>
+                    <select name="dcw_event" id="dcw-event" required>
+                        <option value="">Select…</option>
+                        <option value="yes">Yes</option>
+                        <option value="no">No</option>
+                    </select>
+                    <div id="dcw-no-notice" class="alert error" style="display:none; margin:10px 0 0;">
+                        Reimbursement is only available for DCW-aligned, DCW-organised or DCW-associated events.
                     </div>
-                <?php endif; ?>
+                </div>
 
-                <?php if (!empty($errors['system'])): ?>
-                    <div class="alert-error">
-                        <strong>Notice:</strong> <?= htmlspecialchars($errors['system']) ?>
+                <div class="row">
+                    <div class="field">
+                        <label>Event name <span class="req-star">*</span></label>
+                        <input type="text" name="event_name" required maxlength="255" placeholder="e.g. Wiki Loves Monuments 2026 Workshop">
                     </div>
-                <?php endif; ?>
-
-                <?php if ($type === null): ?>
-                    <div style="display:flex; gap:14px; flex-wrap:wrap; margin-bottom:30px;">
-                        <?php foreach ($typeMeta as $key => $meta): ?>
-                            <?php if ($typeOpen[$key]): ?>
-                                <a href="/support?type=<?= urlencode($key) ?>"
-                                   style="flex:1 1 240px; display:block; padding:18px 20px; border:1px solid #cbd5e1; border-radius:8px; text-decoration:none; color:inherit; background:#fff;">
-                                    <strong style="display:block; font-size:16px; color:#106b9a; margin-bottom:6px;"><?= htmlspecialchars($meta['title']) ?></strong>
-                                    <span style="font-size:14px; color:#475569; line-height:1.5;"><?= htmlspecialchars($meta['blurb']) ?></span>
-                                </a>
-                            <?php else: ?>
-                                <div style="flex:1 1 240px; padding:18px 20px; border:1px dashed #e2e8f0; border-radius:8px; background:#f8fafc; opacity:.7;">
-                                    <strong style="display:block; font-size:16px; color:#64748b; margin-bottom:6px;"><?= htmlspecialchars($meta['title']) ?></strong>
-                                    <span style="font-size:14px; color:#64748b;">Currently closed.</span>
-                                </div>
-                            <?php endif; ?>
-                        <?php endforeach; ?>
+                    <div class="field">
+                        <label>Event date <span class="req-star">*</span></label>
+                        <input type="date" name="event_date" required
+                               min="<?= htmlspecialchars($minEventDate) ?>" max="<?= htmlspecialchars($maxEventDate) ?>">
+                        <span class="hint">Submit within <?= (int) ReimbursementModel::CLAIM_WINDOW_DAYS ?> days of the event.</span>
                     </div>
+                </div>
 
-                <?php elseif ($type === 'internet'): ?>
-                    <form method="POST" action="/support?type=internet">
-                        <?= CSRF::getInputField() ?>
-                        <input type="hidden" name="action" value="submit_internet_request">
+                <h3>Expenses</h3>
+                <div id="line-items"></div>
+                <button type="button" id="add-line-item" class="btn-ghost" style="margin-bottom:16px;">+ Add expense</button>
+                <div class="total-bar"><span>Running total</span><strong>₹<span id="running-total">0.00</span></strong></div>
 
-                        <fieldset style="border:1px solid #e2e8f0; border-radius:8px; padding:16px 20px; margin:0 0 24px;">
-                            <legend style="font-weight:600; padding:0 6px;">Eligibility</legend>
+                <h3>Payment details</h3>
+                <p style="font-size:13.5px; color:var(--muted); margin-top:0;">
+                    UPI is available for claims up to ₹<?= number_format($upiMaxRupees) ?>. Larger claims are paid by bank transfer.
+                </p>
+                <div class="field choices stack">
+                    <label><input type="radio" name="payment_method" value="upi" id="method-upi" checked> UPI</label>
+                    <label><input type="radio" name="payment_method" value="bank" id="method-bank"> Bank transfer</label>
+                </div>
 
-                            <?php foreach ($eligibilityQuestions as $name => $label): ?>
-                                <div class="form-group" style="margin-bottom:16px;">
-                                    <label><?= htmlspecialchars($label) ?> <span style="color:#ef4444">*</span></label>
-                                    <label style="font-weight:400; display:inline-block; margin-right:18px;">
-                                        <input type="radio" name="<?= $name ?>" value="yes" required <?= $checked($name, 'yes') ?>> Yes
-                                    </label>
-                                    <label style="font-weight:400; display:inline-block;">
-                                        <input type="radio" name="<?= $name ?>" value="no" <?= $checked($name, 'no') ?>> No
-                                    </label>
-                                </div>
-                            <?php endforeach; ?>
+                <div id="upi-fields" style="display:none;">
+                    <div class="field"><label>UPI ID</label><input type="text" name="upi_id" placeholder="name@bank"></div>
+                </div>
+                <div id="bank-fields" style="display:none;">
+                    <div class="field"><label>Account holder name</label><input type="text" name="bank_account_name"></div>
+                    <div class="row">
+                        <div class="field"><label>Account number</label><input type="text" name="bank_account_number" autocomplete="off"></div>
+                        <div class="field"><label>Confirm account number</label><input type="text" name="bank_account_number_confirm" autocomplete="off"></div>
+                    </div>
+                    <div class="field"><label>IFSC code</label><input type="text" name="bank_ifsc" style="text-transform:uppercase;"></div>
+                </div>
 
-                            <div id="ineligible-note" class="alert-error" style="display:none; margin:0;">
-                                Based on your answers, you're not eligible for support right now. You need 80+ manual edits
-                                in the past month and attendance at the last 3 Conversation Hours, or active contribution
-                                to DCW technical projects.
-                            </div>
-                        </fieldset>
+                <button type="submit" id="submit-btn" style="margin-top:6px;">Submit reimbursement request</button>
+            </form>
 
-                        <div class="form-group" style="margin-bottom:20px;">
-                            <label>Your name <span style="color:#ef4444">*</span></label>
-                            <input type="text" name="applicant_name" required maxlength="255" value="<?= $oldName() ?>">
-                        </div>
-
-                        <div class="form-group" style="margin-bottom:20px;">
-                            <label>Your Wikimedia username <span style="color:#ef4444">*</span></label>
-                            <input type="text" name="wikimedia_username" required maxlength="255" value="<?= $old('wikimedia_username') ?>">
-                            <span style="font-size:13px; color:#64748b; margin-top:5px; display:block;">
-                                The username only, without "User:" or a link.
-                            </span>
-                        </div>
-
-                        <div class="form-group" style="margin-bottom:20px;">
-                            <label>Mobile number to be recharged <span style="color:#ef4444">*</span></label>
-                            <input type="tel" name="phone" required maxlength="20" placeholder="10-digit mobile number" value="<?= $old('phone') ?>">
-                            <span style="font-size:13px; color:#64748b; margin-top:5px; display:block;">
-                                Only the finance team can see this number.
-                            </span>
-                        </div>
-
-                        <div class="form-group" style="margin-bottom:20px;">
-                            <label>Mobile operator <span style="color:#ef4444">*</span></label>
-                            <input type="text" name="operator" required maxlength="50" list="operator-list" placeholder="e.g. Jio" value="<?= $old('operator') ?>">
-                            <datalist id="operator-list">
-                                <option value="Jio">
-                                <option value="Airtel">
-                                <option value="Vi">
-                                <option value="BSNL">
-                            </datalist>
-                        </div>
-
-                        <div class="form-group" style="margin-bottom:20px;">
-                            <label>The pack you need <span style="color:#ef4444">*</span></label>
-                            <input type="text" name="package_name" required minlength="3" maxlength="120" placeholder="e.g. 1.5 GB/day recharge" value="<?= $old('package_name') ?>">
-                            <span style="font-size:13px; color:#64748b; margin-top:5px; display:block;">
-                                Describe the plan as your operator lists it.
-                            </span>
-                        </div>
-
-                        <div style="display:flex; gap:14px; flex-wrap:wrap;">
-                            <div class="form-group" style="margin-bottom:20px; flex:1 1 160px;">
-                                <label>Price of the pack (₹) <span style="color:#ef4444">*</span></label>
-                                <input type="number" name="amount" required min="1" max="<?= (int) $maxAmountRupees ?>" step="0.01" value="<?= $old('amount') ?>">
-                                <span style="font-size:13px; color:#64748b; margin-top:5px; display:block;">
-                                    Up to ₹<?= number_format($maxAmountRupees) ?>.
-                                </span>
-                            </div>
-                            <div class="form-group" style="margin-bottom:20px; flex:1 1 160px;">
-                                <label>Validity (days)</label>
-                                <input type="number" name="validity_days" min="1" max="365" step="1" placeholder="optional" value="<?= $old('validity_days') ?>">
-                            </div>
-                        </div>
-
-                        <div class="form-group" style="margin-bottom:20px;">
-                            <label>Why do you need support with internet access? <span style="color:#ef4444">*</span></label>
-                            <textarea name="reason" required minlength="<?= (int) InternetSupportModel::MIN_REASON_LENGTH ?>" maxlength="<?= (int) InternetSupportModel::MAX_REASON_LENGTH ?>" rows="5"><?= $old('reason') ?></textarea>
-                            <span style="font-size:13px; color:#64748b; margin-top:5px; display:block;">
-                                We are particularly interested in understanding the motivation behind the request. For example, the support will help you contribute in an xyz way.
-                            </span>
-                        </div>
-
-                        <div class="form-group" style="margin-bottom:20px;">
-                            <label>Tell us about your contributions in the last three months which are relevant to the growth of DCW <span style="color:#ef4444">*</span></label>
-                            <textarea name="contributions" required minlength="<?= (int) InternetSupportModel::MIN_NARRATIVE_LENGTH ?>" maxlength="<?= (int) InternetSupportModel::MAX_NARRATIVE_LENGTH ?>" rows="5"><?= $old('contributions') ?></textarea>
-                        </div>
-
-                        <div class="form-group" style="margin-bottom:20px;">
-                            <label>Tell us about your prospective plans for the period you are seeking internet support for <span style="color:#ef4444">*</span></label>
-                            <textarea name="plans" required minlength="<?= (int) InternetSupportModel::MIN_NARRATIVE_LENGTH ?>" maxlength="<?= (int) InternetSupportModel::MAX_NARRATIVE_LENGTH ?>" rows="5"><?= $old('plans') ?></textarea>
-                        </div>
-
-                        <button type="submit">Submit request</button>
-                    </form>
-
-                    <script>
-                        // Convenience only: the server (InternetSupportModel::createRequest) is the real gate.
-                        (function () {
-                            var first = document.querySelector('input[name="edits_80"]');
-                            if (!first) return;
-                            var form = first.form;
-                            var note = document.getElementById('ineligible-note');
-                            var submit = form.querySelector('button[type="submit"]');
-
-                            function val(name) {
-                                var el = form.querySelector('input[name="' + name + '"]:checked');
-                                return el ? el.value : '';
-                            }
-
-                            function update() {
-                                var e = val('edits_80'), a = val('attended_ch'), t = val('tech_contributor');
-                                var answered = e && a && t;
-                                var eligible = t === 'yes' || (e === 'yes' && a === 'yes');
-                                var blocked = answered && !eligible;
-                                note.style.display = blocked ? 'block' : 'none';
-                                submit.disabled = blocked;
-                            }
-
-                            form.addEventListener('change', update);
-                            update();
-                        })();
-                    </script>
-
-                <?php elseif ($type === 'reimbursement'): ?>
-                    <form method="POST" action="/support?type=reimbursement" enctype="multipart/form-data" id="reimbursement-form">
-                        <?= CSRF::getInputField() ?>
-                        <input type="hidden" name="action" value="submit_reimbursement">
-
-                        <div class="form-group" style="margin-bottom:20px;">
-                            <label>Your name <span style="color:#ef4444">*</span></label>
-                            <input type="text" name="applicant_name" required value="<?= $oldName() ?>">
-                        </div>
-
-                        <div class="form-group" style="margin-bottom:20px;">
-                            <label>Was this a DCW-aligned, DCW-organised or DCW-associated event? <span style="color:#ef4444">*</span></label>
-                            <select name="dcw_event" id="dcw-event" required>
-                                <option value="">Select…</option>
-                                <option value="yes">Yes</option>
-                                <option value="no">No</option>
+            <template id="line-item-template">
+                <div class="li line-item">
+                    <div class="row">
+                        <div class="field">
+                            <label>Category</label>
+                            <select name="line_item_category[]" class="li-category">
+                                <?php foreach ($reimbursementSettings['expense_categories'] as $cat): ?>
+                                    <option value="<?= htmlspecialchars($cat) ?>"><?= htmlspecialchars($cat) ?></option>
+                                <?php endforeach; ?>
                             </select>
-                            <div id="dcw-no-notice" class="alert-error" style="display:none; margin-top:10px;">
-                                Reimbursement is only available for DCW-aligned, DCW-organised or DCW-associated events.
-                            </div>
                         </div>
-
-                        <div class="form-group" style="margin-bottom:20px;">
-                            <label>Event name <span style="color:#ef4444">*</span></label>
-                            <input type="text" name="event_name" required maxlength="255" placeholder="e.g. Wiki Loves Monuments 2026 Workshop">
-                            <span style="font-size:13px; color:#64748b; margin-top:5px; display:block;">Type the name of the event you're claiming expenses for.</span>
+                        <div class="field">
+                            <label>Amount (₹)</label>
+                            <input type="number" step="0.01" min="0.01" name="line_item_amount[]" class="li-amount">
                         </div>
+                    </div>
+                    <div class="field">
+                        <label>Description</label>
+                        <input type="text" name="line_item_description[]">
+                    </div>
+                    <div class="field">
+                        <label>Receipt <span style="font-weight:400; color:var(--muted);">(optional, but recommended)</span></label>
+                        <input type="file" name="__RECEIPT_NAME__" accept=".pdf,.jpg,.jpeg,.png">
+                    </div>
+                    <button type="button" class="remove-line-item btn-danger-ghost">Remove</button>
+                </div>
+            </template>
 
-                        <div class="form-group" style="margin-bottom:20px;">
-                            <label>Event date <span style="color:#ef4444">*</span></label>
-                            <input type="date" name="event_date" required
-                                   min="<?= htmlspecialchars($minEventDate) ?>" max="<?= htmlspecialchars($maxEventDate) ?>">
-                            <span style="font-size:13px; color:#64748b; margin-top:5px; display:block;">
-                                Requests must be submitted within <?= (int) ReimbursementModel::CLAIM_WINDOW_DAYS ?> days of the event.
-                            </span>
-                        </div>
+            <script>
+                const UPI_MAX_RUPEES = <?= json_encode($upiMaxRupees) ?>;
 
-                        <h3>Expenses</h3>
-                        <div id="line-items"></div>
-                        <button type="button" id="add-line-item" style="width:auto; background:#fff; color:#106b9a; border:1px solid #106b9a; margin-bottom:20px;">+ Add expense</button>
+                function addLineItem() {
+                    const template = document.getElementById('line-item-template');
+                    const clone = template.content.cloneNode(true);
 
-                        <div style="background:#f1f5f9; padding:12px 16px; border-radius:6px; margin-bottom:20px; font-size:14px;">
-                            Running total: ₹<span id="running-total">0.00</span>
-                        </div>
+                    clone.querySelector('.remove-line-item').addEventListener('click', function (e) {
+                        e.target.closest('.line-item').remove();
+                        renumberReceipts();
+                        recomputeTotal();
+                    });
+                    clone.querySelector('.li-amount').addEventListener('input', recomputeTotal);
 
-                        <h3>Payment details</h3>
-                        <p style="font-size:13px; color:#64748b;">
-                            UPI is available for claims up to ₹<?= number_format($upiMaxRupees) ?>.
-                            Larger claims are paid by bank transfer.
-                        </p>
+                    document.getElementById('line-items').appendChild(clone);
+                    renumberReceipts();
+                }
 
-                        <div class="form-group" style="margin-bottom:15px;">
-                            <label><input type="radio" name="payment_method" value="upi" id="method-upi" checked> UPI</label><br>
-                            <label><input type="radio" name="payment_method" value="bank" id="method-bank"> Bank transfer</label>
-                        </div>
+                // The server pairs row N with the file field line_item_receipt_N, so the
+                // file inputs must always be numbered by their current position.
+                function renumberReceipts() {
+                    document.querySelectorAll('#line-items .line-item input[type="file"]').forEach(function (el, i) {
+                        el.name = 'line_item_receipt_' + i;
+                    });
+                }
 
-                        <div id="upi-fields" style="display:none;">
-                            <div class="form-group">
-                                <label>UPI ID</label>
-                                <input type="text" name="upi_id" placeholder="name@bank">
-                            </div>
-                        </div>
+                function recomputeTotal() {
+                    let total = 0;
+                    document.querySelectorAll('.li-amount').forEach(input => {
+                        const val = parseFloat(input.value);
+                        if (!isNaN(val)) total += val;
+                    });
+                    document.getElementById('running-total').textContent = total.toFixed(2);
 
-                        <div id="bank-fields" style="display:none;">
-                            <div class="form-group">
-                                <label>Account holder name</label>
-                                <input type="text" name="bank_account_name">
-                            </div>
-                            <div class="form-group">
-                                <label>Account number</label>
-                                <input type="text" name="bank_account_number" autocomplete="off">
-                            </div>
-                            <div class="form-group">
-                                <label>Confirm account number</label>
-                                <input type="text" name="bank_account_number_confirm" autocomplete="off">
-                            </div>
-                            <div class="form-group">
-                                <label>IFSC code</label>
-                                <input type="text" name="bank_ifsc" style="text-transform:uppercase;">
-                            </div>
-                        </div>
-
-                        <button type="submit" id="submit-btn" style="margin-top:10px;">Submit reimbursement request</button>
-                    </form>
-
-                    <template id="line-item-template">
-                        <div class="line-item" style="background:#f8fafc; padding:15px; border-radius:8px; margin-bottom:12px; border:1px solid #e2e8f0;">
-                            <div class="form-group">
-                                <label>Category</label>
-                                <select name="line_item_category[]" class="li-category">
-                                    <?php foreach ($reimbursementSettings['expense_categories'] as $cat): ?>
-                                        <option value="<?= htmlspecialchars($cat) ?>"><?= htmlspecialchars($cat) ?></option>
-                                    <?php endforeach; ?>
-                                </select>
-                            </div>
-                            <div class="form-group">
-                                <label>Description</label>
-                                <input type="text" name="line_item_description[]">
-                            </div>
-                            <div class="form-group">
-                                <label>Amount (₹)</label>
-                                <input type="number" step="0.01" min="0.01" name="line_item_amount[]" class="li-amount">
-                            </div>
-                            <div class="form-group">
-                                <label>Receipt <span style="font-weight:400; color:#64748b;">(optional, but recommended)</span></label>
-                                <input type="file" name="__RECEIPT_NAME__" accept=".pdf,.jpg,.jpeg,.png">
-                            </div>
-                            <button type="button" class="remove-line-item" style="width:auto; background:#fff; color:#991b1b; border:1px solid #f87171;">Remove</button>
-                        </div>
-                    </template>
-
-                    <script>
-                        const UPI_MAX_RUPEES = <?= json_encode($upiMaxRupees) ?>;
-
-                        function addLineItem() {
-                            const template = document.getElementById('line-item-template');
-                            const clone = template.content.cloneNode(true);
-
-                            clone.querySelector('.remove-line-item').addEventListener('click', function (e) {
-                                e.target.closest('.line-item').remove();
-                                renumberReceipts();
-                                recomputeTotal();
-                            });
-                            clone.querySelector('.li-amount').addEventListener('input', recomputeTotal);
-
-                            document.getElementById('line-items').appendChild(clone);
-                            renumberReceipts();
+                    // Client-side convenience only; the server re-checks the real total.
+                    const upiRadio = document.getElementById('method-upi');
+                    const bankRadio = document.getElementById('method-bank');
+                    if (total > UPI_MAX_RUPEES) {
+                        upiRadio.disabled = true;
+                        if (upiRadio.checked) {
+                            bankRadio.checked = true;
+                            togglePaymentFields();
                         }
+                    } else {
+                        upiRadio.disabled = false;
+                    }
+                }
 
-                        // The server pairs row N with the file field line_item_receipt_N, so the
-                        // file inputs must always be numbered by their current position.
-                        function renumberReceipts() {
-                            document.querySelectorAll('#line-items .line-item input[type="file"]').forEach(function (el, i) {
-                                el.name = 'line_item_receipt_' + i;
-                            });
-                        }
+                function togglePaymentFields() {
+                    const method = document.querySelector('input[name="payment_method"]:checked')?.value;
+                    document.getElementById('upi-fields').style.display = method === 'upi' ? 'block' : 'none';
+                    document.getElementById('bank-fields').style.display = method === 'bank' ? 'block' : 'none';
+                }
 
-                        function recomputeTotal() {
-                            let total = 0;
-                            document.querySelectorAll('.li-amount').forEach(input => {
-                                const val = parseFloat(input.value);
-                                if (!isNaN(val)) total += val;
-                            });
-                            document.getElementById('running-total').textContent = total.toFixed(2);
+                function toggleDcwNotice() {
+                    const answer = document.getElementById('dcw-event').value;
+                    document.getElementById('dcw-no-notice').style.display = answer === 'no' ? 'block' : 'none';
+                    document.getElementById('submit-btn').disabled = (answer === 'no');
+                }
 
-                            // Client-side convenience only; the server re-checks the real total.
-                            const upiRadio = document.getElementById('method-upi');
-                            const bankRadio = document.getElementById('method-bank');
-                            if (total > UPI_MAX_RUPEES) {
-                                upiRadio.disabled = true;
-                                if (upiRadio.checked) {
-                                    bankRadio.checked = true;
-                                    togglePaymentFields();
-                                }
-                            } else {
-                                upiRadio.disabled = false;
-                            }
-                        }
+                document.getElementById('add-line-item').addEventListener('click', addLineItem);
+                document.querySelectorAll('input[name="payment_method"]').forEach(el => el.addEventListener('change', togglePaymentFields));
+                document.getElementById('dcw-event').addEventListener('change', toggleDcwNotice);
+                document.getElementById('reimbursement-form').addEventListener('submit', renumberReceipts);
 
-                        function togglePaymentFields() {
-                            const method = document.querySelector('input[name="payment_method"]:checked')?.value;
-                            document.getElementById('upi-fields').style.display = method === 'upi' ? 'block' : 'none';
-                            document.getElementById('bank-fields').style.display = method === 'bank' ? 'block' : 'none';
-                        }
-
-                        function toggleDcwNotice() {
-                            const answer = document.getElementById('dcw-event').value;
-                            document.getElementById('dcw-no-notice').style.display = answer === 'no' ? 'block' : 'none';
-                            document.getElementById('submit-btn').disabled = (answer === 'no');
-                        }
-
-                        document.getElementById('add-line-item').addEventListener('click', addLineItem);
-                        document.querySelectorAll('input[name="payment_method"]').forEach(el => el.addEventListener('change', togglePaymentFields));
-                        document.getElementById('dcw-event').addEventListener('change', toggleDcwNotice);
-                        document.getElementById('reimbursement-form').addEventListener('submit', renumberReceipts);
-
-                        // Start with one line item row.
-                        addLineItem();
-                        togglePaymentFields();
-                    </script>
-                <?php endif; ?>
-
-            <?php endif; ?>
+                // Start with one line item row.
+                addLineItem();
+                togglePaymentFields();
+            </script>
         <?php endif; ?>
     </div>
-</body>
+<?php endif; ?>
 
-</html>
+<?php engage_footer(); ?>
