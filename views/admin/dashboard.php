@@ -16,11 +16,13 @@ $forms = $formModel->getAllForms();
 //   finance/closed.php       -> requireRole(['finance', 'owner'])
 //   membership_review.php    -> requireRole(['membership_coordinator', 'membership_reviewer', 'organizer', 'owner'])
 //   membership_access.php    -> requireRole('owner')
+//   member_support.php       -> requireRole(['member_support', 'owner'])   (shown as "DCW Support")
 $canReviewReimbursements = in_array(Auth::role(), ['owner', 'organizer'], true);
 $canReviewInternet       = in_array(Auth::role(), ['support_reviewer', 'owner'], true);
 $canProcessFinance       = in_array(Auth::role(), ['finance', 'owner'], true);
 $canReviewMembership     = in_array(Auth::role(), ['membership_coordinator', 'membership_reviewer', 'organizer', 'owner'], true);
 $canManageMembershipAccess = Auth::isOwner();
+$canWorkMemberSupport    = Auth::hasAnyRole(['member_support', 'owner']);
 
 // Membership-only staff work from the membership queue. Hiding the general
 // forms grid is tidiness, not security: form_manager.php must still guard
@@ -40,6 +42,7 @@ $icons = [
     'wifi'   => '<path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/>',
     'card'   => '<rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/>',
     'archive'=> '<polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/>',
+    'chat'   => '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
 ];
 
 /** Renders one compact tool tile. */
@@ -167,6 +170,21 @@ function workspace_tile(array $icons, string $tone, string $icon, string $title,
                         workspace_tile($icons, '#b45309', 'archive', 'Closed requests',
                             'Paid and closed requests, with a receipt PDF for each.', '/finance/closed');
                     }
+                    ?>
+                </div>
+            </section>
+        <?php endif; ?>
+
+        <?php if ($canWorkMemberSupport): ?>
+            <section class="panel">
+                <div class="panel-head">
+                    <h2>Member conversations</h2>
+                    <p>Complaints, suggestions and questions that members send from their dashboard.</p>
+                </div>
+                <div class="tiles">
+                    <?php
+                    workspace_tile($icons, '#106b9a', 'chat', 'DCW Support',
+                        'Read and answer member conversations. Replies are emailed as a notification only.', '/admin/member-support');
                     ?>
                 </div>
             </section>

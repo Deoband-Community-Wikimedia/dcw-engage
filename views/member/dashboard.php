@@ -6,6 +6,7 @@ require_once __DIR__ . '/../../models/FormModel.php';
 require_once __DIR__ . '/../../models/InternetSupportModel.php';
 require_once __DIR__ . '/../../models/ReimbursementSettingsModel.php';
 require_once __DIR__ . '/../../models/ReimbursementModel.php';
+require_once __DIR__ . '/../../models/MemberTicketModel.php';
 require_once __DIR__ . '/../../includes/member_session.php';
 
 /**
@@ -117,12 +118,19 @@ $totalRequests = count($requests);
 $requests = array_slice($requests, 0, 8);
 $needsAction = array_values(array_filter($requests, fn($r) => $r['act']));
 
+// ---- The member's conversations with DCW Support (looked up by Member ID from the session) ------
+$tickets = [];
+try { $tickets = (new MemberTicketModel())->listForMember((string) $member['member_id']); } catch (Throwable $e) { /* table not created yet */ }
+$ticketsWaiting = array_values(array_filter($tickets,
+    fn($t) => $t['last_sender'] === 'staff' && !MemberTicketModel::isClosed((string) $t['status'])));
+
 $icons = [
     'doc'    => '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>',
     'wifi'   => '<path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/>',
     'card'   => '<rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/>',
     'search' => '<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>',
     'people' => '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+    'chat'   => '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
 ];
 
 /** One tile. $href = null renders a disabled tile with a short reason in the pill. */
@@ -194,10 +202,18 @@ $lock = fn(bool $open) => !$memberActive ? 'Renew to unlock' : (!$open ? 'Closed
             </div>
         <?php endforeach; ?>
 
+        <?php foreach ($ticketsWaiting as $t): ?>
+            <div class="action-banner" role="status">
+                <strong><?= htmlspecialchars(MemberTicketModel::SUPPORT_LABEL) ?>:</strong>
+                <span>New reply on &ldquo;<?= htmlspecialchars($t['subject']) ?>&rdquo;.</span>
+                <a href="/member/talk/ticket?id=<?= htmlspecialchars(rawurlencode($t['tracking_id'])) ?>">Read it</a>
+            </div>
+        <?php endforeach; ?>
+
         <section class="panel">
             <div class="panel-head">
                 <h2>Get support</h2>
-                <p>Help with a data pack, or claim back event expenses.</p>
+                <p>Help with a data pack, claim back event expenses, or talk to <?= htmlspecialchars(MemberTicketModel::SUPPORT_LABEL) ?>.</p>
             </div>
             <div class="tiles">
                 <?php
@@ -207,6 +223,9 @@ $lock = fn(bool $open) => !$memberActive ? 'Renew to unlock' : (!$open ? 'Closed
                 $l = $lock($reimbursementOpen);
                 dash_tile($icons, '#0f766e', 'card', 'Reimbursement', 'Claim back expenses for a DCW-aligned event.',
                     $l === '' ? '/support?type=reimbursement' : null, $l);
+                // Open to every signed-in member, including expired ones: someone may need to say why.
+                dash_tile($icons, '#106b9a', 'chat', 'Talk to ' . MemberTicketModel::SUPPORT_LABEL,
+                    'Ask a question, make a complaint, or share a suggestion.', '/member/talk');
                 ?>
             </div>
         </section>
@@ -240,6 +259,35 @@ $lock = fn(bool $open) => !$memberActive ? 'Renew to unlock' : (!$open ? 'Closed
                 </div>
                 <?php if ($totalRequests > count($requests)): ?>
                     <p class="meta" style="text-align:center; color:var(--muted); font-size:13px;">Showing your latest <?= count($requests) ?> of <?= $totalRequests ?> requests.</p>
+                <?php endif; ?>
+            <?php endif; ?>
+        </section>
+
+        <section class="panel">
+            <div class="panel-head">
+                <h2>My conversations</h2>
+                <p>Questions, complaints and suggestions you have sent to <?= htmlspecialchars(MemberTicketModel::SUPPORT_LABEL) ?>.</p>
+            </div>
+            <?php if (empty($tickets)): ?>
+                <div class="empty-note">You have not started a conversation yet.</div>
+            <?php else: ?>
+                <div class="reqs">
+                    <?php foreach (array_slice($tickets, 0, 8) as $t): ?>
+                        <div class="req<?= ($t['last_sender'] === 'staff' && !MemberTicketModel::isClosed((string) $t['status'])) ? ' act' : '' ?>" style="--tone: #106b9a;">
+                            <span class="tick"><svg viewBox="0 0 24 24" aria-hidden="true"><?= $icons['chat'] ?></svg></span>
+                            <div>
+                                <h3><?= htmlspecialchars($t['subject']) ?></h3>
+                                <p class="meta"><?= htmlspecialchars(MemberTicketModel::LABELS[$t['type']] ?? '') ?> &middot; <?= htmlspecialchars(dash_date($t['updated_at'])) ?> &middot; <code><?= htmlspecialchars($t['tracking_id']) ?></code></p>
+                            </div>
+                            <div class="side">
+                                <span class="pill"><?= htmlspecialchars($t['status']) ?></span>
+                                <a href="/member/talk/ticket?id=<?= htmlspecialchars(rawurlencode($t['tracking_id'])) ?>">Open &rarr;</a>
+                            </div>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
+                <?php if (count($tickets) > 8): ?>
+                    <p class="meta" style="text-align:center; color:var(--muted); font-size:13px;">Showing your latest 8 of <?= count($tickets) ?> conversations.</p>
                 <?php endif; ?>
             <?php endif; ?>
         </section>

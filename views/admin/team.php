@@ -28,6 +28,7 @@ function team_role_label($role) {
         'organizer'              => 'Organizer',
         'finance'                => 'Finance',
         'support_reviewer'       => 'Support reviewer',
+        'member_support'         => 'DCW Support',
         'membership_reviewer'    => 'Membership reviewer',
         'membership_coordinator' => 'Membership coordinator',
     ];
@@ -262,6 +263,7 @@ engage_header([
     .pill-organizer { --tone: #475569; }
     .pill-finance { --tone: #3730a3; }
     .pill-support_reviewer { --tone: #b45309; }
+    .pill-member_support { --tone: #106b9a; }
     .pill-membership_reviewer { --tone: #6d28d9; }
     .pill-membership_coordinator { --tone: #047857; }
     .pill-expired { --tone: #b91c1c; }
@@ -320,7 +322,9 @@ engage_header([
         <p class="note">
             Organizers manage forms and applications. Finance can process
             reimbursement payments and internet support recharges. Support
-            reviewers decide internet support requests. Membership coordinators
+            reviewers decide internet support requests. DCW Support answers
+            the complaints, suggestions and questions members send from their
+            dashboard (complaints about team members stay with owners). Membership coordinators
             review membership applications only for the chapters an owner
             assigns them under Membership Access. Membership reviewers
             (DCW Generic Reviewers) review membership applications from every

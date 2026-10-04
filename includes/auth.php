@@ -27,12 +27,17 @@ class Auth {
      * Every role that exists, highest privilege first. The first one an
      * account holds is its primary role. InviteModel::ROLES reads this, so
      * adding a role means editing it here only.
+     *
+     * 'member_support' is shown to people as "DCW Support" (see
+     * MemberTicketModel::SUPPORT_LABEL and team_role_label()). The stored key
+     * stays member_support so existing rows keep working.
      */
     public const ROLES = [
         'owner',
         'organizer',
         'finance',
         'support_reviewer',
+        'member_support',
         'membership_reviewer',
         'membership_coordinator',
     ];
