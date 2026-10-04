@@ -8,6 +8,8 @@
 //   OrganizerAccountMail.php organizer invitations and password resets
 //   ReimbursementMail.php    reimbursement: verification, received, status (incl. Info Requested)
 //   InternetSupportMail.php  internet support: verification, received, status (incl. Info Requested)
+//   MemberSupportMail.php    member conversations with DCW Support: "you have a reply" / "status changed"
+//                            notifications (never contain the message text or any staff name)
 //
 // Every existing `Mailer::sendX(...)` call keeps working unchanged: this class
 // only forwards. New code can call the subject class directly. To add an email,
@@ -22,6 +24,7 @@ require_once __DIR__ . '/mail/ApplicationMail.php';
 require_once __DIR__ . '/mail/OrganizerAccountMail.php';
 require_once __DIR__ . '/mail/ReimbursementMail.php';
 require_once __DIR__ . '/mail/InternetSupportMail.php';
+require_once __DIR__ . '/mail/MemberSupportMail.php';
 
 class Mailer {
     public static function formatExpiryIST($utcDatetime) { return CoreMail::formatExpiryIST($utcDatetime); }
@@ -46,4 +49,9 @@ class Mailer {
     public static function sendInternetVerification(...$a)   { return InternetSupportMail::verification(...$a); }
     public static function sendInternetReceived(...$a)       { return InternetSupportMail::received(...$a); }
     public static function sendInternetStatusUpdate(...$a)   { return InternetSupportMail::statusUpdate(...$a); }
+
+    // --- Member support (DCW Support conversations) -------------------------
+    // ($email, $memberName, $trackingId, $kind) where $kind is 'reply' or 'status'.
+    // Called by ticket_notify() in models/MemberTicketModel.php.
+    public static function sendMemberTicketUpdate(...$a)     { return MemberSupportMail::update(...$a); }
 }
