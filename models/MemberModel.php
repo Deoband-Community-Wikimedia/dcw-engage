@@ -133,32 +133,56 @@ class MemberModel {
      *   owner, organizer, membership_reviewer (DCW Generic Reviewers) -> all
      *   membership_coordinator -> only the chapters assigned in membership_scopes
      *   anyone else -> none
+     *
+     * $roles is the person's FULL role list (array). An account can hold several
+     * roles, and admin_users.role only holds the primary one, so callers must pass
+     * the whole list (e.g. from admin_user_roles). A single role string still works.
      */
-    public function scopeFor(string $role, string $email): ?array {
-        if (in_array($role, ['owner', 'organizer', 'membership_reviewer'], true)) return null;
-        if ($role !== 'membership_coordinator') return [];
+    public function scopeFor($roles, string $email): ?array {
+        $roles = is_array($roles)
+            ? $roles
+            : array_filter(array_map('trim', explode(',', (string) $roles)));
+        if (array_intersect($roles, ['owner', 'organizer', 'membership_reviewer'])) return null;   // all chapters
+        if (!in_array('membership_coordinator', $roles, true)) return [];
         return $this->chaptersFor($email);
     }
 
     public function chaptersFor(string $email): array {
         $st = $this->db->prepare('SELECT chapter FROM membership_scopes WHERE email = :e');
-        $st->execute(['e' => strtolower($email)]);
+        $st->execute(['e' => strtolower(trim($email))]);
         return $st->fetchAll(PDO::FETCH_COLUMN);
     }
 
+    /**
+     * Emails of every account that holds the membership_coordinator role.
+     * Roles live in admin_user_roles (one row per role); admin_users.role is only the
+     * primary role, so a person who is also, say, an Organizer would be missed by
+     * checking that column alone. Accounts with no rows in admin_user_roles fall back
+     * to their primary role, matching InviteModel::rolesFor().
+     */
     public function coordinators(): array {
-        return $this->db->query("SELECT email FROM admin_users WHERE role = 'membership_coordinator' ORDER BY email")
-            ->fetchAll(PDO::FETCH_COLUMN);
+        $st = $this->db->query(
+            "SELECT u.email
+               FROM admin_users u
+              WHERE EXISTS (SELECT 1 FROM admin_user_roles r
+                             WHERE r.admin_id = u.id AND r.role = 'membership_coordinator')
+                 OR (u.role = 'membership_coordinator'
+                     AND NOT EXISTS (SELECT 1 FROM admin_user_roles r2 WHERE r2.admin_id = u.id))
+              ORDER BY u.email"
+        );
+        return $st->fetchAll(PDO::FETCH_COLUMN);
     }
 
     public function setChapters(string $email, array $chapters): void {
-        if (!in_array($email, $this->coordinators(), true)) throw new Exception('Not a membership coordinator.');
+        $email  = strtolower(trim($email));
+        $coords = array_map('strtolower', $this->coordinators());
+        if (!in_array($email, $coords, true)) throw new Exception('Not a membership coordinator.');
         $chapters = array_values(array_intersect(self::CHAPTERS, $chapters));
         $this->db->beginTransaction();
         try {
-            $this->db->prepare('DELETE FROM membership_scopes WHERE email = :e')->execute(['e' => strtolower($email)]);
+            $this->db->prepare('DELETE FROM membership_scopes WHERE email = :e')->execute(['e' => $email]);
             $ins = $this->db->prepare('INSERT INTO membership_scopes (email, chapter) VALUES (:e, :c)');
-            foreach ($chapters as $c) $ins->execute(['e' => strtolower($email), 'c' => $c]);
+            foreach ($chapters as $c) $ins->execute(['e' => $email, 'c' => $c]);
             $this->db->commit();
         } catch (Throwable $e) { $this->db->rollBack(); throw $e; }
     }
