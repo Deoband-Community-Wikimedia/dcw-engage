@@ -76,12 +76,13 @@ class MemberSession {
     }
 
     /**
-     * Where a login may send the member afterwards: /support and its sub-paths only, on this site.
-     * Rejects //evil.com style values, and never the login or logout pages themselves (that would loop).
+     * Where a login may send the member afterwards: the dashboard (/member/dashboard) and
+     * /support with its sub-paths, on this site. Rejects //evil.com style values, and never the
+     * login or logout pages themselves (that would loop).
      */
     public static function isSafeNext($next): bool {
         return is_string($next)
-            && preg_match('#^/support(/|\?|$)#', $next) === 1
+            && preg_match('#^/(support|member/dashboard)(/|\?|$)#', $next) === 1
             && strpos($next, '//') !== 0
             && strpos($next, "\n") === false
             && strpos($next, "\r") === false;
