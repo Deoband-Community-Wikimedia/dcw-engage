@@ -82,7 +82,7 @@ if (!$id && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') ==
                     $token = $model->requestInfo($row, $message, $by);
                     $sent = false;
                     try {
-                        $sent = (bool) MembershipMailer::sendInfoRequest($row['email'], $row['applicant_name'], $message, $token);
+                        $sent = (bool) MembershipMailer::sendInfoRequestFor($row, $message, $token);
                     } catch (Throwable $e) {
                         app_log("Info-request email failed for application #{$row['id']}: " . $e->getMessage());
                     }
@@ -100,7 +100,8 @@ if (!$id && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') ==
 
                 if ($mail) {
                     try {
-                        MembershipMailer::sendDecision($row['email'], $row['applicant_name'], $mail[0], $mail[1], $mail[2]);
+                        // Also emails the new member a "set your password" link on approval.
+                        MembershipMailer::sendDecisionFor($row, $mail[0], $mail[1], $mail[2]);
                     } catch (Throwable $e) {
                         app_log("Membership email failed for application #{$row['id']}: " . $e->getMessage());
                     }
@@ -141,7 +142,7 @@ if ($app && $_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             $sent = false;   // Mailer returns false when it only logged (dev mode) or failed
             try {
-                $sent = (bool) MembershipMailer::sendInfoRequest($app['email'], $app['applicant_name'], $msg, $token);
+                $sent = (bool) MembershipMailer::sendInfoRequestFor($app, $msg, $token);
             } catch (Throwable $e) { app_log("Info-request email failed for application #{$app['id']}: " . $e->getMessage()); }
             if (!$sent) {   // same idea as the invite flow: never strand the link
                 $config = require __DIR__ . '/../../includes/config.php';
@@ -157,7 +158,8 @@ if ($app && $_SERVER['REQUEST_METHOD'] === 'POST') {
         // Email failure must never undo a decision that is already saved.
         if (!empty($mail)) {
             try {
-                MembershipMailer::sendDecision($app['email'], $app['applicant_name'], $mail[0], $mail[1], $mail[2]);
+                // Also emails the new member a "set your password" link on approval.
+                MembershipMailer::sendDecisionFor($app, $mail[0], $mail[1], $mail[2]);
             } catch (Throwable $e) { app_log("Membership email failed for application #{$app['id']}: " . $e->getMessage()); }
         }
         header('Location: /admin/membership-review?id=' . $app['id'] . '&done=' . urlencode($act));
