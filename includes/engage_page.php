@@ -11,6 +11,9 @@
  *   member   MemberSession::current() row, or null
  *   tools    raw, already-escaped HTML for the top-bar buttons (overrides the member links)
  *   wide     true for wide layouts (finance queue and tables)
+ *   crumbs   breadcrumb trail, e.g. [['Home','/'],['Support','/support'],['Reimbursement']].
+ *            The last item is the current page (no link). A "Back" button pointing to the
+ *            nearest linked crumb is added automatically. Defaults to Home > heading.
  */
 function engage_header(array $o) {
     $title   = $o['title'];
@@ -20,6 +23,9 @@ function engage_header(array $o) {
     $member  = $o['member'] ?? null;
     $tools   = $o['tools'] ?? null;
     $wide    = !empty($o['wide']);
+    $crumbs  = $o['crumbs'] ?? [['Home', '/'], [$heading]];
+    $backHref = null; $backLabel = null;
+    foreach ($crumbs as $c) { if (!empty($c[1])) { $backHref = $c[1]; $backLabel = $c[0]; } }
     $e = fn($s) => htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8');
     ?>
 <!DOCTYPE html>
@@ -49,6 +55,17 @@ function engage_header(array $o) {
             <?php endif; ?>
         </div>
     </div>
+    <nav class="crumbs" aria-label="Breadcrumb">
+        <?php if ($backHref): ?><a class="back" href="<?= $e($backHref) ?>">&larr; Back</a><?php endif; ?>
+        <?php foreach ($crumbs as $i => $c): ?>
+            <?php if ($i > 0): ?><span class="sep" aria-hidden="true">/</span><?php endif; ?>
+            <?php if (!empty($c[1])): ?>
+                <a href="<?= $e($c[1]) ?>"><?= $e($c[0]) ?></a>
+            <?php else: ?>
+                <span class="here" aria-current="page"><?= $e($c[0]) ?></span>
+            <?php endif; ?>
+        <?php endforeach; ?>
+    </nav>
     <p class="kicker"><?= $e($kicker) ?></p>
     <h1><?= $e($heading) ?></h1>
     <?php if ($lead): ?><p class="lead"><?= $e($lead) ?></p><?php endif; ?>
