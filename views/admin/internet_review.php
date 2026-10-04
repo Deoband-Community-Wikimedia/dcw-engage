@@ -5,6 +5,7 @@ require_once __DIR__ . '/../../includes/audit.php';
 require_once __DIR__ . '/../../includes/require_role.php';
 require_once __DIR__ . '/../../includes/app_log.php';
 require_once __DIR__ . '/../../includes/mailer.php';
+require_once __DIR__ . '/../../includes/engage_page.php';
 require_once __DIR__ . '/../../models/InternetSupportModel.php';
 
 // Support reviewers decide whether a request is reasonable. Owners are
@@ -97,77 +98,88 @@ function internet_review_card(array $req, InternetSupportModel $model) {
         && ((int) $req['edits_80'] !== 1 || (int) $req['attended_ch'] !== 1);
     $wikiUser = (string) ($req['wikimedia_username'] ?? '');
     $thread = $model->getMessagesForReview((int) $req['id']);
+    // Left-edge colour of the card: red = recharge failed, blue = waiting on the applicant.
+    $tone = $req['status'] === 'Recharge Failed' ? '#b91c1c'
+        : ($req['status'] === 'Info Requested' ? '#1e40af' : 'var(--primary)');
     ?>
-    <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:20px; margin-bottom:20px;">
-        <h3 style="margin-top:0;">
-            <?= htmlspecialchars($req['applicant_name']) ?> — #<?= htmlspecialchars($req['tracking_id']) ?>
-        </h3>
-        <p style="color:#475569; font-size:14px; margin-top:-8px;">
+    <article class="qcard" style="--tone:<?= $tone ?>;">
+        <div class="qhead">
+            <h3><?= htmlspecialchars($req['applicant_name']) ?> <code>#<?= htmlspecialchars($req['tracking_id']) ?></code></h3>
+            <span class="qamount">₹<?= number_format($req['package_price_paise'] / 100, 2) ?></span>
+        </div>
+        <p class="qmeta">
             <?= htmlspecialchars($req['email']) ?> · submitted <?= htmlspecialchars($req['created_at']) ?> UTC
         </p>
 
-        <p style="font-size:14px; margin-bottom:4px;">
-            <strong>Wikimedia username:</strong>
-            <?php if ($wikiUser !== ''): ?>
-                <a href="https://meta.wikimedia.org/wiki/Special:CentralAuth/<?= rawurlencode($wikiUser) ?>" target="_blank" rel="noopener" style="color:#106b9a;"><?= htmlspecialchars($wikiUser) ?></a>
-            <?php else: ?>
-                —
-            <?php endif; ?>
+        <div class="kv">
+            <div>
+                <span>Wikimedia username</span>
+                <strong>
+                    <?php if ($wikiUser !== ''): ?>
+                        <a href="https://meta.wikimedia.org/wiki/Special:CentralAuth/<?= rawurlencode($wikiUser) ?>" target="_blank" rel="noopener" style="color:var(--primary);"><?= htmlspecialchars($wikiUser) ?></a>
+                    <?php else: ?>
+                        —
+                    <?php endif; ?>
+                </strong>
+            </div>
+            <div>
+                <span>Package</span>
+                <strong><?= htmlspecialchars($req['operator']) ?> — <?= htmlspecialchars($req['package_name']) ?><?= $req['package_validity_days'] ? ' · ' . (int) $req['package_validity_days'] . ' days' : '' ?></strong>
+            </div>
+            <div>
+                <span>80+ manual edits last month</span>
+                <strong><?= $yn($req['edits_80']) ?></strong>
+            </div>
+            <div>
+                <span>Attended last 3 Conversation Hours</span>
+                <strong><?= $yn($req['attended_ch']) ?></strong>
+            </div>
+            <div>
+                <span>Active on DCW technical projects</span>
+                <strong><?= $yn($req['tech_contributor']) ?></strong>
+            </div>
+            <div>
+                <span>Earlier requests recharged</span>
+                <strong<?= $req['prior_recharges'] > 0 ? ' style="color:#b45309;"' : '' ?>><?= (int) $req['prior_recharges'] ?></strong>
+            </div>
+        </div>
+        <p class="qmeta">
+            Eligibility answers are self-declared: spot-check against XTools or attendance sheets.
+            The pack and price are what the applicant typed, not checked against the operator.
         </p>
-        <p style="font-size:13px; color:#475569; margin-top:0;">
-            80+ manual edits last month: <strong><?= $yn($req['edits_80']) ?></strong> ·
-            Attended last 3 Conversation Hours: <strong><?= $yn($req['attended_ch']) ?></strong> ·
-            Active on DCW technical projects: <strong><?= $yn($req['tech_contributor']) ?></strong>
-            <br><span style="font-size:12px; color:#64748b;">Self-declared. Spot-check against XTools or attendance sheets.</span>
-        </p>
+
         <?php if ($techOnly): ?>
-            <p style="font-size:13px; background:#fffbeb; border:1px solid #fde68a; border-radius:6px; padding:8px 10px; color:#92400e;">
+            <div class="action-banner">
                 Qualified via technical contribution only. Worth confirming they are active on DCW technical projects.
-            </p>
+            </div>
         <?php endif; ?>
 
-        <p style="margin-bottom:4px;">
-            <strong><?= htmlspecialchars($req['operator']) ?> — <?= htmlspecialchars($req['package_name']) ?></strong>
-            · asking for <strong>₹<?= number_format($req['package_price_paise'] / 100, 2) ?></strong><?= $req['package_validity_days'] ? ' · ' . (int) $req['package_validity_days'] . ' days' : '' ?>
-        </p>
-        <p style="font-size:12px; color:#64748b; margin-top:0;">The pack and price are what the applicant typed, not checked against the operator.</p>
-
-        <p style="font-size:14px; margin-bottom:4px;"><strong>Why they need support</strong></p>
-        <p style="font-size:14px; background:#fff; border:1px solid #e2e8f0; border-radius:6px; padding:10px; margin-top:0;">
-            <?= nl2br(htmlspecialchars($req['reason'])) ?>
-        </p>
+        <p class="qlabel">Why they need support</p>
+        <p class="qtext"><?= nl2br(htmlspecialchars($req['reason'])) ?></p>
 
         <?php if ($req['contributions'] !== null): ?>
-            <p style="font-size:14px; margin-bottom:4px;"><strong>Contributions in the last three months</strong></p>
-            <p style="font-size:14px; background:#fff; border:1px solid #e2e8f0; border-radius:6px; padding:10px; margin-top:0;">
-                <?= nl2br(htmlspecialchars($req['contributions'])) ?>
-            </p>
+            <p class="qlabel">Contributions in the last three months</p>
+            <p class="qtext"><?= nl2br(htmlspecialchars($req['contributions'])) ?></p>
         <?php endif; ?>
 
         <?php if ($req['plans'] !== null): ?>
-            <p style="font-size:14px; margin-bottom:4px;"><strong>Plans for the support period</strong></p>
-            <p style="font-size:14px; background:#fff; border:1px solid #e2e8f0; border-radius:6px; padding:10px; margin-top:0;">
-                <?= nl2br(htmlspecialchars($req['plans'])) ?>
-            </p>
+            <p class="qlabel">Plans for the support period</p>
+            <p class="qtext"><?= nl2br(htmlspecialchars($req['plans'])) ?></p>
         <?php endif; ?>
 
-        <p style="font-size:13px; color:<?= $req['prior_recharges'] > 0 ? '#b45309' : '#64748b' ?>;">
-            Earlier requests from this email that were recharged: <strong><?= (int) $req['prior_recharges'] ?></strong>
-        </p>
-
         <?php if ($req['status'] === 'Recharge Failed'): ?>
-            <div class="alert-error" style="margin-bottom:12px;">
+            <div class="alert error">
                 <strong>Finance couldn't complete the recharge:</strong><br>
                 <?= nl2br(htmlspecialchars((string) $req['recharge_notes'])) ?>
             </div>
         <?php endif; ?>
 
         <?php if (!empty($thread)): ?>
-            <p style="font-size:14px; margin-bottom:4px;"><strong>Conversation with applicant</strong></p>
-            <div style="background:#fff; border:1px solid #e2e8f0; border-radius:6px; padding:10px; margin-bottom:12px; font-size:14px;">
+            <p class="qlabel">Conversation with applicant</p>
+            <div class="thread">
                 <?php foreach ($thread as $m): ?>
-                    <div style="margin-bottom:10px;">
-                        <div style="font-size:12px; color:#64748b;">
+                    <div class="msg">
+                        <div class="msg-meta">
                             <?php if ($m['sender'] === 'reviewer'): ?>
                                 Reviewer (<?= htmlspecialchars((string) $m['author']) ?>) — the applicant sees "DCW reviewer"
                             <?php else: ?>
@@ -182,65 +194,83 @@ function internet_review_card(array $req, InternetSupportModel $model) {
         <?php endif; ?>
 
         <?php if ($req['status'] === 'Info Requested'): ?>
-            <p style="font-size:13px; background:#eff6ff; border:1px solid #bfdbfe; border-radius:6px; padding:8px 10px; color:#1e40af;">
+            <div class="info-banner">
                 Waiting for the applicant's reply. This request returns to "New requests" when they answer. You can still reject or discard it if they never respond.
-            </p>
+            </div>
         <?php endif; ?>
 
-        <form method="POST" style="display:flex; gap:10px; align-items:flex-start; flex-wrap:wrap;">
+        <form method="POST" class="qform">
             <?= CSRF::getInputField() ?>
             <?= CSRF::getSubmitField() ?>
             <input type="hidden" name="request_id" value="<?= (int) $req['id'] ?>">
-            <textarea name="notes" placeholder="Notes. Required to reject or to request info: the applicant sees them (reviewer name hidden). Optional for discard: internal only."
-                      style="flex:1; min-width:220px; min-height:40px;"></textarea>
+            <textarea name="notes" placeholder="Notes. Required to reject or to request info: the applicant sees them (reviewer name hidden). Optional for discard: internal only."></textarea>
             <?php if ($req['status'] !== 'Info Requested'): ?>
-                <button type="submit" name="decision" value="approve" style="width:auto; background:#059669;">Approve</button>
+                <button type="submit" name="decision" value="approve" class="btn-ok">Approve</button>
             <?php endif; ?>
             <?php if ($req['status'] === 'Submitted'): ?>
-                <button type="submit" name="decision" value="request_info" style="width:auto; background:#106b9a;">Request info</button>
+                <button type="submit" name="decision" value="request_info" class="btn-info">Request info</button>
             <?php endif; ?>
-            <button type="submit" name="decision" value="reject" style="width:auto; background:#dc2626;">Reject</button>
-            <button type="submit" name="decision" value="discard" style="width:auto; background:#64748b;"
+            <button type="submit" name="decision" value="reject" class="btn-bad">Reject</button>
+            <button type="submit" name="decision" value="discard" class="btn-mute"
                     onclick="return confirm('Discard silently? The applicant will NOT be told and the request will vanish from their tracking page.');">Discard</button>
         </form>
-    </div>
+    </article>
     <?php
 }
+
+engage_header([
+    'title'   => 'Internet support review',
+    'heading' => 'Internet support review',
+    'kicker'  => 'Organizer workspace',
+    'lead'    => "Decide whether each request is reasonable. Phone numbers aren't shown here; finance sees them when doing the recharge.",
+    'tools'   => '',
+    'wide'    => true,
+    'crumbs'  => [['Workspace', '/admin/dashboard'], ['Internet support review']],
+]);
 ?>
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>Internet Support Review</title>
-    <?php require __DIR__ . '/../../includes/favicon.php'; ?>
-    <link rel="stylesheet" href="/assets/css/forms.css?v=2">
-</head>
-<body>
-    <div class="container">
-        <h1 style="margin-bottom:6px;">Internet Support Review</h1>
-        <p style="color:#64748b; font-size:14px; margin-top:0;">
-            Decide whether each request is reasonable. Phone numbers aren't shown here; finance sees them when doing the recharge.
-            <a href="/admin/dashboard" style="color:#106b9a;">Back to workspace</a>
-        </p>
+<style>
+    /* Internet review only. Everything else comes from /assets/css/engage.css */
+    .sect { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 22px 24px 8px; margin: 0 0 26px; box-shadow: 0 16px 34px rgba(15,23,42,.12); }
+    .qlabel { margin: 0 0 4px; font-size: 14px; font-weight: 700; }
+    .qtext { margin: 0 0 14px; padding: 10px 12px; background: #f8fafc; border: 1px solid var(--border); border-radius: 10px; font-size: 14px; }
+    .thread { margin: 0 0 14px; padding: 10px 12px; background: #fff; border: 1px solid var(--border); border-radius: 10px; font-size: 14px; }
+    .thread .msg { margin-bottom: 10px; }
+    .thread .msg:last-child { margin-bottom: 0; }
+    .msg-meta { font-size: 12px; color: var(--muted); }
+    .info-banner { margin: 0 0 14px; padding: 10px 14px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 10px; color: #1e40af; font-size: 14px; }
+    .qcard .alert { margin: 0 0 14px; }
+    .qcard .action-banner { margin: 0 0 14px; }
+    .btn-info, .btn-mute {
+        padding: 11px 22px; border: none; border-radius: 999px; cursor: pointer; font: inherit; font-size: 14.5px; font-weight: 700; color: #fff;
+        transition: transform .15s, box-shadow .15s;
+    }
+    .btn-info { background: linear-gradient(135deg, var(--primary-dark), var(--primary)); box-shadow: 0 5px 14px rgba(16,107,154,.3); }
+    .btn-mute { background: linear-gradient(135deg, #475569, #64748b); box-shadow: 0 5px 14px rgba(71,85,105,.25); }
+    .btn-info:hover, .btn-mute:hover { transform: translateY(-2px); }
+</style>
 
-        <?php if ($message): ?><div class="alert-success"><?= htmlspecialchars($message) ?></div><?php endif; ?>
-        <?php if ($error): ?><div class="alert-error"><?= htmlspecialchars($error) ?></div><?php endif; ?>
+<?php if ($message): ?><div class="alert ok"><?= htmlspecialchars($message) ?></div><?php endif; ?>
+<?php if ($error): ?><div class="alert error"><?= htmlspecialchars($error) ?></div><?php endif; ?>
 
-        <?php if (!empty($failed)): ?>
-            <h2 style="font-size:17px; color:#b91c1c;">Recharge failed — needs attention</h2>
-            <?php foreach ($failed as $req) { internet_review_card($req, $model); } ?>
-        <?php endif; ?>
+<?php if (!empty($failed)): ?>
+    <section class="sect">
+        <h2 class="sec-title" style="color:#b91c1c;">Recharge failed — needs attention</h2>
+        <?php foreach ($failed as $req) { internet_review_card($req, $model); } ?>
+    </section>
+<?php endif; ?>
 
-        <h2 style="font-size:17px;">New requests</h2>
-        <?php if (empty($fresh)): ?>
-            <p>Nothing waiting for review.</p>
-        <?php endif; ?>
-        <?php foreach ($fresh as $req) { internet_review_card($req, $model); } ?>
+<section class="sect">
+    <h2 class="sec-title">New requests <span class="pill"><?= count($fresh) ?></span></h2>
+    <?php if (empty($fresh)): ?>
+        <div class="empty-note" style="margin-bottom:16px;">Nothing waiting for review.</div>
+    <?php endif; ?>
+    <?php foreach ($fresh as $req) { internet_review_card($req, $model); } ?>
+</section>
 
-        <?php if (!empty($waiting)): ?>
-            <h2 style="font-size:17px; color:#1e40af;">Waiting for applicant's reply</h2>
-            <?php foreach ($waiting as $req) { internet_review_card($req, $model); } ?>
-        <?php endif; ?>
-    </div>
-</body>
-</html>
+<?php if (!empty($waiting)): ?>
+    <section class="sect">
+        <h2 class="sec-title" style="color:#1e40af;">Waiting for applicant's reply</h2>
+        <?php foreach ($waiting as $req) { internet_review_card($req, $model); } ?>
+    </section>
+<?php endif; ?>
+<?php engage_footer(); ?>
