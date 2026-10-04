@@ -190,3 +190,59 @@ footer .org img { width: 26px; height: auto; }
 .tile.new:hover { border-color: var(--tone); background: color-mix(in srgb, var(--tone) 5%, #fff); box-shadow: none; }
 
 @media (max-width: 640px) { .tiles { grid-template-columns: 1fr; } }
+
+/* ---------- Member area ---------- */
+.auth-card button[type=submit] {
+    width: 100%; padding: 13px; border: none; border-radius: 999px; cursor: pointer;
+    font: inherit; font-size: 15px; font-weight: 700; color: #fff;
+    background: linear-gradient(135deg, var(--primary-dark), var(--primary));
+    box-shadow: 0 6px 16px rgba(16,107,154,.3); transition: transform .15s, box-shadow .15s;
+}
+.auth-card button[type=submit]:hover { transform: translateY(-2px); box-shadow: 0 10px 22px rgba(16,107,154,.38); }
+.auth-card input.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .06em; text-transform: uppercase; }
+.auth-card .links { text-align: center; margin: 20px 0 0; font-size: 13.5px; line-height: 2; }
+.auth-card .links a { color: var(--primary); text-decoration: none; font-weight: 600; }
+.auth-card .links a:hover { text-decoration: underline; }
+
+.mstrip {
+    --tone: #0f766e; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px 24px;
+    margin: 0 0 22px; padding: 20px 24px; background: var(--card); border: 1px solid var(--border);
+    border-left: 6px solid var(--tone); border-radius: 16px; box-shadow: 0 6px 18px rgba(15,23,42,.08);
+}
+.mstrip h2 { margin: 6px 0 2px; font-size: 21px; font-weight: 800; letter-spacing: -.02em; }
+.mstrip p { margin: 0; color: var(--muted); font-size: 14px; }
+.btn-pill {
+    display: inline-block; padding: 10px 22px; border-radius: 999px; font-weight: 700; font-size: 14.5px; text-decoration: none;
+    color: #fff; background: linear-gradient(135deg, var(--accent), #b3262c); box-shadow: 0 6px 16px rgba(151,22,27,.28);
+}
+.btn-pill:hover { transform: translateY(-2px); }
+
+.action-banner {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: 0 0 22px; padding: 14px 18px;
+    background: #fffbeb; border: 1px solid #fcd34d; border-radius: 14px; color: #78350f; font-size: 14.5px;
+}
+.action-banner a { color: #92400e; font-weight: 700; }
+
+.tile.off { --tone: #94a3b8; opacity: .65; box-shadow: none; cursor: default; }
+.tile.off:hover { transform: none; box-shadow: none; border-color: var(--border); }
+
+.reqs { display: grid; gap: 10px; }
+.req {
+    --tone: var(--primary); display: grid; grid-template-columns: 42px 1fr auto; gap: 14px; align-items: center;
+    padding: 14px 16px; background: var(--card); border: 1px solid var(--border); border-left: 5px solid var(--tone); border-radius: 14px;
+    box-shadow: 0 3px 10px rgba(15,23,42,.05);
+}
+.req.act { background: #fffbeb; }
+.req .tick { width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center; background: color-mix(in srgb, var(--tone) 14%, #fff); }
+.req .tick svg { width: 21px; height: 21px; stroke: var(--tone); fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.req h3 { margin: 0; font-size: 15.5px; font-weight: 700; line-height: 1.3; }
+.req .meta { margin: 2px 0 0; font-size: 13px; color: var(--muted); }
+.req code { font-size: 12.5px; background: #f1f5f9; padding: 1px 7px; border-radius: 6px; }
+.req .copy { margin-left: 4px; padding: 0 8px; font: inherit; font-size: 12px; font-weight: 600; color: var(--primary); background: none; border: 1px solid var(--border); border-radius: 999px; cursor: pointer; }
+.req .side { text-align: right; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.req .side a { font-size: 13px; font-weight: 700; color: var(--primary); text-decoration: none; }
+.empty-note { padding: 22px; text-align: center; color: var(--muted); background: var(--card); border: 1px dashed #cbd5e1; border-radius: 14px; font-size: 14.5px; }
+@media (max-width: 640px) {
+    .req { grid-template-columns: 42px 1fr; }
+    .req .side { grid-column: 1 / -1; flex-direction: row; justify-content: space-between; align-items: center; }
+}
