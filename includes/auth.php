@@ -40,6 +40,7 @@ class Auth {
         'member_support',
         'membership_reviewer',
         'membership_coordinator',
+        'technical_manager',
     ];
 
     /** Failed attempts from one session before a cooldown starts. */
