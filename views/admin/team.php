@@ -320,9 +320,10 @@ engage_header([
         <?= team_chapter_checkboxes([]) ?>
 
         <p class="note">
-            Organizers manage forms and applications. Finance can process
-            reimbursement payments and internet support recharges. Support
-            reviewers decide internet support requests. DCW Support answers
+            Organizers manage application forms and read their responses.
+            Finance can process reimbursement payments and internet support
+            recharges. Support reviewers decide reimbursement claims and
+            internet support requests. DCW Support answers
             the complaints, suggestions and questions members send from their
             dashboard (complaints about team members stay with owners). Membership coordinators
             review membership applications only for the chapters ticked for
