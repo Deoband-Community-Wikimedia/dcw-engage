@@ -10,7 +10,7 @@ $forms = $formModel->getAllForms();
 
 // Each flag mirrors the exact requireRole() call on the page it links to, so
 // a link only ever appears for someone who can actually get past its gate:
-//   reimbursement_review.php -> requireRole(['owner', 'organizer'])
+//   reimbursement_review.php -> requireRole(['support_reviewer', 'owner'])
 //   internet_review.php      -> requireRole(['support_reviewer', 'owner'])
 //   finance/queue.php        -> requireRole(['finance', 'owner'])   (combined: reimbursements + internet support)
 //   finance/closed.php       -> requireRole(['finance', 'owner'])
@@ -19,7 +19,7 @@ $forms = $formModel->getAllForms();
 //   member_support.php       -> requireRole(['member_support', 'owner'])   (shown as "DCW Support")
 // Auth::role() is only the PRIMARY role. An account can hold several, and
 // requireRole() grants access when ANY matches, so use hasAnyRole() here too.
-$canReviewReimbursements = Auth::hasAnyRole(['owner', 'organizer']);
+$canReviewReimbursements = Auth::hasAnyRole(['support_reviewer', 'owner']);
 $canReviewInternet       = Auth::hasAnyRole(['support_reviewer', 'owner']);
 $canProcessFinance       = Auth::hasAnyRole(['finance', 'owner']);
 $canReviewMembership     = Auth::hasAnyRole(['membership_coordinator', 'membership_reviewer', 'owner']);
