@@ -31,6 +31,7 @@ function team_role_label($role) {
         'member_support'         => 'DCW Support',
         'membership_reviewer'    => 'Membership reviewer',
         'membership_coordinator' => 'Membership coordinator',
+        'technical_manager'      => 'Technical manager',
     ];
     return $labels[$role] ?? ucfirst(str_replace('_', ' ', $role));
 }
@@ -266,6 +267,7 @@ engage_header([
     .pill-member_support { --tone: #106b9a; }
     .pill-membership_reviewer { --tone: #6d28d9; }
     .pill-membership_coordinator { --tone: #047857; }
+    .pill-technical_manager { --tone: #0e7490; }
     .pill-expired { --tone: #b91c1c; }
 
     .tbl .sub { margin-top: 6px; }
@@ -325,7 +327,9 @@ engage_header([
             recharges. Support reviewers decide reimbursement claims and
             internet support requests. DCW Support answers
             the complaints, suggestions and questions members send from their
-            dashboard (complaints about team members stay with owners). Membership coordinators
+            dashboard (complaints about team members stay with owners).
+            Technical managers work the problems members and team people
+            report, and run the portal diagnostics. Membership coordinators
             review membership applications only for the chapters ticked for
             them (use "Edit roles" on a person to change these later). Membership reviewers
             (DCW Generic Reviewers) review membership applications from every
