@@ -6,6 +6,10 @@
  * password they choose themselves. Nobody is ever given a password: after approval the member
  * gets a one-time link to set one, and the same kind of link handles "forgot password".
  *
+ * One Member ID can cover several memberships (the DCW Generic Community plus clubs), so several
+ * members rows can share it. The Generic Community row is the PRIMARY row: it holds the password
+ * and is the one used for login, password reset and set-password links.
+ *
  * Needs sql/member_login.sql (extra columns on members + member_password_tokens).
  * This class only deals with credentials; sessions, pages and CSRF belong in the views.
  */
@@ -76,8 +80,13 @@ class MemberAuthModel {
         return null;
     }
 
+    /**
+     * The row used for login under a Member ID. With a shared ID the Generic Community row is
+     * the primary one (it holds the password), so the result never depends on row order.
+     */
     public function findByMemberId(string $memberId): ?array {
-        $st = $this->db->prepare('SELECT * FROM members WHERE member_id = :m');
+        $st = $this->db->prepare("SELECT * FROM members WHERE member_id = :m
+            ORDER BY (chapter = 'generic') DESC, id ASC LIMIT 1");
         $st->execute(['m' => self::normaliseId($memberId)]);
         $row = $st->fetch();
         return $row ?: null;
@@ -86,6 +95,16 @@ class MemberAuthModel {
     /** Active = approved and not past the expiry date. Use this for anything members get access to. */
     public static function isActive(array $member): bool {
         return ($member['status'] ?? '') === 'active' && self::utcTs((string) $member['expires_at']) > time();
+    }
+
+    /** True if ANY membership under this Member ID is active (Generic Community or a club). */
+    public function anyActive(string $memberId): bool {
+        $st = $this->db->prepare('SELECT status, expires_at FROM members WHERE member_id = :m');
+        $st->execute(['m' => self::normaliseId($memberId)]);
+        foreach ($st->fetchAll() as $row) {
+            if (self::isActive($row)) return true;
+        }
+        return false;
     }
 
     public static function hasPassword(array $member): bool {
@@ -189,7 +208,8 @@ class MemberAuthModel {
     /**
      * Called right after an approval: if the member has no password yet, make a 'set' link for them
      * and return ['member' => row, 'token' => raw token] to email. Returns null when they already have
-     * a password (a renewal), so renewing members are not asked to set one again.
+     * a password (a renewal, or a club joined under an existing Member ID), so those members are not
+     * asked to set one again.
      */
     public function setLinkIfNeeded(string $memberId): ?array {
         $m = $this->findByMemberId($memberId);
