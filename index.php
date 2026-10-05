@@ -47,6 +47,10 @@ if ($route === '/' || $route === '/index.php') {
     require __DIR__ . '/views/admin/builder.php';
 } elseif ($route === '/admin/preview_form') {
     require __DIR__ . '/views/admin/preview_form.php';
+} elseif ($route === '/admin/report-problem') {
+    require __DIR__ . '/views/admin/report_problem.php';
+} elseif ($route === '/admin/tech-diagnostics') {
+    require __DIR__ . '/views/admin/tech_diagnostics.php';
 
 // --- Membership -------------------------------------------------------
 // Public landing page: two dropdowns that send people to the right builder
@@ -70,6 +74,8 @@ if ($route === '/' || $route === '/index.php') {
 } elseif ($route === '/member/dashboard') {
     // Signed-in members only: the view calls MemberSession::requireLogin() itself.
     require __DIR__ . '/views/member/dashboard.php';
+} elseif ($route === '/member/report-problem') {
+    require __DIR__ . '/views/member/report_problem.php';
 
 // Member support conversations (complaints, suggestions, questions).
 // Signed-in members only; each view calls MemberSession::requireLogin().

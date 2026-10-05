@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../../includes/init.php';
 require_once __DIR__ . '/../../includes/auth.php';
 require_once __DIR__ . '/../../models/FormModel.php';
+require_once __DIR__ . '/../../models/TechIssueModel.php';
 
 Auth::requireLogin();
 
@@ -14,6 +15,8 @@ Auth::requireLogin();
 //   membership_review.php    -> requireRole(['membership_coordinator', 'membership_reviewer', 'owner'])   (organizers: forms only)
 //   team.php                 -> Auth::requireOwner()   (invites, roles and coordinator chapters)
 //   member_support.php       -> requireRole(['member_support', 'owner'])   (shown as "DCW Support")
+//   tech-issues.php, tech-diagnostics.php -> tech_require_staff()   (technical_manager, owner)
+//   report-problem.php       -> any signed-in team account
 // Auth::role() is only the PRIMARY role. An account can hold several, and
 // requireRole() grants access when ANY matches, so use hasAnyRole() here too.
 $canReviewReimbursements = Auth::hasAnyRole(['support_reviewer', 'owner']);
@@ -22,6 +25,15 @@ $canProcessFinance       = Auth::hasAnyRole(['finance', 'owner']);
 $canReviewMembership     = Auth::hasAnyRole(['membership_coordinator', 'membership_reviewer', 'owner']);
 $canManageTeam           = Auth::isOwner();
 $canWorkMemberSupport    = Auth::hasAnyRole(['member_support', 'owner']);
+$canWorkTech             = Auth::hasAnyRole(TechIssueModel::STAFF_ROLES);
+
+// Technical: open count for the queue tile, and this person's own reports that have a new reply.
+$techOpen = 0; $techWaiting = [];
+try {
+    $techModel = new TechIssueModel();
+    if ($canWorkTech) $techOpen = $techModel->openCount();
+    $techWaiting = $techModel->awaitingReporter('team', strtolower((string) Auth::email()));
+} catch (Throwable $e) { /* tables not created yet */ }
 
 // Who gets the forms grid, and which forms they see. Mirrors
 // FormModel::userCanOpen(), which form_manager.php enforces:
@@ -59,6 +71,8 @@ $icons = [
     'card'   => '<rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/>',
     'archive'=> '<polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/>',
     'chat'   => '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+    'alert'  => '<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>',
+    'pulse'  => '<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>',
 ];
 
 /** Renders one compact tool tile. */
@@ -134,6 +148,14 @@ function form_tile(array $icons, array $form): void
     </header>
 
     <main class="wrap wide cards-wrap">
+
+        <?php foreach ($techWaiting as $t): ?>
+            <div class="action-banner" role="status">
+                <strong>Technical team:</strong>
+                <span>New reply on &ldquo;<?= htmlspecialchars($t['title']) ?>&rdquo;.</span>
+                <a href="/admin/report-problem?id=<?= htmlspecialchars(rawurlencode($t['tracking_id'])) ?>">Read it</a>
+            </div>
+        <?php endforeach; ?>
 
         <?php if ($showFormsGrid): ?>
         <section class="panel">
@@ -228,6 +250,37 @@ function form_tile(array $icons, array $form): void
                 </div>
             </section>
         <?php endif; ?>
+
+        <?php if ($canWorkTech): ?>
+            <section class="panel">
+                <div class="panel-head">
+                    <h2>Technical</h2>
+                    <p>Problems reported by members and team people, and portal health checks.</p>
+                </div>
+                <div class="tiles">
+                    <?php
+                    workspace_tile($icons, '#0e7490', 'alert', 'Reported problems',
+                        $techOpen > 0 ? $techOpen . ' open. Reporters show only as "Member" or by team email.' : 'Nothing open right now.',
+                        '/admin/tech-issues');
+                    workspace_tile($icons, '#0e7490', 'pulse', 'Diagnostics',
+                        'Read-only health checks: server, database, security and storage.', '/admin/tech-diagnostics');
+                    ?>
+                </div>
+            </section>
+        <?php endif; ?>
+
+        <section class="panel">
+            <div class="panel-head">
+                <h2>Something not working?</h2>
+                <p>Tell the technical team about a problem with this workspace.</p>
+            </div>
+            <div class="tiles">
+                <?php
+                workspace_tile($icons, '#0e7490', 'alert', 'Report a problem',
+                    'Send a report and follow the replies here.', '/admin/report-problem');
+                ?>
+            </div>
+        </section>
 
     </main>
 
