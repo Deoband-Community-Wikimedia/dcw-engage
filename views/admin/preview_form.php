@@ -10,8 +10,11 @@
  */
 require_once __DIR__ . '/../../includes/init.php';
 require_once __DIR__ . '/../../includes/auth.php';
+require_once __DIR__ . '/../../includes/require_role.php';
 
+// Same people who can open the builder (builder.php): organizers and owners.
 Auth::requireLogin();
+requireRole(['owner', 'organizer']);
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !CSRF::validate($_POST['csrf_token'] ?? '')) {
     http_response_code(400);
