@@ -51,6 +51,7 @@ function tech_styles(): void { ?>
         width: 100%; box-sizing: border-box; padding: 11px 12px; font: inherit; font-size: 14px;
         border: 1px solid var(--border, #e2e8f0); border-radius: 10px; background: #fff; color: inherit;
     }
+    .warn-text { color: #b45309; }
     .tech-form textarea { min-height: 130px; resize: vertical; }
     .fcard .tech-form .send { width: auto; padding: 12px 30px; }
     .thread { display: grid; gap: 10px; margin: 14px 0; }
