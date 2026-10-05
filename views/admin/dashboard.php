@@ -5,9 +5,6 @@ require_once __DIR__ . '/../../models/FormModel.php';
 
 Auth::requireLogin();
 
-$formModel = new FormModel();
-$forms = $formModel->getAllForms();
-
 // Each flag mirrors the exact requireRole() call on the page it links to, so
 // a link only ever appears for someone who can actually get past its gate:
 //   reimbursement_review.php -> requireRole(['support_reviewer', 'owner'])
@@ -26,11 +23,14 @@ $canReviewMembership     = Auth::hasAnyRole(['membership_coordinator', 'membersh
 $canManageTeam           = Auth::isOwner();
 $canWorkMemberSupport    = Auth::hasAnyRole(['member_support', 'owner']);
 
-// Membership-only staff work from the membership queue. Hiding the general
-// forms grid is tidiness, not security: form_manager.php must still guard
-// itself with its own role check.
-$membershipStaffOnly = Auth::hasAnyRole(['membership_coordinator', 'membership_reviewer'])
-    && !array_diff(Auth::roles(), ['membership_coordinator', 'membership_reviewer']);
+// Who gets the forms grid, and which forms they see. Mirrors
+// FormModel::userCanOpen(), which form_manager.php enforces:
+//   membership forms -> membership_reviewer, owner
+//   other forms      -> organizer, owner
+// Hiding tiles is tidiness, not security.
+$canManageForms        = Auth::hasAnyRole(['organizer', 'owner']);   // also gates "Create a blank form"
+$canSeeMembershipForms = Auth::hasAnyRole(['membership_reviewer', 'owner']);
+$showFormsGrid         = $canManageForms || $canSeeMembershipForms;
 
 // Only a pure coordinator is limited to chapters; a reviewer sees them all.
 $chapterLimited = Auth::hasAnyRole(['membership_coordinator'])
@@ -38,6 +38,15 @@ $chapterLimited = Auth::hasAnyRole(['membership_coordinator'])
 
 $canReviewAny  = $canReviewReimbursements || $canReviewInternet;
 $canSeeSupport = $canReviewAny || $canProcessFinance;
+
+// Forms grid. Fetched after the role flags; each user only gets the forms
+// they could actually open (FormModel::userCanOpen, same rule as form_manager.php).
+$formModel = new FormModel();
+$forms = array_filter($formModel->getAllForms(), fn($f) => FormModel::userCanOpen($f));
+
+// Active forms show by default; closed ones sit behind a toggle.
+$activeForms = array_filter($forms, fn($f) => !empty($f['is_active']));
+$closedForms = array_filter($forms, fn($f) => empty($f['is_active']));
 
 // Inner SVG markup for the card icons (24x24 viewBox, stroke icons).
 $icons = [
@@ -63,6 +72,24 @@ function workspace_tile(array $icons, string $tone, string $icon, string $title,
     </a>
     <?php
 }
+
+/** Renders one form tile (active or closed). */
+function form_tile(array $icons, array $form): void
+{
+    $active = !empty($form['is_active']);
+    $count  = (int) $form['applicant_count'];
+    $tone   = $active ? '#0f766e' : '#94a3b8';
+    ?>
+    <a class="tile" href="/admin/form_manager?id=<?= (int) $form['id'] ?>" style="--tone: <?= $tone ?>;">
+        <span class="tick"><svg viewBox="0 0 24 24" aria-hidden="true"><?= $icons['doc'] ?></svg></span>
+        <span>
+            <h3><?= htmlspecialchars($form['title']) ?></h3>
+            <p>/<?= htmlspecialchars($form['form_type']) ?> &middot; <?= $count ?> response<?= $count !== 1 ? 's' : '' ?></p>
+        </span>
+        <span class="pill"><?= $active ? 'Active' : 'Closed' ?></span>
+    </a>
+    <?php
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -75,7 +102,13 @@ function workspace_tile(array $icons, string $tone, string $icon, string $title,
     <title>Organizer workspace - DCW Engage</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/assets/css/engage.css?v=1">
-    <style>.hero { padding-bottom: 44px; } .wrap.cards-wrap { margin-top: 34px; }</style>
+    <style>
+        .hero { padding-bottom: 44px; }
+        .wrap.cards-wrap { margin-top: 34px; }
+        .closed-forms { margin-top: 18px; }
+        .closed-forms summary { cursor: pointer; font-weight: 600; color: #475569; padding: 6px 0; }
+        .closed-forms .tiles { margin-top: 12px; }
+    </style>
 </head>
 <body>
     <header class="hero">
@@ -102,32 +135,32 @@ function workspace_tile(array $icons, string $tone, string $icon, string $title,
 
     <main class="wrap wide cards-wrap">
 
-        <?php if (!$membershipStaffOnly): ?>
+        <?php if ($showFormsGrid): ?>
         <section class="panel">
             <div class="panel-head">
                 <h2>Application forms</h2>
-                <p>Create, open and close the forms volunteers apply through, and review responses.</p>
+                <p><?= $canManageForms
+                    ? 'Create, open and close the forms volunteers apply through, and review responses.'
+                    : 'Review responses to membership forms.' ?></p>
             </div>
             <div class="tiles">
+                <?php if ($canManageForms): ?>
                 <a href="/admin/builder" class="tile new" style="--tone: #106b9a;">
                     <span class="tick"><svg viewBox="0 0 24 24" aria-hidden="true"><?= $icons['plus'] ?></svg></span>
                     <span><h3>Create a blank form</h3></span>
                 </a>
-                <?php foreach ($forms as $form):
-                    $active = !empty($form['is_active']);
-                    $count  = (int) $form['applicant_count'];
-                    $tone   = $active ? '#0f766e' : '#94a3b8';
-                ?>
-                    <a class="tile" href="/admin/form_manager?id=<?= (int) $form['id'] ?>" style="--tone: <?= $tone ?>;">
-                        <span class="tick"><svg viewBox="0 0 24 24" aria-hidden="true"><?= $icons['doc'] ?></svg></span>
-                        <span>
-                            <h3><?= htmlspecialchars($form['title']) ?></h3>
-                            <p>/<?= htmlspecialchars($form['form_type']) ?> &middot; <?= $count ?> response<?= $count !== 1 ? 's' : '' ?></p>
-                        </span>
-                        <span class="pill"><?= $active ? 'Active' : 'Closed' ?></span>
-                    </a>
-                <?php endforeach; ?>
+                <?php endif; ?>
+                <?php foreach ($activeForms as $form) form_tile($icons, $form); ?>
             </div>
+
+            <?php if ($closedForms): ?>
+                <details class="closed-forms">
+                    <summary>Closed forms (<?= count($closedForms) ?>)</summary>
+                    <div class="tiles">
+                        <?php foreach ($closedForms as $form) form_tile($icons, $form); ?>
+                    </div>
+                </details>
+            <?php endif; ?>
         </section>
         <?php endif; ?>
 

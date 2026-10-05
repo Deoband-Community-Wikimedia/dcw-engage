@@ -1,8 +1,15 @@
 <?php
 require_once __DIR__ . '/../../includes/init.php';
 require_once __DIR__ . '/../../includes/auth.php';
+require_once __DIR__ . '/../../includes/require_role.php';
+require_once __DIR__ . '/../../models/FormModel.php';
 
+// Creating and editing forms (and their schemas) is for organizers and
+// owners only. Before this, any signed-in account could open the builder.
 Auth::requireLogin();
+requireRole(['owner', 'organizer']);
+
+$formModel = new FormModel();
 
 $success = '';
 $error = '';
@@ -11,14 +18,16 @@ $existingSchema = null;
 $existingFormType = '';
 $existingNotifyEmails = '';
 if (isset($_GET['edit'])) {
-    require_once __DIR__ . '/../../models/FormModel.php';
-    $formModel = new FormModel();
     $form = $formModel->getFormById($_GET['edit']);
-    if ($form) {
-        $existingSchema = $form['schema'];
-        $existingFormType = $form['form_type'];
-        $existingNotifyEmails = $form['notify_emails'] ?? '';
+    // Same response for "missing" and "not yours to open", so nobody can tell
+    // whether a form they can't edit exists. Membership forms: owner only here.
+    if (!$form || !FormModel::userCanOpen($form)) {
+        http_response_code(404);
+        die("Form not found.");
     }
+    $existingSchema = $form['schema'];
+    $existingFormType = $form['form_type'];
+    $existingNotifyEmails = $form['notify_emails'] ?? '';
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -29,6 +38,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $formType = trim($_POST['form_type']);
     $schemaJson = $_POST['schema_json'];
     $notifyEmailsRaw = trim($_POST['notify_emails'] ?? '');
+
+    // Editing an existing form is identified by its stable form_id,
+    // not by matching form_type — matching on form_type meant that
+    // renaming a form's slug found no existing row to match against
+    // and silently INSERTed a brand new form instead of updating the
+    // one being edited (see #56).
+    $formId = !empty($_POST['form_id']) ? (int)$_POST['form_id'] : null;
+
+    // The form being edited must be one this user may open. This is checked
+    // on the POST itself, not just on page load, since a crafted POST skips
+    // the page.
+    if ($formId) {
+        $target = $formModel->getFormById($formId);
+        if (!$target || !FormModel::userCanOpen($target)) {
+            http_response_code(404);
+            die("Form not found.");
+        }
+    }
 
     // Normalise the comma-separated recipients and validate each one.
     // Empty is allowed — a form with no recipients simply sends no alerts.
@@ -49,6 +76,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $error = "Form type and schema are required.";
     } elseif (!preg_match('/^[a-z0-9_-]+$/', $formType)) {
         $error = "Invalid URL Slug. Use only lowercase letters, numbers, hyphens, and underscores.";
+    } elseif (!FormModel::userCanOpen(['form_type' => $formType])) {
+        // The NEW slug counts too: otherwise an organizer could rename a form
+        // into a membership slug, or create one, and bypass the rule above.
+        $error = "That URL slug is reserved for membership forms.";
     } elseif ($badEmail !== null) {
         $error = "Notification email '" . htmlspecialchars($badEmail) . "' is not a valid address.";
     } else {
@@ -58,12 +89,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $error = "Invalid JSON schema format generated.";
         } else {
             global $db;
-            // Editing an existing form is identified by its stable form_id,
-            // not by matching form_type — matching on form_type meant that
-            // renaming a form's slug found no existing row to match against
-            // and silently INSERTed a brand new form instead of updating the
-            // one being edited (see #56).
-            $formId = !empty($_POST['form_id']) ? (int)$_POST['form_id'] : null;
 
             try {
                 if ($formId) {

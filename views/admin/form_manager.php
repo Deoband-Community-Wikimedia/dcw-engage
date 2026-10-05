@@ -12,7 +12,9 @@ require_once __DIR__ . '/../../models/NotesModel.php';
 // every applicant's data, change statuses, email applicants, and close or
 // delete the form. Finance, support and membership staff have no business here.
 Auth::requireLogin();
-requireRole(['owner', 'organizer']);
+// Reviewers get in the door, but only for membership forms: the per-form
+// check below (FormModel::userCanOpen) is what keeps them off the rest.
+requireRole(['owner', 'organizer', 'membership_reviewer']);
 
 $formId = $_GET['id'] ?? null;
 if (!$formId)
@@ -25,6 +27,23 @@ $notesModel = new NotesModel();
 $form = $formModel->getFormById($formId);
 if (!$form)
     die("Form not found.");
+
+// Membership forms: membership reviewers and owners only. Every other form:
+// organizers and owners only. Same response as a missing form, so nobody can
+// tell whether a form they can't open exists. The dashboard hiding tiles is
+// only tidiness; this is the real check.
+if (!FormModel::userCanOpen($form)) {
+    http_response_code(404);
+    die("Form not found.");
+}
+
+// Anyone who can open this form may close and re-open it. Deleting it and
+// editing its schema stay with organizers and owners.
+$canManageForm = Auth::hasAnyRole(['organizer', 'owner']);
+
+// Membership forms are view/export/notes only here; decisions happen in
+// /admin/membership-review (see the POST guard below).
+$isMembershipForm = FormModel::isMembershipType($form['form_type']);
 
 // Statuses this page is allowed to set. Anything else in a POST is ignored.
 $allowedStatuses = ['New', 'Under Review', 'Accepted', 'Rejected'];
@@ -65,6 +84,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         die("Invalid CSRF");
 
     if (isset($_POST['action'])) {
+        // Close/re-open is open to anyone who can open this form (so reviewers can
+        // close and re-open membership forms). Deleting stays with managers.
+        if ($_POST['action'] === 'delete_form' && !$canManageForm) {
+            http_response_code(403);
+            die("Not allowed.");
+        }
+
+        // Membership applications are handled only in Membership review, which
+        // creates the member record, logs the decision and sends the right email.
+        // Status changes and notes are refused here for membership forms.
+        if ($isMembershipForm && in_array($_POST['action'], ['update_applicant_status', 'bulk_update_status', 'add_note'], true)) {
+            http_response_code(403);
+            die("Membership applications are handled in Membership review.");
+        }
+
         if ($_POST['action'] === 'toggle_form') {
             $newStatus = ($_POST['is_active'] ?? '') === '1' ? 1 : 0;
             $formModel->toggleFormStatus($formId, $newStatus);
@@ -142,8 +176,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $applications = $appModel->getApplicationsByFormId($formId);
 
-// Handle CSV Export
+// Handle CSV Export (not available for membership forms)
 if (isset($_GET['action']) && $_GET['action'] === 'export') {
+    if ($isMembershipForm) {
+        http_response_code(403);
+        die("Membership responses are not exported from here.");
+    }
     header('Content-Type: text/csv; charset=utf-8');
     header('Content-Disposition: attachment; filename="' . preg_replace('/[^a-zA-Z0-9]+/', '_', $form['title']) . '_Export.csv"');
 
@@ -286,8 +324,12 @@ engage_header([
         <span>&bull; Total responses: <strong><?= count($applications) ?></strong></span>
     </p>
     <div class="controls">
-        <a href="?id=<?= $fid ?>&action=export" class="btn-ghost">Export CSV</a>
-        <a href="/admin/builder?edit=<?= $fid ?>" class="btn-ghost">Edit schema</a>
+        <?php if (!$isMembershipForm): ?>
+            <a href="?id=<?= $fid ?>&action=export" class="btn-ghost">Export CSV</a>
+        <?php endif; ?>
+        <?php if ($canManageForm): ?>
+            <a href="/admin/builder?edit=<?= $fid ?>" class="btn-ghost">Edit schema</a>
+        <?php endif; ?>
 
         <form method="POST">
             <?= CSRF::getInputField() ?>
@@ -303,6 +345,14 @@ engage_header([
     </div>
 </section>
 
+<?php if ($isMembershipForm): ?>
+<section class="sect">
+    <p style="margin:0; color: var(--muted); font-size: 14px;">
+        Responses to membership forms are handled in
+        <a href="/admin/membership-review">Membership review</a>, not here.
+    </p>
+</section>
+<?php else: ?>
 <section class="sect">
     <form method="GET" class="filters">
         <input type="hidden" name="id" value="<?= $fid ?>">
@@ -434,6 +484,7 @@ engage_header([
         </form>
     </div>
 </div>
+<?php endif; ?>
 
 <script>
     // Use the schema from PHP to properly map keys to labels if possible
