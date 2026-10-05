@@ -14,20 +14,27 @@ $forms = $formModel->getAllForms();
 //   internet_review.php      -> requireRole(['support_reviewer', 'owner'])
 //   finance/queue.php        -> requireRole(['finance', 'owner'])   (combined: reimbursements + internet support)
 //   finance/closed.php       -> requireRole(['finance', 'owner'])
-//   membership_review.php    -> requireRole(['membership_coordinator', 'membership_reviewer', 'organizer', 'owner'])
+//   membership_review.php    -> requireRole(['membership_coordinator', 'membership_reviewer', 'owner'])   (organizers: forms only)
 //   team.php                 -> Auth::requireOwner()   (invites, roles and coordinator chapters)
 //   member_support.php       -> requireRole(['member_support', 'owner'])   (shown as "DCW Support")
-$canReviewReimbursements = in_array(Auth::role(), ['owner', 'organizer'], true);
-$canReviewInternet       = in_array(Auth::role(), ['support_reviewer', 'owner'], true);
-$canProcessFinance       = in_array(Auth::role(), ['finance', 'owner'], true);
-$canReviewMembership     = in_array(Auth::role(), ['membership_coordinator', 'membership_reviewer', 'organizer', 'owner'], true);
+// Auth::role() is only the PRIMARY role. An account can hold several, and
+// requireRole() grants access when ANY matches, so use hasAnyRole() here too.
+$canReviewReimbursements = Auth::hasAnyRole(['owner', 'organizer']);
+$canReviewInternet       = Auth::hasAnyRole(['support_reviewer', 'owner']);
+$canProcessFinance       = Auth::hasAnyRole(['finance', 'owner']);
+$canReviewMembership     = Auth::hasAnyRole(['membership_coordinator', 'membership_reviewer', 'owner']);
 $canManageTeam           = Auth::isOwner();
 $canWorkMemberSupport    = Auth::hasAnyRole(['member_support', 'owner']);
 
 // Membership-only staff work from the membership queue. Hiding the general
 // forms grid is tidiness, not security: form_manager.php must still guard
 // itself with its own role check.
-$membershipStaffOnly = in_array(Auth::role(), ['membership_coordinator', 'membership_reviewer'], true);
+$membershipStaffOnly = Auth::hasAnyRole(['membership_coordinator', 'membership_reviewer'])
+    && !array_diff(Auth::roles(), ['membership_coordinator', 'membership_reviewer']);
+
+// Only a pure coordinator is limited to chapters; a reviewer sees them all.
+$chapterLimited = Auth::hasAnyRole(['membership_coordinator'])
+    && !Auth::hasAnyRole(['membership_reviewer', 'owner']);
 
 $canReviewAny  = $canReviewReimbursements || $canReviewInternet;
 $canSeeSupport = $canReviewAny || $canProcessFinance;
@@ -128,7 +135,7 @@ function workspace_tile(array $icons, string $tone, string $icon, string $title,
             <section class="panel">
                 <div class="panel-head">
                     <h2>Membership</h2>
-                    <p>Review new applications and renewals<?= Auth::role() === 'membership_coordinator' ? ' for your chapters' : '' ?>.</p>
+                    <p>Review new applications and renewals<?= $chapterLimited ? ' for your chapters' : '' ?>.</p>
                 </div>
                 <div class="tiles">
                     <?php
