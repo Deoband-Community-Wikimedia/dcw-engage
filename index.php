@@ -51,6 +51,8 @@ if ($route === '/' || $route === '/index.php') {
     require __DIR__ . '/views/admin/report_problem.php';
 } elseif ($route === '/admin/tech-diagnostics') {
     require __DIR__ . '/views/admin/tech_diagnostics.php';
+} elseif ($route === '/admin/tech-issues') {
+    require __DIR__ . '/views/admin/tech_issues.php';
 
 // --- Membership -------------------------------------------------------
 // Public landing page: two dropdowns that send people to the right builder
