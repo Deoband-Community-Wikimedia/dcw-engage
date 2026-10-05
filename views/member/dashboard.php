@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../../includes/init.php';
 require_once __DIR__ . '/../../includes/wikitext.php';
 require_once __DIR__ . '/../../models/MemberAuthModel.php';
+require_once __DIR__ . '/../../models/MemberModel.php';
 require_once __DIR__ . '/../../models/FormModel.php';
 require_once __DIR__ . '/../../models/InternetSupportModel.php';
 require_once __DIR__ . '/../../models/ReimbursementSettingsModel.php';
@@ -14,6 +15,9 @@ require_once __DIR__ . '/../../includes/member_session.php';
  * DCW Engage - member dashboard (/member/dashboard).
  * Signed-in members only. Shows membership status, what they can request, and their own requests.
  * Everything is read with the member's own email, so nobody sees anyone else's requests.
+ *
+ * One Member ID can cover several memberships (the DCW Generic Community plus any clubs).
+ * They are all listed under the ID the member signed in with.
  */
 MemberSession::requireLogin();
 $member = MemberSession::current();
@@ -21,33 +25,47 @@ $member = MemberSession::current();
 $email        = strtolower((string) ($member['email'] ?? ''));
 $fullName     = trim((string) ($member['full_name'] ?? ''));
 $firstName    = $fullName !== '' ? explode(' ', $fullName)[0] : (string) $member['member_id'];
-$memberActive = MemberAuthModel::isActive($member);
 
 // ---- Membership status (stored UTC, shown in IST) ----------------------------------------------
 $utc = new DateTimeZone('UTC');
 $ist = new DateTimeZone('Asia/Kolkata');
-$expires  = !empty($member['expires_at']) ? new DateTimeImmutable((string) $member['expires_at'], $utc) : null;
-$daysLeft = $expires ? (int) floor(($expires->getTimestamp() - time()) / 86400) : null;
-$expiresText = $expires ? $expires->setTimezone($ist)->format('j M Y') : '';
 
-if ($memberActive && $daysLeft !== null && $daysLeft > 30) {
-    $mTone = '#0f766e'; $mLabel = 'Active member';
-    $mLine = 'Valid until ' . $expiresText;
-    $showRenew = false;
-} elseif ($memberActive) {
-    $mTone = '#b45309'; $mLabel = 'Expiring soon';
-    $mLine = 'Valid until ' . $expiresText . ($daysLeft <= 0 ? ' (today)' : ' (' . $daysLeft . ' day' . ($daysLeft === 1 ? '' : 's') . ' left)');
-    $showRenew = true;
-} elseif (($member['status'] ?? '') === 'active') {
-    $mTone = '#97161b'; $mLabel = 'Expired';
-    $mLine = 'Your membership ended on ' . $expiresText;
-    $showRenew = true;
-} else {
-    $mTone = '#97161b'; $mLabel = 'Not active';
-    $mLine = 'Your membership is not active right now.';
-    $showRenew = true;
+/** Tone, label and line for one membership row. */
+function dash_member_state(array $m, DateTimeZone $utc, DateTimeZone $ist): array
+{
+    $active   = MemberAuthModel::isActive($m);
+    $expires  = !empty($m['expires_at']) ? new DateTimeImmutable((string) $m['expires_at'], $utc) : null;
+    $daysLeft = $expires ? (int) floor(($expires->getTimestamp() - time()) / 86400) : null;
+    $text     = $expires ? $expires->setTimezone($ist)->format('j M Y') : '';
+
+    if ($active && $daysLeft !== null && $daysLeft > 30) {
+        return ['tone' => '#0f766e', 'label' => 'Active member', 'line' => 'Valid until ' . $text, 'renew' => false, 'active' => true];
+    }
+    if ($active) {
+        return ['tone' => '#b45309', 'label' => 'Expiring soon',
+                'line' => 'Valid until ' . $text . ($daysLeft <= 0 ? ' (today)' : ' (' . $daysLeft . ' day' . ($daysLeft === 1 ? '' : 's') . ' left)'),
+                'renew' => true, 'active' => true];
+    }
+    if (($m['status'] ?? '') === 'active') {
+        return ['tone' => '#97161b', 'label' => 'Expired', 'line' => 'Your membership ended on ' . $text, 'renew' => true, 'active' => false];
+    }
+    return ['tone' => '#97161b', 'label' => 'Not active', 'line' => 'Your membership is not active right now.', 'renew' => true, 'active' => false];
 }
-$chapter = trim((string) ($member['chapter'] ?? ''));
+
+// Every membership under this Member ID. Falls back to the signed-in row if the lookup fails.
+$memberships = [];
+try { $memberships = (new MemberModel())->membershipsFor((string) $member['member_id']); } catch (Throwable $e) { /* use the session row */ }
+if (!$memberships) $memberships = [$member];
+
+$strips = [];
+$memberActive = false;
+foreach ($memberships as $m) {
+    $state = dash_member_state($m, $utc, $ist);
+    $key = trim((string) ($m['chapter'] ?? ''));
+    $state['name'] = MemberModel::CHAPTER_NAMES[$key] ?? $key;
+    $strips[] = $state;
+    if ($state['active']) $memberActive = true;
+}
 
 // ---- What is open (each guarded so the page never breaks) -------------------------------------
 try { $internetOpen = (new InternetSupportModel())->isOpen(); } catch (Throwable $e) { $internetOpen = false; }
@@ -167,7 +185,11 @@ $lock = fn(bool $open) => !$memberActive ? 'Renew to unlock' : (!$open ? 'Closed
     <title>My dashboard - DCW Engage</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/assets/css/engage.css?v=2">
-    <style>.hero { padding-bottom: 44px; } .wrap.cards-wrap { margin-top: 34px; }</style>
+    <style>
+        .hero { padding-bottom: 44px; } .wrap.cards-wrap { margin-top: 34px; }
+        .mstrip + .mstrip { margin-top: 14px; }
+        .mstrip .which { margin: 0 0 4px; font-size: 13px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+    </style>
 </head>
 <body>
     <header class="hero">
@@ -189,16 +211,19 @@ $lock = fn(bool $open) => !$memberActive ? 'Renew to unlock' : (!$open ? 'Closed
 
     <main class="wrap wide cards-wrap">
 
-        <section class="mstrip" style="--tone: <?= $mTone ?>;">
-            <div>
-                <span class="pill" style="--tone: <?= $mTone ?>;"><?= htmlspecialchars($mLabel) ?></span>
-                <h2><?= htmlspecialchars($mLine) ?></h2>
-                <p><?= htmlspecialchars((string) $member['member_id']) ?><?= $chapter !== '' ? ' &middot; ' . htmlspecialchars($chapter) : '' ?></p>
-            </div>
-            <?php if ($showRenew): ?>
-                <a class="btn-pill" href="/membership">Renew membership</a>
-            <?php endif; ?>
-        </section>
+        <?php foreach ($strips as $s): ?>
+            <section class="mstrip" style="--tone: <?= $s['tone'] ?>;">
+                <div>
+                    <?php if ($s['name'] !== ''): ?><p class="which"><?= htmlspecialchars($s['name']) ?></p><?php endif; ?>
+                    <span class="pill" style="--tone: <?= $s['tone'] ?>;"><?= htmlspecialchars($s['label']) ?></span>
+                    <h2><?= htmlspecialchars($s['line']) ?></h2>
+                    <p><?= htmlspecialchars((string) $member['member_id']) ?></p>
+                </div>
+                <?php if ($s['renew']): ?>
+                    <a class="btn-pill" href="/membership">Renew membership</a>
+                <?php endif; ?>
+            </section>
+        <?php endforeach; ?>
 
         <?php foreach ($needsAction as $r): ?>
             <div class="action-banner" role="status">
