@@ -100,11 +100,14 @@ class MemberModel {
     }
 
     /**
-     * Verify the Member ID on a renewal against the members table.
+     * Verify the Member ID on a renewal (or on an existing member joining a club).
      *   - not a renewal, or no ID given -> null (the caller treats it as a normal application)
      *   - malformed ID -> InvalidArgumentException (from renewalMemberId)
-     *   - ID not found, or it belongs to a different email or chapter -> InvalidArgumentException
-     *   - otherwise the member row
+     *   - no member with that ID and this email -> InvalidArgumentException
+     *   - otherwise a members row: the one for the chosen chapter if it exists (a plain
+     *     renewal), else the person's Generic Community row (joining a club with the
+     *     Generic ID, which is then shared instead of a new ID being made).
+     * A club-only ID cannot be used to join a different club; only the Generic ID is shared.
      * The applicant's email is the one they verified by magic link, so a match proves the ID is theirs.
      * The error is deliberately the same for "no such ID" and "someone else's ID", so IDs can't be probed.
      * Call this when the renewal is submitted and again on approval.
@@ -115,17 +118,26 @@ class MemberModel {
 
         $st = $this->db->prepare('SELECT * FROM members WHERE member_id = :m');
         $st->execute(['m' => $id]);
-        $m = $st->fetch();
+        $mine = array_values(array_filter($st->fetchAll(),
+            fn($r) => strcasecmp((string) $r['email'], (string) $app['email']) === 0));
 
         $chapter = self::chapterOf($app);   // from the chapter answer on the form; may be null if not answered yet
-        $ok = $m
-            && strcasecmp((string) $m['email'], (string) $app['email']) === 0
-            && ($chapter === null || $m['chapter'] === $chapter);
-        if (!$ok) {
+        $row = null;
+        foreach ($mine as $r) {
+            if ($chapter !== null && $r['chapter'] === $chapter) { $row = $r; break; }   // plain renewal
+        }
+        if ($row === null) {
+            foreach ($mine as $r) {
+                if ($r['chapter'] === 'generic') { $row = $r; break; }                   // joining a club
+            }
+        }
+        if ($row === null && $chapter === null && $mine) $row = $mine[0];
+
+        if ($row === null) {
             throw new InvalidArgumentException('We could not match that Member ID to your email address and chosen membership. '
                 . 'Please check it, or go back and apply as a new member.');
         }
-        return $m;
+        return $row;
     }
 
     /**
@@ -221,13 +233,18 @@ class MemberModel {
         return ($row && self::inScope($row, $scope)) ? $row : false;   // out of scope looks like "not found"
     }
 
-    /** Approve: create or extend the member, mark Accepted, log the decision. Returns [member_id, expires_at]. */
+    /**
+     * Approve: create or extend the member, mark Accepted, log the decision.
+     * Returns [member_id, expires_at, shared]. $shared is true when a NEW club membership was
+     * created under an ID the person already had (so no new ID was made); the email says so.
+     */
     public function approve(array $app, string $by): array {
         $chapter = self::chapterOf($app);
         if (!$chapter) throw new Exception('Could not work out the chapter for this application.');
         // A renewal with no Member ID is simply treated as a normal application;
         // a malformed or unmatched ID throws.
-        $this->verifyRenewalMember($app);
+        $verified = $this->verifyRenewalMember($app);
+        $shared = false;
 
         $this->db->beginTransaction();
         try {
@@ -244,11 +261,14 @@ class MemberModel {
                 $memberId = $m['member_id'];   // existing members keep their current ID
             } else {
                 $exp = date('Y-m-d H:i:s', strtotime(self::TERM));
-                $memberId = $this->insertMember($app, $chapter, $exp);
+                // An existing Generic Community member joining a club keeps their ID.
+                $useId = $this->sharedIdFor($app, $chapter, $verified);
+                $memberId = $this->insertMember($app, $chapter, $exp, $useId);
+                $shared = $useId !== null;
             }
             $this->log($app['id'], 'approved', null, $by);
             $this->db->commit();
-            return [$memberId, $exp];
+            return [$memberId, $exp, $shared];
         } catch (Throwable $e) { $this->db->rollBack(); throw $e; }
     }
 
@@ -322,13 +342,50 @@ class MemberModel {
     }
 
     /**
-     * New member with a random ID: one letter for the club, then 8 random digits
-     * (D = DCW, A = AMU, J = Jamia, P = Photographers; e.g. A48213977). Random rather than
-     * sequential so IDs don't reveal how many members exist or let anyone guess neighbours.
-     * Digits may start with 0. Stored as a string. A clash on the member_id unique key is
-     * retried with a new number.
+     * The Member ID a club approval should reuse, or null to generate a new one.
+     * Only club chapters share; the Generic Community is the anchor. In order:
+     *   1. an ID a reviewer linked to this application,
+     *   2. the Generic ID the applicant entered on the renewal form (already verified),
+     *   3. a Generic Community membership held under the same email.
      */
-    private function insertMember(array $app, string $chapter, string $exp): string {
+    private function sharedIdFor(array $app, string $chapter, ?array $verified): ?string {
+        if ($chapter === 'generic') return null;
+
+        try {
+            $st = $this->db->prepare('SELECT member_id FROM membership_id_links WHERE application_id = :a');
+            $st->execute(['a' => $app['id']]);
+            $id = $st->fetchColumn();
+            if ($id) return (string) $id;
+        } catch (Throwable $e) { /* links table not created yet */ }
+
+        if ($verified && $verified['chapter'] === 'generic') return (string) $verified['member_id'];
+
+        $st = $this->db->prepare("SELECT member_id FROM members WHERE email = :e AND chapter = 'generic' LIMIT 1");
+        $st->execute(['e' => $app['email']]);
+        $id = $st->fetchColumn();
+        return $id ? (string) $id : null;
+    }
+
+    /**
+     * New member row. With $useId the person keeps an ID they already have (no new one is made).
+     * Otherwise: one letter for the club, then 8 random digits (D = DCW, A = AMU, J = Jamia,
+     * P = Photographers; e.g. A48213977). Random rather than sequential so IDs don't reveal
+     * how many members exist or let anyone guess neighbours. Digits may start with 0. Stored
+     * as a string. A clash on the (member_id, chapter) unique key is retried with a new number.
+     */
+    private function insertMember(array $app, string $chapter, string $exp, ?string $useId = null): string {
+        $insert = function (string $memberId) use ($app, $chapter, $exp) {
+            $this->db->prepare('INSERT INTO members (member_id, email, full_name, chapter, expires_at, application_id)
+                VALUES (:m, :e, :n, :c, :x, :a)')
+                ->execute(['m' => $memberId, 'e' => $app['email'], 'n' => $app['applicant_name'],
+                           'c' => $chapter, 'x' => $exp, 'a' => $app['id']]);
+        };
+
+        if ($useId !== null) {
+            $insert($useId);
+            return $useId;
+        }
+
         $prefix = self::ID_PREFIX[$chapter] ?? null;
         if ($prefix === null) throw new Exception('No member ID letter defined for this chapter.');
 
@@ -336,10 +393,7 @@ class MemberModel {
             $digits = str_pad((string) random_int(0, (10 ** self::MEMBER_ID_DIGITS) - 1), self::MEMBER_ID_DIGITS, '0', STR_PAD_LEFT);
             $memberId = $prefix . $digits;
             try {
-                $this->db->prepare('INSERT INTO members (member_id, email, full_name, chapter, expires_at, application_id)
-                    VALUES (:m, :e, :n, :c, :x, :a)')
-                    ->execute(['m' => $memberId, 'e' => $app['email'], 'n' => $app['applicant_name'],
-                               'c' => $chapter, 'x' => $exp, 'a' => $app['id']]);
+                $insert($memberId);
                 return $memberId;
             } catch (PDOException $e) {
                 $dup   = (int) ($e->errorInfo[1] ?? 0) === 1062;   // MySQL/MariaDB duplicate key
@@ -348,5 +402,125 @@ class MemberModel {
             }
         }
         throw new Exception('Could not generate a unique member ID.');
+    }
+
+    // ---- Shared IDs: reviewer tools and lookups ---------------------------------------------
+
+    /** Every membership held under one Member ID, Generic Community first. */
+    public function membershipsFor(string $memberId): array {
+        $st = $this->db->prepare("SELECT * FROM members WHERE member_id = :m ORDER BY (chapter = 'generic') DESC, chapter");
+        $st->execute(['m' => $memberId]);
+        return $st->fetchAll();
+    }
+
+    /** The members row an application produced (same email and chapter), or null. */
+    public function memberRowFor(array $app): ?array {
+        $chapter = self::chapterOf($app);
+        if ($chapter === null) return null;
+        $st = $this->db->prepare('SELECT * FROM members WHERE email = :e AND chapter = :c LIMIT 1');
+        $st->execute(['e' => $app['email'], 'c' => $chapter]);
+        return $st->fetch() ?: null;
+    }
+
+    /** "email|chapter" => true for every membership, so a queue can be labelled without a query per row. */
+    public function heldPairs(): array {
+        $out = [];
+        foreach ($this->db->query('SELECT email, chapter FROM members') as $r) {
+            $out[strtolower((string) $r['email']) . '|' . $r['chapter']] = true;
+        }
+        return $out;
+    }
+
+    /** Plain-words description of an application, for the review screens. */
+    public static function kindLabel(array $app, array $held): string {
+        $chapter = self::chapterOf($app);
+        $email = strtolower((string) $app['email']);
+        $club = $chapter !== null && $chapter !== 'generic';
+        if (self::isRenewal($app)) {
+            return ($club && !isset($held[$email . '|' . $chapter])) ? 'Existing member joining a club' : 'Renewal';
+        }
+        return ($club && isset($held[$email . '|generic'])) ? 'Generic member joining a club' : 'New applicant';
+    }
+
+    /** The reviewer link on an application, or null. */
+    public function linkFor(int $appId): ?array {
+        try {
+            $st = $this->db->prepare('SELECT member_id, linked_by, linked_at FROM membership_id_links WHERE application_id = :a');
+            $st->execute(['a' => $appId]);
+            return $st->fetch() ?: null;
+        } catch (Throwable $e) { return null; }
+    }
+
+    /** A Generic Community member by ID, checked for format, existence and (unless confirmed) email. */
+    private function genericRow(string $memberId, string $applicantEmail, bool $confirmOtherEmail): array {
+        $id = strtoupper(trim($memberId));
+        if (!preg_match('/^[A-Z]\d{' . self::MEMBER_ID_DIGITS . '}$/', $id)) {
+            throw new Exception('A Member ID is one letter followed by ' . self::MEMBER_ID_DIGITS . ' digits, for example D48213977.');
+        }
+        $st = $this->db->prepare("SELECT * FROM members WHERE member_id = :m AND chapter = 'generic'");
+        $st->execute(['m' => $id]);
+        $g = $st->fetch();
+        if (!$g) throw new Exception('No DCW Generic Community member has that ID.');
+        if (strcasecmp((string) $g['email'], $applicantEmail) !== 0 && !$confirmOtherEmail) {
+            throw new Exception('That ID belongs to a different email address (' . $g['email']
+                . '). Tick "Link even if the email differs" if this is the same person.');
+        }
+        return $g;
+    }
+
+    private function clubChapterOrFail(array $app): string {
+        $chapter = self::chapterOf($app);
+        if ($chapter === null || $chapter === 'generic') {
+            throw new Exception('Only club memberships can be linked to a Generic Member ID.');
+        }
+        return $chapter;
+    }
+
+    private function saveLink(int $appId, string $memberId, string $by): void {
+        $this->db->prepare('INSERT INTO membership_id_links (application_id, member_id, linked_by)
+            VALUES (:a, :m, :b)
+            ON DUPLICATE KEY UPDATE member_id = VALUES(member_id), linked_by = VALUES(linked_by), linked_at = NOW()')
+            ->execute(['a' => $appId, 'm' => $memberId, 'b' => $by]);
+    }
+
+    /** Open club application: remember which Generic ID to reuse at approval. */
+    public function linkMemberId(array $app, string $memberId, string $by, bool $confirmOtherEmail): void {
+        if (!in_array($app['status'], self::OPEN, true)) {
+            throw new Exception('Only open applications can be linked. For an approved membership use "Change Member ID".');
+        }
+        $this->clubChapterOrFail($app);
+        $g = $this->genericRow($memberId, (string) $app['email'], $confirmOtherEmail);
+        $this->saveLink((int) $app['id'], (string) $g['member_id'], $by);
+    }
+
+    public function unlinkMemberId(int $appId): void {
+        $this->db->prepare('DELETE FROM membership_id_links WHERE application_id = :a')->execute(['a' => $appId]);
+    }
+
+    /**
+     * Already approved club membership (an old request that got its own ID): move it onto the
+     * Generic ID. Returns the ID it had before. The member keeps their dates; only the ID changes.
+     */
+    public function relinkApproved(array $app, string $memberId, string $by, bool $confirmOtherEmail): string {
+        $chapter = $this->clubChapterOrFail($app);
+        if ($app['status'] !== 'Accepted') throw new Exception('Only an approved membership can have its ID changed.');
+        $row = $this->memberRowFor($app);
+        if (!$row) throw new Exception('No member record was found for this application.');
+
+        $g = $this->genericRow($memberId, (string) $app['email'], $confirmOtherEmail);
+        $new = (string) $g['member_id'];
+        if ($row['member_id'] === $new) throw new Exception('This member already has that ID.');
+
+        $st = $this->db->prepare('SELECT id FROM members WHERE member_id = :m AND chapter = :c AND id <> :id');
+        $st->execute(['m' => $new, 'c' => $chapter, 'id' => $row['id']]);
+        if ($st->fetch()) throw new Exception('Someone already holds that ID in this club.');
+
+        $this->db->beginTransaction();
+        try {
+            $this->db->prepare('UPDATE members SET member_id = :m WHERE id = :id')->execute(['m' => $new, 'id' => $row['id']]);
+            $this->saveLink((int) $app['id'], $new, $by);
+            $this->db->commit();
+        } catch (Throwable $e) { $this->db->rollBack(); throw $e; }
+        return (string) $row['member_id'];
     }
 }
