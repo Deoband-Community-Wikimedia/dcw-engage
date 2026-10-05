@@ -7,6 +7,7 @@ require_once __DIR__ . '/../../models/InternetSupportModel.php';
 require_once __DIR__ . '/../../models/ReimbursementSettingsModel.php';
 require_once __DIR__ . '/../../models/ReimbursementModel.php';
 require_once __DIR__ . '/../../models/MemberTicketModel.php';
+require_once __DIR__ . '/../../models/TechIssueModel.php';
 require_once __DIR__ . '/../../includes/member_session.php';
 
 /**
@@ -124,6 +125,10 @@ try { $tickets = (new MemberTicketModel())->listForMember((string) $member['memb
 $ticketsWaiting = array_values(array_filter($tickets,
     fn($t) => $t['last_sender'] === 'staff' && !MemberTicketModel::isClosed((string) $t['status'])));
 
+// ---- Technical reports where the technical team answered last ----------------------------------
+$techWaiting = [];
+try { $techWaiting = (new TechIssueModel())->awaitingReporter('member', (string) $member['member_id']); } catch (Throwable $e) { /* table not created yet */ }
+
 $icons = [
     'doc'    => '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>',
     'wifi'   => '<path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/>',
@@ -131,6 +136,7 @@ $icons = [
     'search' => '<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>',
     'people' => '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
     'chat'   => '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+    'alert'  => '<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>',
 ];
 
 /** One tile. $href = null renders a disabled tile with a short reason in the pill. */
@@ -210,10 +216,18 @@ $lock = fn(bool $open) => !$memberActive ? 'Renew to unlock' : (!$open ? 'Closed
             </div>
         <?php endforeach; ?>
 
+        <?php foreach ($techWaiting as $t): ?>
+            <div class="action-banner" role="status">
+                <strong>Technical team:</strong>
+                <span>New reply on &ldquo;<?= htmlspecialchars($t['title']) ?>&rdquo;.</span>
+                <a href="/member/report-problem?id=<?= htmlspecialchars(rawurlencode($t['tracking_id'])) ?>">Read it</a>
+            </div>
+        <?php endforeach; ?>
+
         <section class="panel">
             <div class="panel-head">
                 <h2>Get support</h2>
-                <p>Help with a data pack, claim back event expenses, or talk to <?= htmlspecialchars(MemberTicketModel::SUPPORT_LABEL) ?>.</p>
+                <p>Help with a data pack, claim back event expenses, talk to <?= htmlspecialchars(MemberTicketModel::SUPPORT_LABEL) ?>, or report a technical problem.</p>
             </div>
             <div class="tiles">
                 <?php
@@ -226,6 +240,9 @@ $lock = fn(bool $open) => !$memberActive ? 'Renew to unlock' : (!$open ? 'Closed
                 // Open to every signed-in member, including expired ones: someone may need to say why.
                 dash_tile($icons, '#106b9a', 'chat', 'Talk to ' . MemberTicketModel::SUPPORT_LABEL,
                     'Ask a question, make a complaint, or share a suggestion.', '/member/talk');
+                // Also open to every signed-in member, including expired ones.
+                dash_tile($icons, '#0e7490', 'alert', 'Report a problem',
+                    'Something not working on this site? Tell the technical team.', '/member/report-problem');
                 ?>
             </div>
         </section>
