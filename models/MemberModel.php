@@ -130,9 +130,9 @@ class MemberModel {
 
     /**
      * Which chapters this staff member may see. null = all chapters.
-     *   owner, organizer, membership_reviewer (DCW Generic Reviewers) -> all
+     *   owner, membership_reviewer (DCW Generic Reviewers) -> all
      *   membership_coordinator -> only the chapters assigned in membership_scopes
-     *   anyone else -> none
+     *   anyone else (including organizers, who only work with forms) -> none
      *
      * $roles is the person's FULL role list (array). An account can hold several
      * roles, and admin_users.role only holds the primary one, so callers must pass
@@ -142,7 +142,7 @@ class MemberModel {
         $roles = is_array($roles)
             ? $roles
             : array_filter(array_map('trim', explode(',', (string) $roles)));
-        if (array_intersect($roles, ['owner', 'organizer', 'membership_reviewer'])) return null;   // all chapters
+        if (array_intersect($roles, ['owner', 'membership_reviewer'])) return null;   // all chapters
         if (!in_array('membership_coordinator', $roles, true)) return [];
         return $this->chaptersFor($email);
     }
