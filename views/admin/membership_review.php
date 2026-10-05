@@ -7,11 +7,14 @@ require_once __DIR__ . '/../../includes/engage_page.php';
 require_once __DIR__ . '/../../models/MemberModel.php';
 require_once __DIR__ . '/../../includes/membership_mailer.php';
 
-requireRole(['membership_coordinator', 'membership_reviewer', 'organizer', 'owner']);
+// Organizers only work with application forms, so they are not in this list.
+requireRole(['membership_coordinator', 'membership_reviewer', 'owner']);
 
 $model = new MemberModel();
 // Pass the FULL role list: an account can hold several roles, and Auth::role() is only the primary one.
 $scope = $model->scopeFor(Auth::roles(), (string) Auth::email());   // null = every chapter
+// Changing which Member ID a club membership uses is a reviewer decision, not a coordinator one.
+$canLinkIds = Auth::hasAnyRole(['membership_reviewer', 'owner']);
 $notice = ''; $error = '';
 $id = (int) ($_GET['id'] ?? $_POST['id'] ?? 0);
 $app = $id ? $model->getApplication($id, $scope) : false;
@@ -73,8 +76,8 @@ if (!$id && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') ==
             try {
                 $mail = null;
                 if ($bulkAct === 'approve') {
-                    [$memberId, $exp] = $model->approve($row, $by);
-                    $mail = ['approved', $memberId, $exp];
+                    [$memberId, $exp, $shared] = $model->approve($row, $by);
+                    $mail = ['approved', $memberId, $exp, $shared];
                 } elseif ($bulkAct === 'reject') {
                     $model->reject($row, $reason, $by);
                     $mail = ['rejected', null, $reason];
@@ -103,7 +106,7 @@ if (!$id && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') ==
                 if ($mail) {
                     try {
                         // Also emails the new member a "set your password" link on approval.
-                        MembershipMailer::sendDecisionFor($row, $mail[0], $mail[1], $mail[2]);
+                        MembershipMailer::sendDecisionFor($row, $mail[0], $mail[1], $mail[2], $mail[3] ?? false);
                     } catch (Throwable $e) {
                         app_log("Membership email failed for application #{$row['id']}: " . $e->getMessage());
                     }
@@ -126,8 +129,8 @@ if ($app && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $by = currentAdminIdentifier();
     try {
         if ($act === 'approve') {
-            [$memberId, $exp] = $model->approve($app, $by);
-            $mail = ['approved', $memberId, $exp];
+            [$memberId, $exp, $shared] = $model->approve($app, $by);
+            $mail = ['approved', $memberId, $exp, $shared];
         } elseif ($act === 'reject') {
             $reason = trim($_POST['reason'] ?? '');
             if ($reason === '') throw new Exception('Give a reason so the applicant knows what to do next.');
@@ -154,6 +157,21 @@ if ($app && $_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif ($act === 'review') {
             $model->markUnderReview($app, $by);
             $mail = null;
+        } elseif (in_array($act, ['link_id', 'unlink_id', 'relink_id'], true)) {
+            // Share one Member ID between the Generic Community and a club. No email is sent.
+            if (!$canLinkIds) throw new Exception('Only reviewers can change Member IDs.');
+            $given = (string) ($_POST['link_member_id'] ?? '');
+            $confirm = !empty($_POST['link_confirm']);
+            if ($act === 'link_id') {
+                $model->linkMemberId($app, $given, $by, $confirm);
+            } elseif ($act === 'unlink_id') {
+                $model->unlinkMemberId((int) $app['id']);
+            } else {
+                $old = $model->relinkApproved($app, $given, $by, $confirm);
+                app_log("Membership ID changed: application #{$app['id']} ({$app['tracking_id']}) $old -> "
+                    . strtoupper(trim($given)) . " by $by");
+            }
+            $mail = null;
         } else { throw new Exception('Unknown action.'); }
 
         app_log("Membership $act: application #{$app['id']} ({$app['tracking_id']}) by $by");
@@ -161,7 +179,7 @@ if ($app && $_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!empty($mail)) {
             try {
                 // Also emails the new member a "set your password" link on approval.
-                MembershipMailer::sendDecisionFor($app, $mail[0], $mail[1], $mail[2]);
+                MembershipMailer::sendDecisionFor($app, $mail[0], $mail[1], $mail[2], $mail[3] ?? false);
             } catch (Throwable $e) { app_log("Membership email failed for application #{$app['id']}: " . $e->getMessage()); }
         }
         header('Location: /admin/membership-review?id=' . $app['id'] . '&done=' . urlencode($act));
@@ -170,7 +188,10 @@ if ($app && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $app = $model->getApplication($id, $scope);   // show fresh state after an error
 }
 $doneText = ['approve' => 'Approved.', 'reject' => 'Rejected.', 'review' => 'Marked under review.',
-             'info' => 'Sent back to the applicant.', 'resend' => 'Link sent again.'];
+             'info' => 'Sent back to the applicant.', 'resend' => 'Link sent again.',
+             'link_id' => 'Linked. On approval this member keeps that ID and no new one is made.',
+             'unlink_id' => 'Link removed.',
+             'relink_id' => 'Member ID changed. The confirmation email they received shows the old ID, so let them know.'];
 if (!empty($_GET['done'])) $notice = $doneText[$_GET['done']] ?? 'Saved.';
 $manualLink = $_SESSION['membership_link'] ?? '';
 unset($_SESSION['membership_link']);
@@ -199,6 +220,8 @@ $slugLabel = function (string $slug): string {
     $key = substr($slug, strlen('membership-'));
     return MemberModel::CHAPTER_NAMES[$key] ?? $slug;
 };
+// Existing memberships, so "joining a club" can be told apart from "renewal" and "new".
+$held = $model->heldPairs();
 
 $scopeLine = $scope !== null
     ? ($scope ? 'Your chapters: ' . implode(', ', array_map(fn($c) => MemberModel::CHAPTER_NAMES[$c] ?? $c, $scope)) : 'No chapters are assigned to you yet. Ask an owner.')
@@ -245,6 +268,12 @@ engage_header([
     .actform { margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border); }
     .actform .field { margin-bottom: 12px; }
 
+    .idline { margin: 6px 0 0; font-size: 14.5px; }
+    .idform { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 12px; }
+    .idform input[type=text] { width: 190px; }
+    .idform label.chk { display: flex; align-items: center; gap: 6px; font-size: 13.5px; margin: 0; }
+    .idform .btn-ghost, .idform .btn-solid { width: auto; padding: 7px 16px; font-size: 13.5px; }
+
     .filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 0 0 16px; }
     .bulkbar { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 0 0 14px; padding: 12px 14px; background: #fff; border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 4px 12px rgba(15,23,42,.08); }
     .bulkbar .count { min-width: 90px; font-size: 14px; font-weight: 700; color: var(--muted); }
@@ -283,7 +312,8 @@ engage_header([
 <?php if ($app):
     $schema = json_decode($app['schema_json'], true) ?: [];
     $data = json_decode($app['form_data'] ?? '', true) ?: [];
-    $open = in_array($app['status'], MemberModel::OPEN, true); ?>
+    $open = in_array($app['status'], MemberModel::OPEN, true);
+    $chapterKey = MemberModel::chapterOf($app); ?>
     <section class="sect">
         <div class="qhead">
             <h3><?= $h($app['applicant_name']) ?></h3>
@@ -291,7 +321,7 @@ engage_header([
         </div>
         <p class="qmeta">
             <?= $h($app['email']) ?> &middot;
-            <?= MemberModel::isRenewal($app) ? 'Renewal' : 'New applicant' ?> &middot;
+            <?= $h(MemberModel::kindLabel($app, $held)) ?> &middot;
             <?= $h($chapterLabel($app)) ?> &middot;
             <?= $h($app['tracking_id']) ?>
         </p>
@@ -313,6 +343,41 @@ engage_header([
         <?php endforeach; ?>
     </section>
     <?php endif; ?>
+
+    <?php
+    // Member ID sharing: reviewers only, and only for club memberships (the Generic Community is the anchor).
+    if ($canLinkIds && $chapterKey !== null && $chapterKey !== 'generic'):
+        $link = $model->linkFor((int) $app['id']);
+        $memberRow = $app['status'] === 'Accepted' ? $model->memberRowFor($app) : null;
+        if ($open || $memberRow): ?>
+    <section class="sect">
+        <h3 style="margin:0 0 4px; font-size:17px; font-weight:800;">Member ID</h3>
+        <?php if ($memberRow): ?>
+            <p class="idline">Current Member ID for this club: <code><?= $h($memberRow['member_id']) ?></code>.
+                To put this member on their DCW Generic Community ID instead, enter it below.</p>
+        <?php elseif ($link): ?>
+            <p class="idline">Linked to <code><?= $h($link['member_id']) ?></code> by <?= $h($link['linked_by']) ?>.
+                On approval this member keeps that ID and no new one is made.</p>
+        <?php else: ?>
+            <p class="idline">If this person's email matches a DCW Generic Community member, that ID is reused automatically.
+                If they used a different email, enter their Generic Member ID here.</p>
+        <?php endif; ?>
+
+        <form method="POST" class="idform"><?= CSRF::getInputField() ?>
+            <input type="hidden" name="id" value="<?= (int) $app['id'] ?>">
+            <input type="text" name="link_member_id" maxlength="<?= MemberModel::MEMBER_ID_DIGITS + 1 ?>" autocomplete="off"
+                   placeholder="e.g. D48213977" value="<?= $h($link['member_id'] ?? '') ?>" required>
+            <label class="chk"><input type="checkbox" name="link_confirm" value="1"> Link even if the email differs</label>
+            <?php if ($memberRow): ?>
+                <button name="action" value="relink_id" class="btn-ghost"
+                        onclick="return confirm('Change this member\'s ID? The email they already received shows the old one.');">Change Member ID</button>
+            <?php else: ?>
+                <button name="action" value="link_id" class="btn-ghost"><?= $link ? 'Update link' : 'Link Member ID' ?></button>
+                <?php if ($link): ?><button name="action" value="unlink_id" class="btn-ghost" formnovalidate>Remove link</button><?php endif; ?>
+            <?php endif; ?>
+        </form>
+    </section>
+    <?php endif; endif; ?>
 
     <?php if ($open): ?>
     <section class="sect">
@@ -386,14 +451,15 @@ engage_header([
             <th class="pick"><input type="checkbox" id="pickAll" aria-label="Select all"></th>
             <th>Applicant</th><th>Membership</th><th>Status</th><th>Submitted</th><th>Update</th></tr></thead><tbody>
         <?php foreach ($rows as $r):
-            $rowOpen = in_array($r['status'], MemberModel::OPEN, true); ?>
+            $rowOpen = in_array($r['status'], MemberModel::OPEN, true);
+            $kind = MemberModel::kindLabel($r, $held); ?>
             <tr>
                 <td class="pick"><input type="checkbox" class="pick-row" value="<?= (int) $r['id'] ?>"
                     <?= $rowOpen ? '' : 'disabled title="Already decided or waiting on the applicant"' ?>></td>
                 <td><a class="dl" href="?id=<?= (int) $r['id'] ?>"><?= $h($r['applicant_name'] ?: $r['email']) ?></a>
                     <span class="sub"><?= $h($r['email']) ?></span></td>
                 <td><?= $h($chapterLabel($r)) ?>
-                    <?php if (MemberModel::isRenewal($r)): ?><span class="sub">Renewal</span><?php endif; ?></td>
+                    <?php if ($kind !== 'New applicant'): ?><span class="sub"><?= $h($kind) ?></span><?php endif; ?></td>
                 <td><span class="pill <?= $tone($r['status']) ?>"><?= $h($label($r['status'])) ?></span></td>
                 <td><?= $h($r['created_at']) ?></td>
                 <td>

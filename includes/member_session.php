@@ -52,12 +52,14 @@ class MemberSession {
     }
 
     /**
-     * Active = approved and not past the expiry date. Use this, not just check(), for anything that
-     * is only for current members (such as support requests).
+     * Active = approved and not past the expiry date, on ANY membership under this Member ID
+     * (the Generic Community or a club). Use this, not just check(), for anything that is only
+     * for current members (such as support requests).
      */
     public static function isActive(): bool {
         $m = self::current();
-        return $m !== null && MemberAuthModel::isActive($m);
+        return $m !== null && (MemberAuthModel::isActive($m)
+            || (new MemberAuthModel())->anyActive((string) $m['member_id']));
     }
 
     /** Send the visitor to the member login unless they are signed in. Call at the top of a gated page. */

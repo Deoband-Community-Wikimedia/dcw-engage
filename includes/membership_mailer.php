@@ -12,6 +12,9 @@
 // Renewals: pass MemberModel::isRenewal($app) as the last argument so the wording says
 // "renewing" rather than "joining".
 //
+// Shared Member ID: someone who already has a DCW Generic Community ID keeps it when they are
+// approved for a club ($sharedId). They are told so, and are not asked to set another password.
+//
 // One email on approval: when a new member has no password yet, the "Set my password"
 // button is inside the confirmation email (see sendDecision's $passwordToken). A separate
 // password email is only sent for the "forgot password" flow (sendPasswordLink).
@@ -90,8 +93,10 @@ class MembershipMailer {
      * "renewing" instead of "joining", and notes that the member ID stays the same.
      * $passwordToken (approved only): raw one-time token from MemberAuthModel. When given, a
      * "Set my password" button is added to this same email, so the member gets ONE email.
+     * $sharedId (approved only): true when this is a NEW club membership under an ID the person
+     * already had, so the email explains that one ID covers all their memberships.
      */
-    public static function sendDecision($email, $name, $decision, $memberId = null, $detail = '', $chapter = null, $renewal = false, $passwordToken = null) {
+    public static function sendDecision($email, $name, $decision, $memberId = null, $detail = '', $chapter = null, $renewal = false, $passwordToken = null, $sharedId = false) {
         $n = htmlspecialchars((string) $name, ENT_QUOTES, 'UTF-8');
         $org = self::org($chapter);
         $safeOrg = htmlspecialchars($org, ENT_QUOTES, 'UTF-8');
@@ -113,7 +118,9 @@ class MembershipMailer {
                 : "Good news: your membership is confirmed, and we're glad to have you with us!";
             $keep = $renewal
                 ? "Your member ID stays the same. Keep it handy for next time."
-                : "Keep your member ID handy: you'll need it when you renew.";
+                : ($sharedId
+                    ? "This is the same Member ID you already use for the DCW Generic Community, so you keep a single ID for all your memberships. Both appear on your dashboard."
+                    : "Keep your member ID handy: you'll need it when you renew.");
 
             // Password section. New members (token given) are told to set a password and get the
             // button; renewing members who already have one are told their login still works.
@@ -132,7 +139,8 @@ class MembershipMailer {
                 <p style='font-size:14px; color:#64748b;'>This link is private to you, works once and will expire, so please set your password soon and don't share the link.</p>";
                 $pwText = "\n\nNEXT STEP: SET YOUR PASSWORD\nTo log in to DCW Engage you need a password. Choose one using this link, then sign in with your Member ID $memberId and your new password to see your membership and request support:\n$url\n\nThis link is private to you, works once and will expire, so please set your password soon and don't share the link.";
             } else {
-                // No fresh link (renewing member, or a link could not be created): still advise.
+                // No fresh link (renewing member, a club joined under an existing ID, or a link
+                // could not be created): still advise.
                 $pwHtml = "<p><strong>Password:</strong> sign in to DCW Engage with your Member ID <strong>$id</strong> and your password. If you haven't set a password yet, or have forgotten it, choose \"Forgot password\" on the sign-in page and we'll email you a link.</p>";
                 $pwText = "\n\nPASSWORD: sign in to DCW Engage with your Member ID $memberId and your password. If you haven't set a password yet, or have forgotten it, choose \"Forgot password\" on the sign-in page and we'll email you a link.";
             }
@@ -178,20 +186,28 @@ class MembershipMailer {
     /**
      * Decision email built from the application row, so callers cannot forget the chapter or the
      * renewal flag. On approval, a new member with no password yet gets the "set your password"
-     * link INSIDE this one email (renewing members who already have a password get no button).
+     * link INSIDE this one email (members who already have a password get no button).
      * $detail is the expiry for 'approved' and the reviewer's reason for 'rejected', as in sendDecision().
+     * $sharedId is the third value MemberModel::approve() returns: true when a new club membership
+     * was created under an existing Member ID.
      */
-    public static function sendDecisionFor(array $app, $decision, $memberId = null, $detail = '') {
+    public static function sendDecisionFor(array $app, $decision, $memberId = null, $detail = '', $sharedId = false) {
         $chapter = MemberModel::chapterOf($app);
 
         $token = null;
         if ($decision === 'approved' && $memberId) {
+            // The Generic Community row holds the password, so a club joined under an existing ID
+            // returns null here and no second "set your password" link is sent.
             $link = (new MemberAuthModel())->setLinkIfNeeded((string) $memberId);
             $token = $link['token'] ?? null;
         }
 
+        // Someone joining a club under an ID they already hold is "joining", not "renewing",
+        // even though they used the renewal form to enter that ID.
+        $renewal = MemberModel::isRenewal($app) && !$sharedId;
+
         return self::sendDecision($app['email'], $app['applicant_name'], $decision, $memberId, $detail,
-                                  $chapter, MemberModel::isRenewal($app), $token);
+                                  $chapter, $renewal, $token, (bool) $sharedId);
     }
 
     /** Info-request email built from the application row (chapter and renewal wording handled for you). */
