@@ -6,6 +6,46 @@
  */
 
 class FormModel {
+    /**
+     * form_type values that count as membership forms. Plain organizers must
+     * not see or open these. VERIFY against your data:
+     *   SELECT form_type, COUNT(*) FROM forms GROUP BY form_type;
+     * and list every membership value here (e.g. 'membership-renewal-2026').
+     */
+    const MEMBERSHIP_TYPES = ['membership'];
+
+    // Any slug starting with one of these is a membership form too, so a new
+    // 'membership-renewal-2027' is covered without editing a list. This matches
+    // ApplicationModel, which already treats 'membership-renewal*' as renewals.
+    const MEMBERSHIP_PREFIXES = ['membership-', 'membership_'];
+
+    public static function isMembershipType($formType) {
+        $formType = (string) $formType;
+        if (in_array($formType, self::MEMBERSHIP_TYPES, true)) {
+            return true;
+        }
+        foreach (self::MEMBERSHIP_PREFIXES as $prefix) {
+            if (str_starts_with($formType, $prefix)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Can the signed-in user open this form in the form manager?
+     *   membership forms -> membership_reviewer, owner
+     *   all other forms  -> organizer, owner
+     * One rule, used by the dashboard grid and form_manager.php (and the
+     * builder, if you add it there) so they can't drift apart.
+     */
+    public static function userCanOpen(array $form): bool {
+        if (self::isMembershipType($form['form_type'])) {
+            return Auth::hasAnyRole(['membership_reviewer', 'owner']);
+        }
+        return Auth::hasAnyRole(['organizer', 'owner']);
+    }
+
     private $db;
 
     public function __construct() {
