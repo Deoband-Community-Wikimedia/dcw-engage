@@ -170,10 +170,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $result = $invites->setRoles($_POST['admin_id'] ?? 0, $newRoles, Auth::id());
 
         if ($result['ok']) {
-            // Roles are saved. Chapters go through the same MemberModel call
-            // Membership Access uses. Chapters are left untouched when the
-            // coordinator role is removed: access is role-gated, and the
-            // owner will see the old ticks again if the role is re-added.
+            // Roles are saved. Chapters go through MemberModel::setChapters().
+            // Chapters are left untouched when the coordinator role is
+            // removed: access is role-gated, and the owner will see the old
+            // ticks again if the role is re-added.
             $chapterError = null;
             if ($isCoordinator) {
                 try {
@@ -191,7 +191,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             if ($chapterError) {
                 team_flash('warning', 'Roles updated for ' . $result['email'] . ', but chapters could not be saved ('
-                    . $chapterError . '). Set them on Membership Access.');
+                    . $chapterError . '). Open Edit roles and save again.');
             } else {
                 team_flash('success', 'Roles updated for ' . $result['email'] . '. They take effect on their next page load.');
             }
@@ -325,8 +325,8 @@ engage_header([
             reviewers decide internet support requests. DCW Support answers
             the complaints, suggestions and questions members send from their
             dashboard (complaints about team members stay with owners). Membership coordinators
-            review membership applications only for the chapters an owner
-            assigns them under Membership Access. Membership reviewers
+            review membership applications only for the chapters ticked for
+            them (use "Edit roles" on a person to change these later). Membership reviewers
             (DCW Generic Reviewers) review membership applications from every
             chapter. Choose the chapters when you tick Membership coordinator;
             they are applied as soon as the invitation is accepted. Owners can
