@@ -15,13 +15,13 @@ $forms = $formModel->getAllForms();
 //   finance/queue.php        -> requireRole(['finance', 'owner'])   (combined: reimbursements + internet support)
 //   finance/closed.php       -> requireRole(['finance', 'owner'])
 //   membership_review.php    -> requireRole(['membership_coordinator', 'membership_reviewer', 'organizer', 'owner'])
-//   membership_access.php    -> requireRole('owner')
+//   team.php                 -> Auth::requireOwner()   (invites, roles and coordinator chapters)
 //   member_support.php       -> requireRole(['member_support', 'owner'])   (shown as "DCW Support")
 $canReviewReimbursements = in_array(Auth::role(), ['owner', 'organizer'], true);
 $canReviewInternet       = in_array(Auth::role(), ['support_reviewer', 'owner'], true);
 $canProcessFinance       = in_array(Auth::role(), ['finance', 'owner'], true);
 $canReviewMembership     = in_array(Auth::role(), ['membership_coordinator', 'membership_reviewer', 'organizer', 'owner'], true);
-$canManageMembershipAccess = Auth::isOwner();
+$canManageTeam           = Auth::isOwner();
 $canWorkMemberSupport    = Auth::hasAnyRole(['member_support', 'owner']);
 
 // Membership-only staff work from the membership queue. Hiding the general
@@ -80,7 +80,6 @@ function workspace_tile(array $icons, string $tone, string $icon, string $title,
             <div class="tools">
                 <span class="who"><?= htmlspecialchars(Auth::email()) ?></span>
                 <?php if (Auth::isOwner()): ?>
-                    <a href="/admin/team" class="chip-btn">Team</a>
                     <a href="/admin/audit" class="chip-btn">Audit log</a>
                 <?php endif; ?>
                 <form method="POST" action="/admin/logout">
@@ -135,9 +134,9 @@ function workspace_tile(array $icons, string $tone, string $icon, string $title,
                     <?php
                     workspace_tile($icons, '#97161b', 'people', 'Membership review',
                         'Approve, reject, or send an application back for more information.', '/admin/membership-review');
-                    if ($canManageMembershipAccess) {
-                        workspace_tile($icons, '#97161b', 'key', 'Membership access',
-                            'Choose which chapters each coordinator can see.', '/admin/membership-access');
+                    if ($canManageTeam) {
+                        workspace_tile($icons, '#97161b', 'key', 'Team',
+                            'Invite people, change roles, and choose which chapters each coordinator sees.', '/admin/team');
                     }
                     ?>
                 </div>
