@@ -187,8 +187,21 @@ $label = fn($s) => $s === 'Draft' ? 'Awaiting applicant' : $s;
 $tone = fn($s) => ['New' => 'st-new', 'Submitted' => 'st-new', 'Under Review' => 'st-review',
                    'Draft' => 'st-wait', 'Accepted' => 'st-ok', 'Rejected' => 'st-bad'][$s] ?? 'st-new';
 
+// Chapter name for a queue row: from the slug, or from the answer on renewals
+// (MemberModel::chapterOf handles both). Falls back to the raw slug if unknown.
+$chapterLabel = function (array $r): string {
+    $key = MemberModel::chapterOf($r);
+    return ($key !== null ? (MemberModel::CHAPTER_NAMES[$key] ?? null) : null) ?? (string) $r['form_type'];
+};
+// Display name for a form slug in the filter dropdown. The submitted value stays the slug.
+$slugLabel = function (string $slug): string {
+    if (str_starts_with($slug, 'membership-renewal')) return 'Renewals';
+    $key = substr($slug, strlen('membership-'));
+    return MemberModel::CHAPTER_NAMES[$key] ?? $slug;
+};
+
 $scopeLine = $scope !== null
-    ? ($scope ? 'Your chapters: ' . implode(', ', $scope) : 'No chapters are assigned to you yet. Ask an owner.')
+    ? ($scope ? 'Your chapters: ' . implode(', ', array_map(fn($c) => MemberModel::CHAPTER_NAMES[$c] ?? $c, $scope)) : 'No chapters are assigned to you yet. Ask an owner.')
     : '';
 $crumbs = $app
     ? [['Workspace', '/admin/dashboard'], ['Membership review', '/admin/membership-review'], [$app['applicant_name'] ?: $app['email']]]
@@ -279,7 +292,7 @@ engage_header([
         <p class="qmeta">
             <?= $h($app['email']) ?> &middot;
             <?= MemberModel::isRenewal($app) ? 'Renewal' : 'New applicant' ?> &middot;
-            <?= $h($schema['title'] ?? $app['form_type']) ?> &middot;
+            <?= $h($chapterLabel($app)) ?> &middot;
             <?= $h($app['tracking_id']) ?>
         </p>
         <dl class="answers">
@@ -342,7 +355,7 @@ engage_header([
         <form method="GET" class="filters">
             <select name="form"><option value="">All memberships</option>
                 <?php foreach ($model->formSlugs() as $s): ?>
-                    <option value="<?= $h($s) ?>" <?= $s === $fSlug ? 'selected' : '' ?>><?= $h($s) ?></option>
+                    <option value="<?= $h($s) ?>" <?= $s === $fSlug ? 'selected' : '' ?>><?= $h($slugLabel($s)) ?></option>
                 <?php endforeach; ?></select>
             <select name="status"><option value="">All statuses</option>
                 <?php foreach (['New','Submitted','Under Review','Draft','Accepted','Rejected'] as $s): ?>
@@ -379,7 +392,8 @@ engage_header([
                     <?= $rowOpen ? '' : 'disabled title="Already decided or waiting on the applicant"' ?>></td>
                 <td><a class="dl" href="?id=<?= (int) $r['id'] ?>"><?= $h($r['applicant_name'] ?: $r['email']) ?></a>
                     <span class="sub"><?= $h($r['email']) ?></span></td>
-                <td><?= $h($r['form_type']) ?></td>
+                <td><?= $h($chapterLabel($r)) ?>
+                    <?php if (MemberModel::isRenewal($r)): ?><span class="sub">Renewal</span><?php endif; ?></td>
                 <td><span class="pill <?= $tone($r['status']) ?>"><?= $h($label($r['status'])) ?></span></td>
                 <td><?= $h($r['created_at']) ?></td>
                 <td>
