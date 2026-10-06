@@ -24,8 +24,10 @@ class MemberModel {
     ];
 
     /**
-     * First letter of a member ID, as a hint to the club: D = DCW, A = AMU, J = Jamia,
-     * P = Photographers. Letters must stay unique per chapter.
+     * First letter of a member ID, as a hint to the chapter it was FIRST issued for: D = DCW,
+     * A = AMU, J = Jamia, P = Photographers. Letters must stay unique per chapter. The letter
+     * says where the ID came from, not which memberships it covers: one person keeps one ID
+     * for every chapter they join, in any order.
      */
     const ID_PREFIX = ['generic' => 'D', 'amu' => 'A', 'jamia' => 'J', 'photographers' => 'P'];
 
@@ -37,6 +39,13 @@ class MemberModel {
      * from the question's label, so rewording the question changes it: re-check after any edit.
      */
     const RENEWAL_ID_FIELD = 'membership_id';
+
+    /**
+     * Key under which views/forms/renderer.php stores the Member ID of someone joining another
+     * chapter on a normal membership form (from the session of a signed-in member, or the ID a
+     * guest typed on /membership). It is set by the server, never by a form field.
+     */
+    const JOIN_ID_FIELD = 'join_member_id';
 
     /**
      * Keys that can hold the chapter answer on a renewal form, newest first. Older saved
@@ -81,16 +90,17 @@ class MemberModel {
     }
 
     /**
-     * Member ID entered on a renewal form (answer key RENEWAL_ID_FIELD in form_data).
-     *   - not a renewal form, or the field is empty -> null: it is handled as a normal application
+     * The Member ID attached to an application, or null when there is none.
+     *   - renewal form: the answer under RENEWAL_ID_FIELD
+     *   - any other membership form: JOIN_ID_FIELD, set by the renderer for someone joining
+     *     another chapter (signed-in member, or a guest who typed their ID)
      *   - given but not letter + 8 digits, or an unknown letter -> InvalidArgumentException
      *   - otherwise the ID, trimmed and upper-cased
-     * Call this when the renewal is submitted (to show the applicant the error) and again on approval.
      */
-    public static function renewalMemberId(array $app): ?string {
-        if (!self::isRenewal($app)) return null;
+    public static function applicationMemberId(array $app): ?string {
         $d = json_decode($app['form_data'] ?? '', true) ?: [];
-        $id = strtoupper(trim((string) ($d[self::RENEWAL_ID_FIELD] ?? '')));
+        $key = self::isRenewal($app) ? self::RENEWAL_ID_FIELD : self::JOIN_ID_FIELD;
+        $id = strtoupper(trim((string) ($d[$key] ?? '')));
         if ($id === '') return null;
         if (self::chapterFromMemberId($id) === null) {
             throw new InvalidArgumentException('That Member ID is not valid. It is one letter ('
@@ -100,20 +110,29 @@ class MemberModel {
     }
 
     /**
-     * Verify the Member ID on a renewal (or on an existing member joining a club).
-     *   - not a renewal, or no ID given -> null (the caller treats it as a normal application)
-     *   - malformed ID -> InvalidArgumentException (from renewalMemberId)
+     * Member ID entered on a renewal form (answer key RENEWAL_ID_FIELD in form_data).
+     * Kept for older callers; returns null for anything that is not a renewal form.
+     */
+    public static function renewalMemberId(array $app): ?string {
+        return self::isRenewal($app) ? self::applicationMemberId($app) : null;
+    }
+
+    /**
+     * Verify the Member ID on an application (a renewal, or a member joining another chapter).
+     *   - no ID given -> null (the caller treats it as a normal application)
+     *   - malformed ID -> InvalidArgumentException (from applicationMemberId)
      *   - no member with that ID and this email -> InvalidArgumentException
+     *   - joining a chapter the person already holds -> InvalidArgumentException (use renewal)
      *   - otherwise a members row: the one for the chosen chapter if it exists (a plain
-     *     renewal), else the person's Generic Community row (joining a club with the
-     *     Generic ID, which is then shared instead of a new ID being made).
-     * A club-only ID cannot be used to join a different club; only the Generic ID is shared.
-     * The applicant's email is the one they verified by magic link, so a match proves the ID is theirs.
+     *     renewal), else the person's Generic Community row, else any other membership under
+     *     that ID. The ID is then shared instead of a new one being made. ANY chapter's ID works.
+     * The applicant's email is the one they verified (magic link, or the signed-in session), so a
+     * match proves the ID is theirs.
      * The error is deliberately the same for "no such ID" and "someone else's ID", so IDs can't be probed.
-     * Call this when the renewal is submitted and again on approval.
+     * Call this when the form is submitted and again on approval.
      */
     public function verifyRenewalMember(array $app): ?array {
-        $id = self::renewalMemberId($app);
+        $id = self::applicationMemberId($app);
         if ($id === null) return null;
 
         $st = $this->db->prepare('SELECT * FROM members WHERE member_id = :m');
@@ -126,16 +145,21 @@ class MemberModel {
         foreach ($mine as $r) {
             if ($chapter !== null && $r['chapter'] === $chapter) { $row = $r; break; }   // plain renewal
         }
+        if ($row !== null && !self::isRenewal($app)) {
+            throw new InvalidArgumentException('You already hold this membership. Use the renewal option to extend it.');
+        }
         if ($row === null) {
             foreach ($mine as $r) {
-                if ($r['chapter'] === 'generic') { $row = $r; break; }                   // joining a club
+                if ($r['chapter'] === 'generic') { $row = $r; break; }                   // joining with the Generic ID
             }
+            if ($row === null && $mine) $row = $mine[0];                                 // joining with a club ID
         }
-        if ($row === null && $chapter === null && $mine) $row = $mine[0];
 
         if ($row === null) {
             throw new InvalidArgumentException('We could not match that Member ID to your email address and chosen membership. '
-                . 'Please check it, or go back and apply as a new member.');
+                . (self::isRenewal($app)
+                    ? 'Please check it, or go back and apply as a new member.'
+                    : 'Please check it, or go back to the membership page and leave the Member ID empty.'));
         }
         return $row;
     }
@@ -239,13 +263,13 @@ class MemberModel {
 
     /**
      * Approve: create or extend the member, mark Accepted, log the decision.
-     * Returns [member_id, expires_at, shared]. $shared is true when a NEW club membership was
+     * Returns [member_id, expires_at, shared]. $shared is true when a NEW membership was
      * created under an ID the person already had (so no new ID was made); the email says so.
      */
     public function approve(array $app, string $by): array {
         $chapter = self::chapterOf($app);
         if (!$chapter) throw new Exception('Could not work out the chapter for this application.');
-        // A renewal with no Member ID is simply treated as a normal application;
+        // No Member ID on the application is simply treated as a normal application;
         // a malformed or unmatched ID throws.
         $verified = $this->verifyRenewalMember($app);
         $shared = false;
@@ -265,8 +289,8 @@ class MemberModel {
                 $memberId = $m['member_id'];   // existing members keep their current ID
             } else {
                 $exp = date('Y-m-d H:i:s', strtotime(self::TERM));
-                // An existing Generic Community member joining a club keeps their ID.
-                $useId = $this->sharedIdFor($app, $chapter, $verified);
+                // Someone who already holds a membership in any chapter keeps their ID.
+                $useId = $this->sharedIdFor($app, $verified);
                 $memberId = $this->insertMember($app, $chapter, $exp, $useId);
                 $shared = $useId !== null;
             }
@@ -346,15 +370,14 @@ class MemberModel {
     }
 
     /**
-     * The Member ID a club approval should reuse, or null to generate a new one.
-     * Only club chapters share; the Generic Community is the anchor. In order:
+     * The Member ID an approval should reuse, or null to generate a new one. One person, one ID,
+     * whichever chapter it was first issued for. In order:
      *   1. an ID a reviewer linked to this application,
-     *   2. the Generic ID the applicant entered on the renewal form (already verified),
-     *   3. a Generic Community membership held under the same email.
+     *   2. the ID on the application (renewal form, or a member joining another chapter), already verified,
+     *   3. any membership held under the same email (the Generic Community one first, then the oldest).
+     *      The application's email is always verified, so the same email is the same person.
      */
-    private function sharedIdFor(array $app, string $chapter, ?array $verified): ?string {
-        if ($chapter === 'generic') return null;
-
+    private function sharedIdFor(array $app, ?array $verified): ?string {
         try {
             $st = $this->db->prepare('SELECT member_id FROM membership_id_links WHERE application_id = :a');
             $st->execute(['a' => $app['id']]);
@@ -362,9 +385,10 @@ class MemberModel {
             if ($id) return (string) $id;
         } catch (Throwable $e) { /* links table not created yet */ }
 
-        if ($verified && $verified['chapter'] === 'generic') return (string) $verified['member_id'];
+        if ($verified) return (string) $verified['member_id'];
 
-        $st = $this->db->prepare("SELECT member_id FROM members WHERE email = :e AND chapter = 'generic' LIMIT 1");
+        $st = $this->db->prepare("SELECT member_id FROM members WHERE email = :e
+            ORDER BY (chapter = 'generic') DESC, id ASC LIMIT 1");
         $st->execute(['e' => $app['email']]);
         $id = $st->fetchColumn();
         return $id ? (string) $id : null;
@@ -372,7 +396,7 @@ class MemberModel {
 
     /**
      * New member row. With $useId the person keeps an ID they already have (no new one is made).
-     * Otherwise: one letter for the club, then 8 random digits (D = DCW, A = AMU, J = Jamia,
+     * Otherwise: one letter for the chapter, then 8 random digits (D = DCW, A = AMU, J = Jamia,
      * P = Photographers; e.g. A48213977). Random rather than sequential so IDs don't reveal
      * how many members exist or let anyone guess neighbours. Digits may start with 0. Stored
      * as a string. A clash on the (member_id, chapter) unique key is retried with a new number.
@@ -449,11 +473,15 @@ class MemberModel {
     public static function kindLabel(array $app, array $held): string {
         $chapter = self::chapterOf($app);
         $email = strtolower((string) $app['email']);
-        $club = $chapter !== null && $chapter !== 'generic';
         if (self::isRenewal($app)) {
-            return ($club && !isset($held[$email . '|' . $chapter])) ? 'Existing member joining a club' : 'Renewal';
+            // A "renewal" for a chapter they do not hold yet is really a join.
+            $holdsThis = $chapter !== null && isset($held[$email . '|' . $chapter]);
+            return ($chapter !== null && !$holdsThis) ? 'Existing member joining another chapter' : 'Renewal';
         }
-        return ($club && isset($held[$email . '|generic'])) ? 'Generic member joining a club' : 'New applicant';
+        foreach (self::CHAPTERS as $c) {
+            if ($c !== $chapter && isset($held[$email . '|' . $c])) return 'Existing member joining another chapter';
+        }
+        return 'New applicant';
     }
 
     /** The reviewer link on an application, or null. */
