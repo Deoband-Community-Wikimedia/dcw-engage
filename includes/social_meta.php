@@ -22,6 +22,14 @@ const ENGAGE_BASE_URL      = 'https://engage.dcwwiki.org';   // no trailing slas
 const ENGAGE_DEFAULT_IMAGE = 'Group photo from DCW 5th Anniversary.jpg'; // Commons file used when a page has none
 const ENGAGE_USER_AGENT    = 'DCW-Engage/1.0 (https://engage.dcwwiki.org; CHANGE-ME@dcwwiki.org)'; // Wikimedia asks for a contact
 
+/**
+ * Removes any og:image / twitter:image tags from a chunk of head HTML. Used around includes/favicon.php,
+ * so a leftover logo image tag there can never come before (and beat) the page's real social image.
+ */
+function engage_strip_social_images(string $html): string {
+    return preg_replace('#<meta\b[^>]*\b(?:property|name)\s*=\s*["\'](?:og:image|twitter:image)[^>]*>\s*#i', '', $html);
+}
+
 /** Relative path or URL -> absolute URL on this site. */
 function engage_abs_url(string $u): string {
     if (preg_match('#^https?://#i', $u)) return $u;
@@ -169,12 +177,15 @@ function engage_image_info(?string $v, int $width = 1200): ?array {
         return ['url' => $url, 'w' => $w ?: null, 'h' => $h ?: null];
     }
 
-    // Commons could not be reached: fall back to the redirecting address (works in browsers).
-    return [
-        'url' => 'https://commons.wikimedia.org/wiki/Special:FilePath/'
-            . rawurlencode(str_replace(' ', '_', $file)) . '?width=' . $width,
-        'w' => null, 'h' => null,
-    ];
+    $name = str_replace(' ', '_', $file);
+    $md5  = md5($name);
+    $path = $md5[0] . '/' . substr($md5, 0, 2) . '/' . rawurlencode($name);
+    $base = 'https://upload.wikimedia.org/wikipedia/commons/';
+    $ext  = strtolower(pathinfo($name, PATHINFO_EXTENSION));
+    $url  = in_array($ext, ['jpg', 'jpeg', 'png', 'gif', 'webp'], true)
+        ? $base . 'thumb/' . $path . '/' . $width . 'px-' . rawurlencode($name)
+        : $base . $path;
+    return ['url' => $url, 'w' => null, 'h' => null];
 }
 
 /** Just the image address (see engage_image_info). */
