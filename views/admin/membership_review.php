@@ -220,8 +220,15 @@ $slugLabel = function (string $slug): string {
     $key = substr($slug, strlen('membership-'));
     return MemberModel::CHAPTER_NAMES[$key] ?? $slug;
 };
-// Existing memberships, so "joining a club" can be told apart from "renewal" and "new".
+// Existing memberships, so "joining another chapter" can be told apart from "renewal" and "new".
 $held = $model->heldPairs();
+
+// Member IDs a person already holds: member rows grouped by ID, e.g. ['D48213977' => ['DCW Generic Community', 'Wiki Club AMU']].
+$idGroups = function (array $mems): array {
+    $g = [];
+    foreach ($mems as $m) $g[$m['member_id']][] = MemberModel::CHAPTER_NAMES[$m['chapter']] ?? $m['chapter'];
+    return $g;
+};
 
 $scopeLine = $scope !== null
     ? ($scope ? 'Your chapters: ' . implode(', ', array_map(fn($c) => MemberModel::CHAPTER_NAMES[$c] ?? $c, $scope)) : 'No chapters are assigned to you yet. Ask an owner.')
@@ -273,6 +280,10 @@ engage_header([
     .idform input[type=text] { width: 190px; }
     .idform label.chk { display: flex; align-items: center; gap: 6px; font-size: 13.5px; margin: 0; }
     .idform .btn-ghost, .idform .btn-solid { width: auto; padding: 7px 16px; font-size: 13.5px; }
+    .idlist { margin: 10px 0 0; padding-left: 18px; font-size: 14.5px; }
+    .idlist li { margin: 3px 0; }
+    .idwarn { margin: 12px 0 0; padding: 10px 12px; background: #fffbeb; border: 1px solid #fcd34d; border-radius: 10px; font-size: 14px; color: #92400e; }
+    .idbad { margin: 12px 0 0; padding: 10px 12px; background: #fef2f2; border: 1px solid #fca5a5; border-radius: 10px; font-size: 14px; color: #991b1b; }
 
     .filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 0 0 16px; }
     .bulkbar { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 0 0 14px; padding: 12px 14px; background: #fff; border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 4px 12px rgba(15,23,42,.08); }
@@ -313,7 +324,13 @@ engage_header([
     $schema = json_decode($app['schema_json'], true) ?: [];
     $data = json_decode($app['form_data'] ?? '', true) ?: [];
     $open = in_array($app['status'], MemberModel::OPEN, true);
-    $chapterKey = MemberModel::chapterOf($app); ?>
+    $chapterKey = MemberModel::chapterOf($app);
+
+    // Member IDs this person already has, for every reviewer and coordinator (not only those who can change IDs).
+    $mine = $model->membershipsForEmail((string) $app['email']);
+    $mineIds = $idGroups($mine);
+    $statedId = MemberModel::statedMemberId($app);
+    $outcome = $open ? $model->idOutcome($app) : null; ?>
     <section class="sect">
         <div class="qhead">
             <h3><?= $h($app['applicant_name']) ?></h3>
@@ -331,6 +348,41 @@ engage_header([
             <dd><?= $v === '' ? '&mdash;' : (($f['type'] ?? '') === 'file' ? 'File uploaded: ' . $h($v) : $h($v)) ?></dd>
         <?php endforeach; ?>
         </dl>
+    </section>
+
+    <section class="sect">
+        <h3 style="margin:0 0 4px; font-size:17px; font-weight:800;">Member ID</h3>
+        <?php if ($mineIds): ?>
+            <p class="idline">Already holds, under <?= $h($app['email']) ?>:</p>
+            <ul class="idlist">
+            <?php foreach ($mine as $m): ?>
+                <li><code><?= $h($m['member_id']) ?></code> &middot; <?= $h(MemberModel::CHAPTER_NAMES[$m['chapter']] ?? $m['chapter']) ?>
+                    &middot; <?= $h($m['status']) ?>, valid until <?= $h(MemberAuthModel::formatIst($m['expires_at'], 'j M Y')) ?></li>
+            <?php endforeach; ?>
+            </ul>
+        <?php else: ?>
+            <p class="idline">No membership is held under this email yet.</p>
+        <?php endif; ?>
+
+        <?php if ($statedId !== null): ?>
+            <p class="idline">Member ID given on this application: <code><?= $h($statedId) ?></code>
+                <?= isset($mineIds[$statedId]) ? '(matches their email)' : '(does not match any membership under this email)' ?></p>
+        <?php endif; ?>
+
+        <?php if (count($mineIds) > 1): ?>
+            <div class="idwarn"><strong>More than one Member ID.</strong> This person holds <?= count($mineIds) ?> different IDs
+                (<?= $h(implode(', ', array_keys($mineIds))) ?>). They are meant to have just one.</div>
+        <?php endif; ?>
+
+        <?php if ($outcome !== null): ?>
+            <?php if ($outcome['error']): ?>
+                <div class="idbad"><strong>Approval would fail:</strong> <?= $h($outcome['error']) ?></div>
+            <?php elseif ($outcome['id'] !== null): ?>
+                <p class="idline"><strong>On approval:</strong> keeps <code><?= $h($outcome['id']) ?></code>. No new ID is made.</p>
+            <?php else: ?>
+                <p class="idline"><strong>On approval:</strong> a new Member ID is generated.</p>
+            <?php endif; ?>
+        <?php endif; ?>
     </section>
 
     <?php if ($hist = $model->history((int) $app['id'])): ?>
@@ -351,7 +403,7 @@ engage_header([
         $memberRow = $app['status'] === 'Accepted' ? $model->memberRowFor($app) : null;
         if ($open || $memberRow): ?>
     <section class="sect">
-        <h3 style="margin:0 0 4px; font-size:17px; font-weight:800;">Member ID</h3>
+        <h3 style="margin:0 0 4px; font-size:17px; font-weight:800;">Change Member ID</h3>
         <?php if ($memberRow): ?>
             <p class="idline">Current Member ID for this club: <code><?= $h($memberRow['member_id']) ?></code>.
                 To put this member on their DCW Generic Community ID instead, enter it below.</p>
@@ -359,8 +411,8 @@ engage_header([
             <p class="idline">Linked to <code><?= $h($link['member_id']) ?></code> by <?= $h($link['linked_by']) ?>.
                 On approval this member keeps that ID and no new one is made.</p>
         <?php else: ?>
-            <p class="idline">If this person's email matches a DCW Generic Community member, that ID is reused automatically.
-                If they used a different email, enter their Generic Member ID here.</p>
+            <p class="idline">If this person already holds a membership under this email, that ID is reused automatically.
+                If they used a different email, enter their DCW Generic Community Member ID here.</p>
         <?php endif; ?>
 
         <form method="POST" class="idform"><?= CSRF::getInputField() ?>
@@ -422,6 +474,7 @@ engage_header([
     $accepted = array_values(array_filter($rows, fn($r) => $r['status'] === 'Accepted'));
     usort($accepted, fn($a, $b) => strcmp((string) ($b['approved_at'] ?? $b['created_at']), (string) ($a['approved_at'] ?? $a['created_at'])));
     $infoMap = $model->memberInfoMap();
+    $byEmail = $model->membershipsByEmail();   // one query for the whole queue
     $showQueue = $fStatus !== 'Accepted';
     $showAccepted = $fStatus === '' || $fStatus === 'Accepted'; ?>
     <section class="sect">
@@ -458,10 +511,12 @@ engage_header([
         <div class="tbl-wrap">
         <table class="tbl"><thead><tr>
             <th class="pick"><input type="checkbox" id="pickAll" aria-label="Select all"></th>
-            <th>Applicant</th><th>Membership</th><th>Status</th><th>Submitted</th><th>Update</th></tr></thead><tbody>
+            <th>Applicant</th><th>Membership</th><th>Member ID</th><th>Status</th><th>Submitted</th><th>Update</th></tr></thead><tbody>
         <?php foreach ($queue as $r):
             $rowOpen = in_array($r['status'], MemberModel::OPEN, true);
-            $kind = MemberModel::kindLabel($r, $held); ?>
+            $kind = MemberModel::kindLabel($r, $held);
+            $rowIds = $idGroups($byEmail[strtolower((string) $r['email'])] ?? []);
+            $rowStated = MemberModel::statedMemberId($r); ?>
             <tr>
                 <td class="pick"><input type="checkbox" class="pick-row" value="<?= (int) $r['id'] ?>"
                     <?= $rowOpen ? '' : 'disabled title="Already decided or waiting on the applicant"' ?>></td>
@@ -469,6 +524,15 @@ engage_header([
                     <span class="sub"><?= $h($r['email']) ?></span></td>
                 <td><?= $h($chapterLabel($r)) ?>
                     <?php if ($kind !== 'New applicant'): ?><span class="sub"><?= $h($kind) ?></span><?php endif; ?></td>
+                <td>
+                <?php if ($rowIds): foreach ($rowIds as $mid => $chs): ?>
+                    <code><?= $h($mid) ?></code> <span class="sub"><?= $h(implode(', ', $chs)) ?></span>
+                <?php endforeach; else: ?><span style="color:#94a3b8">&mdash;</span><?php endif; ?>
+                <?php if ($rowStated !== null && !isset($rowIds[$rowStated])): ?>
+                    <span class="sub">Entered: <code><?= $h($rowStated) ?></code> (no match)</span>
+                <?php endif; ?>
+                <?php if (count($rowIds) > 1): ?><span class="sub" style="color:#b45309">More than one ID</span><?php endif; ?>
+                </td>
                 <td><span class="pill <?= $tone($r['status']) ?>"><?= $h($label($r['status'])) ?></span></td>
                 <td><?= $h($r['created_at']) ?></td>
                 <td>
@@ -487,7 +551,7 @@ engage_header([
                     </form>
                 <?php else: ?><span style="color:#94a3b8">&mdash;</span><?php endif; ?>
                 </td></tr>
-        <?php endforeach; if (!$queue): ?><tr><td colspan="6">Nothing to review here.</td></tr><?php endif; ?>
+        <?php endforeach; if (!$queue): ?><tr><td colspan="7">Nothing to review here.</td></tr><?php endif; ?>
         </tbody></table>
         </div>
         <?php endif; ?>
