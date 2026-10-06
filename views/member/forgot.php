@@ -2,7 +2,7 @@
 require_once __DIR__ . '/../../includes/init.php';
 require_once __DIR__ . '/../../includes/app_log.php';
 require_once __DIR__ . '/../../models/MemberAuthModel.php';
-require_once __DIR__ . '/../../includes/membership_mailer.php';
+require_once __DIR__ . '/../../includes/mail/membership_mailer.php';
 
 /**
  * First-time password setup and "forgot password": the member gives their Member ID AND the email
