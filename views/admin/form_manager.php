@@ -10,11 +10,12 @@ require_once __DIR__ . '/../../models/NotesModel.php';
 // The workspace page only hides the forms grid from other roles; that is
 // tidiness, not security. This is the actual gate: everything below can read
 // every applicant's data, change statuses, email applicants, and close or
-// delete the form. Finance, support and membership staff have no business here.
+// delete the form. Finance and support staff have no business here.
 Auth::requireLogin();
-// Reviewers get in the door, but only for membership forms: the per-form
-// check below (FormModel::userCanOpen) is what keeps them off the rest.
-requireRole(['owner', 'organizer', 'membership_reviewer']);
+// Reviewers and chapter coordinators get in the door, but only for membership
+// forms: the per-form check below (FormModel::userCanOpen) is what keeps them
+// off the rest, and keeps a coordinator to their own chapters.
+requireRole(['owner', 'organizer', 'membership_reviewer', 'membership_coordinator']);
 
 $formId = $_GET['id'] ?? null;
 if (!$formId)
@@ -28,7 +29,8 @@ $form = $formModel->getFormById($formId);
 if (!$form)
     die("Form not found.");
 
-// Membership forms: membership reviewers and owners only. Every other form:
+// Membership forms: membership reviewers and owners (every chapter), and
+// membership coordinators (their own chapters only). Every other form:
 // organizers and owners only. Same response as a missing form, so nobody can
 // tell whether a form they can't open exists. The dashboard hiding tiles is
 // only tidiness; this is the real check.
@@ -37,9 +39,11 @@ if (!FormModel::userCanOpen($form)) {
     die("Form not found.");
 }
 
-// Anyone who can open this form may close and re-open it. Deleting it and
-// editing its schema stay with organizers and owners.
-$canManageForm = Auth::hasAnyRole(['organizer', 'owner']);
+// Anyone who can open this form may close and re-open it. Deleting stays with
+// organizers and owners (owners only for membership forms); editing the schema
+// also goes to the chapter's coordinator for membership forms.
+$canManageForm = FormModel::userCanDelete($form);
+$canEditSchema = FormModel::userCanEdit($form);
 
 // Membership forms are view/export/notes only here; decisions happen in
 // /admin/membership-review (see the POST guard below).
@@ -84,8 +88,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         die("Invalid CSRF");
 
     if (isset($_POST['action'])) {
-        // Close/re-open is open to anyone who can open this form (so reviewers can
-        // close and re-open membership forms). Deleting stays with managers.
+        // Close/re-open is open to anyone who can open this form (so reviewers and
+        // coordinators can close and re-open membership forms). Deleting stays with managers.
         if ($_POST['action'] === 'delete_form' && !$canManageForm) {
             http_response_code(403);
             die("Not allowed.");
@@ -327,7 +331,7 @@ engage_header([
         <?php if (!$isMembershipForm): ?>
             <a href="?id=<?= $fid ?>&action=export" class="btn-ghost">Export CSV</a>
         <?php endif; ?>
-        <?php if ($canManageForm): ?>
+        <?php if ($canEditSchema): ?>
             <a href="/admin/builder?edit=<?= $fid ?>" class="btn-ghost">Edit schema</a>
         <?php endif; ?>
 
