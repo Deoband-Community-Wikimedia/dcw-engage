@@ -5,6 +5,8 @@
  * Handles parsing and validation of dynamic JSON form schemas.
  */
 
+require_once __DIR__ . '/MemberModel.php';   // chapterOfSlug(): which chapter a membership slug belongs to
+
 class FormModel {
     /**
      * form_type values that count as membership forms. Plain organizers must
@@ -32,18 +34,78 @@ class FormModel {
         return false;
     }
 
+    private static $coordChapters = null;
+
+    /**
+     * Chapters the signed-in membership coordinator is assigned to (membership_scopes), cached for
+     * the request. Empty for anyone who does not hold the coordinator role.
+     */
+    public static function coordinatorChapters(): array {
+        if (!Auth::hasAnyRole(['membership_coordinator'])) return [];
+        if (self::$coordChapters === null) {
+            try {
+                self::$coordChapters = (new MemberModel())->chaptersFor((string) Auth::email());
+            } catch (Throwable $e) {
+                self::$coordChapters = [];
+            }
+        }
+        return self::$coordChapters;
+    }
+
+    /** True when the signed-in coordinator is assigned to the chapter this membership slug belongs to. */
+    public static function coordinatesSlug(string $formType): bool {
+        $chapter = MemberModel::chapterOfSlug($formType);
+        return $chapter !== null && in_array($chapter, self::coordinatorChapters(), true);
+    }
+
     /**
      * Can the signed-in user open this form in the form manager?
-     *   membership forms -> membership_reviewer, owner
+     *   membership forms -> membership_reviewer, owner (every chapter);
+     *                       membership_coordinator (only forms of their own chapters)
      *   all other forms  -> organizer, owner
      * One rule, used by the dashboard grid and form_manager.php (and the
-     * builder, if you add it there) so they can't drift apart.
+     * builder) so they can't drift apart.
      */
     public static function userCanOpen(array $form): bool {
         if (self::isMembershipType($form['form_type'])) {
-            return Auth::hasAnyRole(['membership_reviewer', 'owner']);
+            return Auth::hasAnyRole(['membership_reviewer', 'owner'])
+                || self::coordinatesSlug((string) $form['form_type']);
         }
         return Auth::hasAnyRole(['organizer', 'owner']);
+    }
+
+    /**
+     * Can the signed-in user create this form / edit its schema (also checked against a NEW slug, so a
+     * form cannot be renamed into somebody else's chapter)?
+     *   membership forms -> owner; membership_coordinator for forms of their own chapters
+     *   all other forms  -> organizer, owner
+     */
+    public static function userCanEdit(array $form): bool {
+        if (self::isMembershipType($form['form_type'])) {
+            return Auth::hasAnyRole(['owner']) || self::coordinatesSlug((string) $form['form_type']);
+        }
+        return Auth::hasAnyRole(['organizer', 'owner']);
+    }
+
+    /** Deleting a form (and all its responses): owners for membership forms, organizers and owners for the rest. */
+    public static function userCanDelete(array $form): bool {
+        if (self::isMembershipType($form['form_type'])) {
+            return Auth::hasAnyRole(['owner']);
+        }
+        return Auth::hasAnyRole(['organizer', 'owner']);
+    }
+
+    /** Message for the builder when userCanEdit() refuses a slug. */
+    public static function editDeniedMessage(string $formType): string {
+        if (!self::isMembershipType($formType)) {
+            return 'Only organizers can create or edit that kind of form.';
+        }
+        if (Auth::hasAnyRole(['membership_coordinator'])) {
+            return 'You can only manage membership forms for your own chapters. Start the URL slug with '
+                . 'membership-<chapter> or membership-renewal-<chapter>- (for example membership-amu or '
+                . 'membership-renewal-amu-2027).';
+        }
+        return 'That URL slug is reserved for membership forms.';
     }
 
     private $db;
