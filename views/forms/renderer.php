@@ -62,6 +62,23 @@ $schema = $form['schema'];
 $errors = [];
 $success = '';
 
+// A signed-in member (Member ID + password) is already verified: their email was proved when
+// they were approved, and the session proves it is them. So on EVERY form they skip the
+// email gate and use the email on their member record. Never skipped for a Member ID that was
+// merely typed in: only a real member session counts.
+$loggedMember = null;
+if (empty($previewSchema)) {
+    try {
+        require_once __DIR__ . '/../../includes/member_session.php';
+        $loggedMember = MemberSession::current();
+    } catch (Throwable $ex) {
+        $loggedMember = null;
+    }
+}
+$isMembershipForm = str_starts_with((string) $formType, 'membership-');
+$isRenewalForm = str_starts_with((string) $formType, 'membership-renewal');
+$memberAutoVerified = $loggedMember !== null;
+
 // Email verification comes first (#67). Nobody — whether they mean to submit
 // or only save a draft — reaches the form until they have proved they control
 // the address, so junk entries can't create rows or trigger magic links to
@@ -113,7 +130,9 @@ if (empty($previewSchema)) {
         $pendingVerifyToken = (string) $_GET['verify'];
     }
 
-    $verifiedEmail = $_SESSION['verified_emails'][$form['id']] ?? '';
+    $verifiedEmail = $memberAutoVerified
+        ? (string) $loggedMember['email']
+        : ($_SESSION['verified_emails'][$form['id']] ?? '');
 }
 
 if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') !== 'confirm_verification') {
@@ -125,7 +144,10 @@ if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['a
     $postAction = $_POST['action'] ?? '';
     $gatePassed = false;
 
-    if ($postAction === 'request_verification') {
+    if ($memberAutoVerified && in_array($postAction, ['request_verification', 'change_email'], true)) {
+        // A signed-in member has no email gate and cannot swap in another address.
+        $email = $verifiedEmail;
+    } elseif ($postAction === 'request_verification') {
         if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
             $errors['email'] = "Please enter a valid email address.";
         } else {
@@ -205,18 +227,33 @@ if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['a
         $postData = $_POST;
         unset($postData['csrf_token']);
 
+        // Membership forms (not the renewal form, which asks for the ID itself): someone who
+        // already holds a membership in another chapter keeps ONE Member ID. The ID is set here,
+        // on the server, never taken from the posted form: from the signed-in member's session,
+        // or from what a guest typed on /membership (checked against their verified email below).
+        require_once __DIR__ . '/../../models/MemberModel.php';
+        if ($isMembershipForm && !$isRenewalForm) {
+            unset($postData[MemberModel::JOIN_ID_FIELD]);
+            $joinId = $loggedMember !== null
+                ? (string) $loggedMember['member_id']
+                : strtoupper(trim((string) ($_SESSION['join_member_id'][$formType] ?? '')));
+            if ($joinId !== '') {
+                $postData[MemberModel::JOIN_ID_FIELD] = $joinId;
+            }
+        }
+
         // Resolve the applicant name from the actual submitted field name,
         // not a hardcoded full_name assumption, so both full_name and
         // applicant_name labels keep working across builder-generated schemas.
         $applicantName = resolveApplicantName($postData, $schema);
 
-        // Renewal forms: check the Member ID now, so a typo is shown on the form
-        // instead of surfacing only after a reviewer opens the application. A final
-        // submission only; a draft may be incomplete. A blank ID is allowed (the
-        // person is then treated as a new applicant), a wrong one is not.
-        // The error is the same whether the ID does not exist or belongs to someone else.
-        if (empty($errors) && !$isDraft && str_starts_with((string) $formType, 'membership-renewal')) {
-            require_once __DIR__ . '/../../models/MemberModel.php';
+        // Membership forms: check the Member ID now (renewal form: the one typed on the form;
+        // other forms: the one set above), so a typo or someone else's ID is shown here instead
+        // of surfacing only after a reviewer opens the application. A final submission only;
+        // a draft may be incomplete. No ID is allowed (the person is then a new applicant),
+        // a wrong one is not. The error is the same whether the ID does not exist or belongs
+        // to someone else. The email checked is the verified one.
+        if (empty($errors) && !$isDraft && $isMembershipForm) {
             try {
                 (new MemberModel())->verifyRenewalMember([
                     'form_type' => $formType,
@@ -224,11 +261,12 @@ if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['a
                     'email'     => $email,
                 ]);
             } catch (InvalidArgumentException $e) {
-                $idFieldShown = in_array(MemberModel::RENEWAL_ID_FIELD, array_column($schema['fields'] ?? [], 'name'), true);
+                $idFieldShown = $isRenewalForm
+                    && in_array(MemberModel::RENEWAL_ID_FIELD, array_column($schema['fields'] ?? [], 'name'), true);
                 if ($idFieldShown) {
                     $errors[MemberModel::RENEWAL_ID_FIELD] = $e->getMessage();
                 } else {
-                    $errors['system'] = $e->getMessage();   // field was renamed in the builder: still say why
+                    $errors['system'] = $e->getMessage();   // no ID field on this form (or it was renamed): still say why
                 }
             }
         }
@@ -295,6 +333,8 @@ if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['a
                     $formTitle = $schema['title'] ?? $formType;
                     Mailer::sendApplicationReceived($email, $applicantName, $trackingId, $formTitle);
                     $success = "Application submitted successfully! Your tracking ID is: $trackingId";
+                    // The ID typed on /membership has done its job (it travels with the saved application now).
+                    unset($_SESSION['join_member_id'][$formType]);
                 }
 
                 // Notify the organizer(s) in charge of this form — only for
@@ -339,15 +379,7 @@ $showGate = empty($success) && empty($previewSchema) && $verifiedEmail === '' &&
 $isDraftPost = ($_POST['intent'] ?? '') === 'draft';
 
 // A signed-in member just gets their name in the top bar (same as /membership).
-$member = null;
-if (empty($previewSchema)) {
-    try {
-        require_once __DIR__ . '/../../includes/member_session.php';
-        $member = MemberSession::current();
-    } catch (Throwable $ex) {
-        $member = null;
-    }
-}
+$member = $loggedMember;
 
 engage_header([
     'title'   => $schema['title'],
@@ -471,7 +503,10 @@ engage_header([
 
         <?php else: ?>
 
-            <?php if ($verifiedEmail !== ''): ?>
+            <?php if ($memberAutoVerified): ?>
+                <p class="verified-line">Signed in as <strong><?= htmlspecialchars($verifiedEmail) ?></strong> ✓
+                    No email verification needed.</p>
+            <?php elseif ($verifiedEmail !== ''): ?>
                 <form method="POST" class="verified-line">
                     <?= CSRF::getInputField() ?>
                     <input type="hidden" name="action" value="change_email">
