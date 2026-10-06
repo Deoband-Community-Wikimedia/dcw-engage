@@ -210,7 +210,11 @@ class MemberModel {
     }
 
     public function listApplications(string $slug, string $status, ?array $scope): array {
-        $sql = "SELECT a.id, a.applicant_name, a.email, a.status, a.tracking_id, a.created_at, a.form_data, f.form_type
+        $sql = "SELECT a.id, a.applicant_name, a.email, a.status, a.tracking_id, a.created_at, a.form_data, f.form_type,
+                (SELECT d.decided_at FROM membership_decisions d
+                  WHERE d.application_id = a.id AND d.decision = 'approved' ORDER BY d.id DESC LIMIT 1) AS approved_at,
+                (SELECT d.decided_by FROM membership_decisions d
+                  WHERE d.application_id = a.id AND d.decision = 'approved' ORDER BY d.id DESC LIMIT 1) AS approved_by
                 FROM applications a JOIN forms f ON a.form_id = f.id
                 WHERE f.form_type LIKE 'membership-%'
                 AND (a.status <> 'Draft' OR EXISTS (SELECT 1 FROM membership_decisions d
@@ -427,6 +431,16 @@ class MemberModel {
         $out = [];
         foreach ($this->db->query('SELECT email, chapter FROM members') as $r) {
             $out[strtolower((string) $r['email']) . '|' . $r['chapter']] = true;
+        }
+        return $out;
+    }
+
+    /** "email|chapter" => ['member_id' => ..., 'expires_at' => ...], for the accepted list. */
+    public function memberInfoMap(): array {
+        $out = [];
+        foreach ($this->db->query('SELECT email, chapter, member_id, expires_at FROM members') as $r) {
+            $out[strtolower((string) $r['email']) . '|' . $r['chapter']] =
+                ['member_id' => (string) $r['member_id'], 'expires_at' => (string) $r['expires_at']];
         }
         return $out;
     }

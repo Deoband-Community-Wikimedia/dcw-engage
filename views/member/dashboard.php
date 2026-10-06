@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../../includes/init.php';
 require_once __DIR__ . '/../../includes/wikitext.php';
+require_once __DIR__ . '/../../includes/engage_page.php';
 require_once __DIR__ . '/../../models/MemberAuthModel.php';
 require_once __DIR__ . '/../../models/MemberModel.php';
 require_once __DIR__ . '/../../models/FormModel.php';
@@ -173,44 +174,24 @@ function dash_tile(array $icons, string $tone, string $icon, string $title, stri
 
 // Why a support tile is locked, if it is.
 $lock = fn(bool $open) => !$memberActive ? 'Renew to unlock' : (!$open ? 'Closed right now' : '');
+
+// Same page frame as the rest of Engage.
+engage_header([
+    'title'   => 'My dashboard',
+    'heading' => 'Hello, ' . $firstName,
+    'kicker'  => 'Member ID ' . $member['member_id'],
+    'lead'    => 'Your membership, your requests, and everything open to you right now.',
+    'member'  => $member,
+    'tools'   => '<a class="chip-btn" href="/member/logout">Sign out</a>',
+    'wide'    => true,
+    'crumbs'  => [['Home', '/'], ['My dashboard']],
+]);
 ?>
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <?php require __DIR__ . '/../../includes/favicon.php'; ?>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#0c567a">
-    <meta name="robots" content="noindex, nofollow">
-    <title>My dashboard - DCW Engage</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/assets/css/engage.css?v=2">
-    <style>
-        .hero { padding-bottom: 44px; } .wrap.cards-wrap { margin-top: 34px; }
-        .mstrip + .mstrip { margin-top: 14px; }
-        .mstrip .which { margin: 0 0 4px; font-size: 13px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
-    </style>
-</head>
-<body>
-    <header class="hero">
-        <div class="topbar">
-            <a class="brand" href="/">
-                <img src="https://dcwwiki.org/dcwwiki/images/5/56/DCW_logo.png" alt="">
-                <span>DCW Engage</span>
-            </a>
-            <div class="tools">
-                <span class="who"><?= htmlspecialchars($fullName !== '' ? $fullName : (string) $member['member_id']) ?></span>
-                <a href="/" class="chip-btn">Home</a>
-                <a href="/member/logout" class="chip-btn">Sign out</a>
-            </div>
-        </div>
-        <p class="kicker">Member ID <?= htmlspecialchars((string) $member['member_id']) ?></p>
-        <h1>Hello, <?= htmlspecialchars($firstName) ?></h1>
-        <p class="lead">Your membership, your requests, and everything open to you right now.</p>
-    </header>
-
-    <main class="wrap wide cards-wrap">
-
+<style>
+    /* Member dashboard only. Everything else comes from /assets/css/engage.css */
+    .mstrip + .mstrip { margin-top: 14px; }
+    .mstrip .which { margin: 0 0 4px; font-size: 13px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+</style>
         <?php foreach ($strips as $s): ?>
             <section class="mstrip" style="--tone: <?= $s['tone'] ?>;">
                 <div>
@@ -351,15 +332,6 @@ $lock = fn(bool $open) => !$memberActive ? 'Renew to unlock' : (!$open ? 'Closed
                 ?>
             </div>
         </section>
-    </main>
-
-    <footer>
-        <div class="org">
-            <img src="https://dcwwiki.org/dcwwiki/images/5/56/DCW_logo.png" alt="">
-            <span>Deoband Community Wikimedia</span>
-        </div>
-        <div>&copy; <?= date('Y') ?> · <a href="/">dcwwiki.org</a></div>
-    </footer>
 
     <script>
         document.querySelectorAll('.copy').forEach(function (b) {
@@ -372,5 +344,4 @@ $lock = fn(bool $open) => !$memberActive ? 'Renew to unlock' : (!$open ? 'Closed
             });
         });
     </script>
-</body>
-</html>
+<?php engage_footer(); ?>
