@@ -161,12 +161,41 @@ if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['a
                 require_once __DIR__ . '/../../includes/mailer.php';
                 $config = require __DIR__ . '/../../includes/config.php';
                 $email = strtolower($email);
-                $issued = (new EmailVerificationModel())->request($form['id'], $email);
+                $formTitle = $schema['title'] ?? $formType;
 
-                if ($issued) {
-                    $verifyUrl = rtrim($config['app']['url'], '/') . '/' . rawurlencode($formType)
-                        . '?verify=' . urlencode($issued['token']);
-                    Mailer::sendEmailVerification($email, $schema['title'] ?? $formType, $verifyUrl, $issued['expires_at']);
+                // Membership JOIN forms only (the renewal form is meant for people who already
+                // hold a membership). If this address already belongs to a member, say so by
+                // email instead of sending a plain verification link. The screen below is the
+                // same either way, so the page never reveals whether an account exists.
+                $held = [];
+                $joinChapter = null;
+                if ($isMembershipForm && !$isRenewalForm) {
+                    require_once __DIR__ . '/../../models/MemberModel.php';
+                    require_once __DIR__ . '/../../includes/mail/membership_mailer.php';
+                    $joinChapter = MemberModel::chapterOfSlug((string) $formType);
+                    $held = (new MemberModel())->membershipsForEmail($email);
+                }
+                $holdsThis = !empty($held) && $joinChapter !== null
+                    && in_array($joinChapter, array_column($held, 'chapter'), true);
+
+                if ($holdsThis) {
+                    // Already a member of this chapter: no application is needed, so no
+                    // verification link goes out. They are pointed to sign in or renew.
+                    MembershipMailer::sendExistingAccount($email, $held, $joinChapter, $formTitle);
+                } else {
+                    $issued = (new EmailVerificationModel())->request($form['id'], $email);
+
+                    if ($issued) {
+                        $verifyUrl = rtrim($config['app']['url'], '/') . '/' . rawurlencode($formType)
+                            . '?verify=' . urlencode($issued['token']);
+                        if (!empty($held)) {
+                            // Member of ANOTHER chapter: same verification link, but the email
+                            // explains that their existing Member ID is kept.
+                            MembershipMailer::sendExistingAccount($email, $held, $joinChapter, $formTitle, $verifyUrl, $issued['expires_at']);
+                        } else {
+                            Mailer::sendEmailVerification($email, $formTitle, $verifyUrl, $issued['expires_at']);
+                        }
+                    }
                 }
                 // Same screen whether or not a link went out (rate limited,
                 // mail failure): the page must not reveal which happened.
