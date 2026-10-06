@@ -45,27 +45,31 @@ try {
 }
 
 /**
- * Photo strip ("From our events"). Leave the list empty to hide it.
- *   src    image address (for Commons: Special:FilePath/<file name>?width=640 gives a small copy)
+ * Moving photo strip ("From our events"). Leave the list empty to hide it.
+ * It scrolls by itself, pauses on hover or touch, has a Pause button, and stands still
+ * (swipeable) for visitors who ask their device for reduced motion. Add as many photos as you like.
+ *
+ * Easiest way, for a Wikimedia Commons photo: give the file name (or the Commons page link).
+ * The picture is fetched at the right size and the credit (author, licence, link) is filled in
+ * automatically:
+ *   ['commons' => 'Some photo.jpg', 'alt' => 'What the photo shows'],
+ *
+ * Any other photo: give the address and write the credit yourself:
+ *   src    image address (a full URL, or a path such as /assets/img/photo.jpg)
  *   alt    what the photo shows, for screen readers
  *   credit caption under the photo (photographer and licence)
- *   href   optional link for the caption, e.g. the photo's Commons page
- * Only add photos you are allowed to show, and keep the credit accurate. Before going live, open
- * each Commons page and put the photographer's name and the licence (e.g. CC BY-SA 4.0) in 'credit'.
+ *   href   optional link for the caption, e.g. the photo's page or its licence
+ * Optional on any entry: 'credit' / 'href' written by hand win over the automatic Commons credit.
+ * Only add photos you are allowed to show, and keep the credit accurate.
+ * Landscape photos, at least 640 px wide, look best (they are shown 280 x 190).
  */
 $galleryImages = [
-    [
-        'src'    => 'https://commons.wikimedia.org/wiki/Special:FilePath/Aafi_during_his_presentation,_Wikiconference_India_2026_DSC_5679.jpg?width=640',
-        'alt'    => 'Aafi presenting at WikiConference India 2026',
-        'credit' => 'JyotiPN, CC BY-SA 4.0, Wikimedia Commons',
-        'href'   => 'https://commons.wikimedia.org/wiki/File:Aafi_during_his_presentation,_Wikiconference_India_2026_DSC_5679.jpg',
-    ],
-    [
-        'src'    => 'https://commons.wikimedia.org/wiki/Special:FilePath/Group_photo_from_DCW_5th_Anniversary.jpg?width=640',
-        'alt'    => 'Group photo from the DCW 5th Anniversary',
-        'credit' => 'Muntaqibah, CC BY-SA 4.0, Wikimedia Commons',
-        'href'   => 'https://commons.wikimedia.org/wiki/File:Group_photo_from_DCW_5th_Anniversary.jpg',
-    ],
+    ['commons' => 'Wikimedians at WTS2024 Hyderabad (11).jpg',       'alt' => 'Wikimedians at WTS2024 in Hyderabad'],
+    ['commons' => 'Wikimedia-Futures-Lab-26-Friday-118.jpg',          'alt' => 'Participants at Wikimedia Futures Lab 2026'],
+    ['commons' => 'Wikimania 2025 — Day 15.jpg',                      'alt' => 'Wikimania 2025'],
+    ['commons' => 'WikiConference India 2026 Snaps 02.jpg',           'alt' => 'WikiConference India 2026'],
+    ['commons' => 'Aafi during his presentation, Wikiconference India 2026 DSC 5679.jpg', 'alt' => 'Aafi presenting at WikiConference India 2026'],
+    ['commons' => 'Group photo from DCW 5th Anniversary.jpg',         'alt' => 'Group photo from the DCW 5th Anniversary'],
     [
         // Embassy of Ukraine in India site: its footer says all content is CC BY 4.0, which needs the
         // photographer's name and a link to the licence (the caption link below). This points at their
@@ -75,7 +79,27 @@ $galleryImages = [
         'credit' => 'Photo: Volodymyr Prytula, Embassy of Ukraine in India, CC BY 4.0',
         'href'   => 'https://creativecommons.org/licenses/by/4.0/',
     ],
+    // More photos go here, for example:
+    // ['commons' => 'Some photo from a DCW event.jpg', 'alt' => 'Participants at the workshop'],
 ];
+
+// Work out the final picture address and caption for each photo.
+$gallery = [];
+foreach ($galleryImages as $g) {
+    if (!empty($g['commons'])) {
+        $g['src'] = engage_resolve_image($g['commons'], 640);
+        if (empty($g['credit'])) {
+            $c = engage_commons_credit($g['commons']);
+            if ($c) {
+                $g['credit'] = implode(', ', array_filter([$c['author'], $c['license'], 'Wikimedia Commons']));
+                if (empty($g['href'])) $g['href'] = $c['page'];
+            }
+        }
+    }
+    if (!empty($g['src'])) $gallery[] = $g;
+}
+// Slower scroll for longer strips, so every photo stays on screen about as long.
+$galleryDuration = max(24, count($gallery) * 7);
 
 // Inner SVG markup for the card icons (24x24 viewBox, stroke icons).
 $icons = [
@@ -155,7 +179,7 @@ $about = engage_about_links(true);
             margin: 0; background: var(--page); color: var(--ink);
             font-family: 'Inter', -apple-system, sans-serif; line-height: 1.6;
         }
-        a:focus-visible, summary:focus-visible { outline: 3px solid #f59e0b; outline-offset: 3px; }
+        a:focus-visible, summary:focus-visible, button:focus-visible { outline: 3px solid #f59e0b; outline-offset: 3px; }
         .wrap { max-width: 1060px; margin: 0 auto; padding: 0 22px; }
 
         /* Hero: brand gradient with soft shapes, cards overlap its lower edge */
@@ -286,15 +310,41 @@ $about = engage_about_links(true);
         .help-sub a { color: var(--primary); font-weight: 600; text-decoration: none; }
         .help-sub a:hover { text-decoration: underline; }
 
-        /* Optional photo strip */
+        /* Moving photo strip: two identical rows slide left in a loop (the second row is the
+           seamless continuation, hidden from screen readers). Pauses on hover, focus, or the button. */
         .gallery { margin: 44px 0 6px; text-align: center; }
         .gallery h2 { margin: 0 0 16px; font-size: 13px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); font-weight: 700; }
-        .gallery .strip { display: flex; flex-wrap: wrap; justify-content: center; gap: 14px; }
-        .gallery figure { margin: 0; flex: 1 1 220px; max-width: 320px; }
-        .gallery img { width: 100%; height: 190px; object-fit: cover; border-radius: 14px; display: block; box-shadow: 0 6px 16px rgba(15,23,42,.1); }
-        .gallery figcaption { margin-top: 6px; font-size: 12px; color: var(--muted); }
+        .marquee {
+            overflow: hidden; padding: 4px 0 2px;
+            -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 5%, #000 95%, transparent 100%);
+            mask-image: linear-gradient(90deg, transparent 0, #000 5%, #000 95%, transparent 100%);
+        }
+        .marquee .track {
+            display: flex; gap: 14px; width: max-content;
+            animation: gal-scroll var(--gal-dur, 40s) linear infinite;
+        }
+        .marquee:hover .track, .marquee:focus-within .track, .marquee.paused .track { animation-play-state: paused; }
+        /* Two rows with a 14px gap between them: the loop point is half the track plus half a gap. */
+        @keyframes gal-scroll { to { transform: translateX(calc(-50% - 7px)); } }
+        .gallery figure { flex: none; width: 280px; margin: 0; text-align: left; }
+        .gallery img { width: 100%; height: 190px; object-fit: cover; border-radius: 14px; display: block; box-shadow: 0 6px 16px rgba(15,23,42,.1); background: #e2e8f0; }
+        .gallery figcaption { margin-top: 6px; font-size: 12px; line-height: 1.4; color: var(--muted); }
         .gallery figcaption a { color: var(--muted); text-decoration: underline; text-underline-offset: 2px; }
         .gallery figcaption a:hover { color: var(--primary); }
+        .gal-toggle {
+            margin-top: 12px; padding: 5px 14px; border-radius: 999px; cursor: pointer;
+            font: inherit; font-size: 12.5px; font-weight: 600; color: var(--muted);
+            background: #fff; border: 1px solid var(--border);
+        }
+        .gal-toggle:hover { color: var(--primary); border-color: var(--primary); }
+
+        /* Reduced motion: no animation. The strip becomes a normal swipeable row, without the repeat. */
+        @media (prefers-reduced-motion: reduce) {
+            .marquee { overflow-x: auto; -webkit-mask-image: none; mask-image: none; scroll-snap-type: x proximity; }
+            .marquee .track { animation: none; }
+            .marquee .dup, .gal-toggle { display: none; }
+            .gallery figure { scroll-snap-align: start; }
+        }
 
         /* Empty state */
         .empty {
@@ -314,6 +364,8 @@ $about = engage_about_links(true);
             }
             .prog.featured .tick { margin-bottom: 12px; }
             .prog.featured .go { justify-self: start; margin-top: 14px; }
+            .gallery figure { width: 240px; }
+            .gallery img { height: 165px; }
         }
         @media (prefers-reduced-motion: reduce) {
             * { transition: none !important; }
@@ -409,25 +461,43 @@ $about = engage_about_links(true);
             <?php endif; ?>
         </section>
 
-        <?php if (!empty($galleryImages)): ?>
+        <?php if (!empty($gallery)): ?>
             <section class="gallery" aria-label="From our events">
                 <h2>From our events</h2>
-                <div class="strip">
-                    <?php foreach ($galleryImages as $img): ?>
-                        <figure>
-                            <img src="<?= htmlspecialchars($img['src']) ?>" alt="<?= htmlspecialchars($img['alt'] ?? '') ?>" loading="lazy">
-                            <?php if (!empty($img['credit'])): ?>
-                                <figcaption>
-                                    <?php if (!empty($img['href'])): ?>
-                                        <a href="<?= htmlspecialchars($img['href']) ?>" target="_blank" rel="noopener"><?= htmlspecialchars($img['credit']) ?></a>
-                                    <?php else: ?>
-                                        <?= htmlspecialchars($img['credit']) ?>
+                <div class="marquee" id="galMarquee" style="--gal-dur: <?= (int) $galleryDuration ?>s;">
+                    <div class="track">
+                        <?php foreach ([false, true] as $isDup): ?>
+                            <?php foreach ($gallery as $img): ?>
+                                <figure<?= $isDup ? ' class="dup" aria-hidden="true"' : '' ?>>
+                                    <img src="<?= htmlspecialchars($img['src']) ?>" alt="<?= $isDup ? '' : htmlspecialchars($img['alt'] ?? '') ?>" decoding="async">
+                                    <?php if (!empty($img['credit'])): ?>
+                                        <figcaption>
+                                            <?php if (!empty($img['href'])): ?>
+                                                <a href="<?= htmlspecialchars($img['href']) ?>" target="_blank" rel="noopener"<?= $isDup ? ' tabindex="-1"' : '' ?>><?= htmlspecialchars($img['credit']) ?></a>
+                                            <?php else: ?>
+                                                <?= htmlspecialchars($img['credit']) ?>
+                                            <?php endif; ?>
+                                        </figcaption>
                                     <?php endif; ?>
-                                </figcaption>
-                            <?php endif; ?>
-                        </figure>
-                    <?php endforeach; ?>
+                                </figure>
+                            <?php endforeach; ?>
+                        <?php endforeach; ?>
+                    </div>
                 </div>
+                <button type="button" class="gal-toggle" id="galToggle" aria-pressed="false">Pause photos</button>
             </section>
+            <script>
+                // Pause / play button for the moving photos.
+                (function () {
+                    var m = document.getElementById('galMarquee');
+                    var b = document.getElementById('galToggle');
+                    if (!m || !b) return;
+                    b.addEventListener('click', function () {
+                        var paused = m.classList.toggle('paused');
+                        b.setAttribute('aria-pressed', paused ? 'true' : 'false');
+                        b.textContent = paused ? 'Play photos' : 'Pause photos';
+                    });
+                })();
+            </script>
         <?php endif; ?>
 <?php engage_footer(); ?>
