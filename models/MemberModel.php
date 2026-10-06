@@ -450,6 +450,51 @@ class MemberModel {
         return $st->fetch() ?: null;
     }
 
+    /** Every membership held under one email (any chapter), Generic Community first. */
+    public function membershipsForEmail(string $email): array {
+        $st = $this->db->prepare("SELECT member_id, chapter, status, expires_at FROM members
+            WHERE email = :e ORDER BY (chapter = 'generic') DESC, id ASC");
+        $st->execute(['e' => $email]);
+        return $st->fetchAll();
+    }
+
+    /** lower-cased email => memberships (member_id, chapter, status, expires_at), so a queue needs one query, not one per row. */
+    public function membershipsByEmail(): array {
+        $out = [];
+        $q = $this->db->query("SELECT email, member_id, chapter, status, expires_at FROM members
+            ORDER BY (chapter = 'generic') DESC, id ASC");
+        foreach ($q as $r) {
+            $out[strtolower((string) $r['email'])][] = [
+                'member_id' => (string) $r['member_id'], 'chapter' => $r['chapter'],
+                'status' => $r['status'], 'expires_at' => $r['expires_at'],
+            ];
+        }
+        return $out;
+    }
+
+    /** The Member ID attached to an application (typed on the renewal form, or set for a join), or null. Never throws. */
+    public static function statedMemberId(array $app): ?string {
+        try { return self::applicationMemberId($app); } catch (InvalidArgumentException $e) { return null; }
+    }
+
+    /**
+     * What approval will do about the Member ID, for the reviewer:
+     *   ['id' => 'A48213977', 'error' => null]  this ID is kept / reused (no new one is made)
+     *   ['id' => null,        'error' => null]  nothing held yet: a new ID will be generated
+     *   ['id' => null,        'error' => '...'] the ID on the application does not check out; approval would fail
+     */
+    public function idOutcome(array $app): array {
+        if (self::chapterOf($app) === null) return ['id' => null, 'error' => null];
+        try {
+            $verified = $this->verifyRenewalMember($app);
+            $own = $this->memberRowFor($app);                       // renewal: the chapter's own ID is kept
+            if ($own) return ['id' => (string) $own['member_id'], 'error' => null];
+            return ['id' => $this->sharedIdFor($app, $verified), 'error' => null];
+        } catch (InvalidArgumentException $e) {
+            return ['id' => null, 'error' => $e->getMessage()];
+        }
+    }
+
     /** "email|chapter" => true for every membership, so a queue can be labelled without a query per row. */
     public function heldPairs(): array {
         $out = [];
