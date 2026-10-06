@@ -151,7 +151,7 @@ $about = engage_about_links(true);
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-     <?php require __DIR__ . '/../includes/favicon.php'; ?>
+     <?php ob_start(); require __DIR__ . '/../includes/favicon.php'; echo engage_strip_social_images(ob_get_clean()); ?>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#0c567a">
     <title>DCW Engage — Applications &amp; Forms</title>
