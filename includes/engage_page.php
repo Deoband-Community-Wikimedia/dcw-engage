@@ -45,24 +45,7 @@ function engage_header(array $o) {
 <header class="hero">
     <div class="topbar">
         <a class="brand" href="/"><img src="https://dcwwiki.org/dcwwiki/images/5/56/DCW_logo.png" alt="">DCW Engage</a>
-        <?php if ($about): ?>
-        <details class="about" id="about-menu">
-            <summary class="chip-btn">About DCW <span aria-hidden="true">&#9662;</span></summary>
-            <div class="about-menu">
-                <?php foreach ($about as [$name, $href]): ?>
-                    <a href="<?= $e($href) ?>" rel="noopener"><?= $e($name) ?></a>
-                <?php endforeach; ?>
-            </div>
-        </details>
-        <style>
-            .topbar .about { position: relative; margin: 0 auto 0 14px; }
-            .topbar .about summary { list-style: none; cursor: pointer; }
-            .topbar .about summary::-webkit-details-marker { display: none; }
-            .topbar .about .about-menu { position: absolute; z-index: 30; top: calc(100% + 8px); left: 0; min-width: 220px; padding: 8px; background: #fff; border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 16px 34px rgba(15,23,42,.18); }
-            .topbar .about .about-menu a { display: block; padding: 9px 12px; border-radius: 9px; color: var(--ink); font-size: 14.5px; font-weight: 600; text-decoration: none; }
-            .topbar .about .about-menu a:hover { background: #f1f7fb; color: var(--primary); }
-        </style>
-        <?php endif; ?>
+        <?php engage_about_menu($about); ?>
         <div class="tools">
             <?php if ($tools !== null): ?>
                 <?= $tools ?>
@@ -160,6 +143,34 @@ function engage_about_links(bool $withContact = false): array {
     $site = engage_safe_url($c['site']);
     if ($site !== '') $out[] = ['Main website (' . $c['site_label'] . ')', $site];
     return $out;
+}
+
+/**
+ * Renders the "About DCW" dropdown inside the hero top bar.
+ * Used by engage_header() and by the public home page. Prints nothing when $about is empty.
+ * Needs the CSS variables --border, --ink and --primary (engage.css and home.php both define them).
+ */
+function engage_about_menu(array $about): void {
+    if (!$about) return;
+    $e = fn($s) => htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8');
+    ?>
+    <details class="about" id="about-menu">
+        <summary class="chip-btn">About DCW <span aria-hidden="true">&#9662;</span></summary>
+        <div class="about-menu">
+            <?php foreach ($about as [$name, $href]): ?>
+                <a href="<?= $e($href) ?>" rel="noopener"><?= $e($name) ?></a>
+            <?php endforeach; ?>
+        </div>
+    </details>
+    <style>
+        .topbar .about { position: relative; margin: 0 auto 0 14px; }
+        .topbar .about summary { list-style: none; cursor: pointer; }
+        .topbar .about summary::-webkit-details-marker { display: none; }
+        .topbar .about .about-menu { position: absolute; z-index: 30; top: calc(100% + 8px); left: 0; min-width: 220px; padding: 8px; background: #fff; border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 16px 34px rgba(15,23,42,.18); }
+        .topbar .about .about-menu a { display: block; padding: 9px 12px; border-radius: 9px; color: var(--ink); font-size: 14.5px; font-weight: 600; text-decoration: none; }
+        .topbar .about .about-menu a:hover { background: #f1f7fb; color: var(--primary); }
+    </style>
+    <?php
 }
 
 function engage_footer() {
