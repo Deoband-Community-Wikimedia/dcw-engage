@@ -101,23 +101,23 @@ class MembershipMailer {
 
         // Opening line, as plain text with the club name left to be escaped by each version.
         $thanks = $renewal
-            ? 'Thanks for renewing your membership with %s'
-            : 'Thanks for your interest in joining %s';
+            ? 'Thank you for renewing your membership with %s'
+            : 'Thank you for your interest in joining %s';
 
         if ($decision === 'approved') {
             $until = $hasDetail ? date('j M Y', strtotime($detail)) : '';
             $id = htmlspecialchars((string) $memberId, ENT_QUOTES, 'UTF-8');
             $subject = $renewal
-                ? "Your $org membership is renewed"
+                ? "Your $org membership renewal is confirmed"
                 : "Welcome to $org: your membership is confirmed";
             $good = $renewal
-                ? "Good news: your renewal is confirmed, and we're glad to keep you with us!"
-                : "Good news: your membership is confirmed, and we're glad to have you with us!";
+                ? "We are delighted to confirm that your renewal has been approved. Thank you for continuing your journey with us."
+                : "We are thrilled to confirm that your application has been approved. Welcome to our open knowledge community!";
             $keep = $renewal
-                ? "Your member ID stays the same. Keep it handy for next time."
+                ? "Your Member ID remains unchanged. Please keep it handy for accessing your dashboard and future renewals."
                 : ($sharedId
-                    ? "This is the same Member ID you already use for the DCW Generic Community, so you keep a single ID for all your memberships. Both appear on your dashboard."
-                    : "Keep your member ID handy: you'll need it when you renew.");
+                    ? "This membership has been linked to your existing Member ID. You can now conveniently access and manage all your memberships using this single ID."
+                    : "Please store your Member ID safely. You will need it to sign in to DCW Engage and access your membership benefits.");
 
             // Password section. New members (token given) are told to set a password and get the
             // button; renewing members who already have one are told their login still works.
@@ -128,17 +128,17 @@ class MembershipMailer {
                 $safeUrl = htmlspecialchars($url, ENT_QUOTES, 'UTF-8');
                 $pwHtml = "
                 <h2 style='font-size:18px; margin:28px 0 8px; color:#106b9a;'>Next step: set your password</h2>
-                <p>To log in to DCW Engage you need a password. Use the button below to choose one. After that, you can sign in with your Member ID <strong>$id</strong> and your new password to see your membership and request support.</p>
+                <p>To access DCW Engage, please set your account password using the button below. Once configured, you can sign in with your Member ID <strong>$id</strong> to view your membership details, retrieve your digital cards, and access community resources.</p>
                 <div class='btn-wrapper'><a href='$safeUrl' class='btn'>Set my password</a></div>
-                <p style='font-size:14px;'>If the button doesn't work, copy and paste this link into your browser:<br>
+                <p style='font-size:14px;'>If the button does not work, copy and paste this link into your browser:<br>
                    <a href='$safeUrl' style='color:#106b9a; word-break:break-all;'>$safeUrl</a></p>
-                <p style='font-size:14px; color:#64748b;'>This link is private to you, works once and will expire, so please set your password soon and don't share the link.</p>";
-                $pwText = "\n\nNEXT STEP: SET YOUR PASSWORD\nTo log in to DCW Engage you need a password. Choose one using this link, then sign in with your Member ID $memberId and your new password to see your membership and request support:\n$url\n\nThis link is private to you, works once and will expire, so please set your password soon and don't share the link.";
+                <p style='font-size:14px; color:#64748b;'>This link is private to you, works once, and will expire shortly. Please set your password promptly and do not share this email.</p>";
+                $pwText = "\n\nNEXT STEP: SET YOUR PASSWORD\nTo access DCW Engage, please set your account password using the link below. Once configured, you can sign in with your Member ID $memberId to view your membership details and access community resources:\n$url\n\nThis link is private to you, works once, and will expire shortly. Please set your password promptly and do not share this email.";
             } else {
                 // No fresh link (renewing member, a club joined under an existing ID, or a link
                 // could not be created): still advise.
-                $pwHtml = "<p><strong>Password:</strong> sign in to DCW Engage with your Member ID <strong>$id</strong> and your password. If you haven't set a password yet, or have forgotten it, choose \"Forgot password\" on the sign-in page and we'll email you a link.</p>";
-                $pwText = "\n\nPASSWORD: sign in to DCW Engage with your Member ID $memberId and your password. If you haven't set a password yet, or have forgotten it, choose \"Forgot password\" on the sign-in page and we'll email you a link.";
+                $pwHtml = "<p><strong>Sign in:</strong> You can log in to DCW Engage using your Member ID <strong>$id</strong> and existing password. If you have not set a password yet or need to reset it, simply select \"Forgot password\" on the sign-in page.</p>";
+                $pwText = "\n\nSIGN IN: You can log in to DCW Engage using your Member ID $memberId and existing password. If you have not set a password yet or need to reset it, simply select \"Forgot password\" on the sign-in page.";
             }
 
             $inner = "
@@ -148,23 +148,23 @@ class MembershipMailer {
                     <strong>Member ID:</strong> <span style='font-family:Menlo,Consolas,monospace; letter-spacing:1px;'>$id</span>" . ($until ? "<br><strong>Valid until:</strong> $until" : '') . "
                 </div>
                 <p>$keep</p>
-                " . ($passwordToken ? "<p style='background:#fffbeb; border:1px solid #fcd34d; border-radius:6px; padding:12px 16px;'><strong>Important:</strong> please set your password below so you can log in to DCW Engage.</p>" : '') . "
+                " . ($passwordToken ? "<p style='background:#fffbeb; border:1px solid #fcd34d; border-radius:6px; padding:12px 16px;'><strong>Important:</strong> Please set your password below to complete your account activation.</p>" : '') . "
                 $pwHtml
                 " . self::signHtml($chapter);
             $alt = "Hello $name,\n\n" . sprintf($thanks, $org) . ". $good\n\nMember ID: $memberId"
-                 . ($until ? "\nValid until: $until" : '') . "\n\n$keep" . ($passwordToken ? "\n\nIMPORTANT: please set your password below so you can log in to DCW Engage." : '') . $pwText . "\n\n" . self::signText($chapter);
+                 . ($until ? "\nValid until: $until" : '') . "\n\n$keep" . ($passwordToken ? "\n\nIMPORTANT: Please set your password below to complete your account activation." : '') . $pwText . "\n\n" . self::signText($chapter);
         } else {
             $subject = $renewal
-                ? "Your $org membership renewal"
-                : "Your $org membership application";
+                ? "Update regarding your $org membership renewal"
+                : "Update regarding your $org membership application";
             $sorry = $renewal
-                ? "and for the time you put into your renewal. After review, we're not able to approve it at this time."
-                : "and for the time you put into your application. After review, we're not able to approve your membership at this time.";
+                ? "and for taking the time to submit your renewal. Following careful consideration, we regret to inform you that we are unable to approve your renewal at this time."
+                : "and for taking the time to submit your application. Following careful consideration, we regret to inform you that we are unable to approve your membership at this time.";
             $close = $renewal
-                ? "We appreciate your interest in staying part of the community."
-                : "We appreciate your interest and hope our paths cross again.";
+                ? "We sincerely appreciate your ongoing support and hope to see your continued engagement in future community initiatives."
+                : "We sincerely appreciate your interest in our initiatives and hope our paths cross again in future open knowledge endeavours.";
             $reason = $hasDetail
-                ? "<p><strong>Reviewer notes:</strong><br>" . nl2br(htmlspecialchars((string) $detail, ENT_QUOTES, 'UTF-8')) . "</p>" : '';
+                ? "<p><strong>Reviewer feedback:</strong><br>" . nl2br(htmlspecialchars((string) $detail, ENT_QUOTES, 'UTF-8')) . "</p>" : '';
             $inner = "
                 <p>Hello <strong>$n</strong>,</p>
                 <p>" . sprintf($thanks, "<strong>$safeOrg</strong>") . ", $sorry</p>
@@ -172,7 +172,7 @@ class MembershipMailer {
                 <p>$close</p>
                 " . self::signHtml($chapter);
             $alt = "Hello $name,\n\n" . sprintf($thanks, $org) . ", $sorry"
-                 . ($hasDetail ? "\n\nReviewer notes:\n$detail" : '')
+                 . ($hasDetail ? "\n\nReviewer feedback:\n$detail" : '')
                  . "\n\n$close\n\n" . self::signText($chapter);
         }
 
@@ -227,26 +227,26 @@ class MembershipMailer {
         $safeOrg = htmlspecialchars($org, ENT_QUOTES, 'UTF-8');
 
         $thanks = $renewal
-            ? 'Thanks for renewing your membership with %s'
-            : 'Thanks for your interest in joining %s';
+            ? 'Thank you for renewing your membership with %s'
+            : 'Thank you for your interest in joining %s';
         $looked = $renewal
-            ? "We've looked at your renewal and need one more thing from you before we can decide:"
-            : "We've looked at your application and need one more thing from you before we can decide:";
+            ? "We have reviewed your renewal details and require a quick piece of additional information before we can proceed:"
+            : "We have reviewed your application details and require a quick piece of additional information before we can proceed:";
         $subject = $renewal
-            ? "One more step for your $org membership renewal"
-            : "One more step for your $org membership application";
+            ? "Action required: additional details for your $org renewal"
+            : "Action required: additional details for your $org application";
 
         $inner = "
             <p>Hello <strong>$n</strong>,</p>
             <p>" . sprintf($thanks, "<strong>$safeOrg</strong>") . ". $looked</p>
             <p style='border-left:3px solid #106b9a; padding-left:14px;'>$m</p>
             <div class='btn-wrapper'><a href='$safeUrl' class='btn'>Update my application</a></div>
-            <p>If the button doesn't work, copy and paste this link into your browser:<br><br>
+            <p>If the button does not work, copy and paste this link into your browser:<br><br>
                <a href='$safeUrl' style='color: #106b9a; word-break: break-all;'>$safeUrl</a></p>
-            <p>This link is private to you and will expire, so please don't share it.</p>
+            <p>This private link will expire shortly, so please complete your update soon and do not share it.</p>
             " . self::signHtml($chapter);
 
-        $alt = "Hello $name,\n\n" . sprintf($thanks, $org) . ". $looked\n\n$message\n\nUpdate your application here:\n$url\n\nThis link is private to you and will expire, so please don't share it.\n\n" . self::signText($chapter);
+        $alt = "Hello $name,\n\n" . sprintf($thanks, $org) . ". $looked\n\n$message\n\nPlease update your application here:\n$url\n\nThis private link will expire shortly, so please complete your update soon and do not share it.\n\n" . self::signText($chapter);
 
         return self::send($email, $name, $subject, $inner, $alt, $chapter);
     }
@@ -269,28 +269,28 @@ class MembershipMailer {
 
         if ($purpose === 'reset') {
             $subject = 'Reset your DCW Engage password';
-            $intro = "We got a request to reset the password for Member ID <strong>$id</strong>. Choose a new one with the button below.";
-            $introText = "We got a request to reset the password for Member ID $memberId. Choose a new one here:";
+            $intro = "We received a request to reset the password associated with Member ID <strong>$id</strong>. You can choose a new password by clicking the button below.";
+            $introText = "We received a request to reset the password associated with Member ID $memberId. You can choose a new password here:";
             $button = 'Choose a new password';
-            $ignore = "Didn't ask for this? You can ignore this email. Your password stays as it is.";
+            $ignore = "If you did not request a password reset, you can safely ignore this email. Your account credentials will remain unchanged.";
         } else {
             $subject = 'Set your password for DCW Engage';
-            $intro = "Welcome to <strong>$safeOrg</strong>! One last step: choose a password, and you can log in to DCW Engage with your Member ID <strong>$id</strong>.";
-            $introText = "Welcome to $org! One last step: choose a password, and you can log in to DCW Engage with your Member ID $memberId. Set it here:";
+            $intro = "Welcome to <strong>$safeOrg</strong>! To complete your account setup, please choose a password so you can sign in to DCW Engage with your Member ID <strong>$id</strong>.";
+            $introText = "Welcome to $org! To complete your account setup, please choose a password so you can sign in to DCW Engage with your Member ID $memberId. Set it here:";
             $button = 'Set my password';
-            $ignore = "Didn't expect this email? You can ignore it.";
+            $ignore = "If you were not expecting this email, you can safely ignore it.";
         }
 
         $inner = "
             <p>Hello <strong>$n</strong>,</p>
             <p>$intro</p>
             <div class='btn-wrapper'><a href='$safeUrl' class='btn'>$button</a></div>
-            <p>If the button doesn't work, copy and paste this link into your browser:<br><br>
+            <p>If the button does not work, copy and paste this link into your browser:<br><br>
                <a href='$safeUrl' style='color: #106b9a; word-break: break-all;'>$safeUrl</a></p>
-            <p>This link is private to you, works once and will expire, so please don't share it. $ignore</p>
+            <p>This single-use link is private to you and will expire shortly. $ignore</p>
             " . self::signHtml($chapter);
 
-        $alt = "Hello $name,\n\n$introText\n$url\n\nThis link is private to you, works once and will expire, so please don't share it. $ignore\n\n" . self::signText($chapter);
+        $alt = "Hello $name,\n\n$introText\n$url\n\nThis single-use link is private to you and will expire shortly. $ignore\n\n" . self::signText($chapter);
 
         return self::send($email, $name, $subject, $inner, $alt, $chapter);
     }
@@ -324,19 +324,19 @@ class MembershipMailer {
         $holdsThis = $verifyUrl === null;
         $thisName  = self::org($chapter);
         $subject   = $holdsThis
-            ? 'You already have a DCW account'
-            : 'You already have a DCW account: continue your application';
+            ? 'DCW Engage account details'
+            : 'DCW Engage: continue your application';
 
         $idHtml = implode(', ', array_map($e, $ids));
         $idText = implode(', ', $ids);
         $expiryText = $expiresAt ? date('j M Y, g:i a', strtotime((string) $expiresAt)) : '';
 
         $intro = $holdsThis
-            ? "Someone (hopefully you) tried to apply for <strong>" . $e($thisName) . "</strong> using this email address. You are already a member, so there is no need to apply again."
-            : "Someone (hopefully you) started an application for <strong>" . $e($formTitle) . "</strong> using this email address. You already have a DCW account, and joining another chapter keeps your existing Member ID.";
+            ? "An application for <strong>" . $e($thisName) . "</strong> was initiated using this email address. As you are already an active member, there is no need to submit another application."
+            : "An application for <strong>" . $e($formTitle) . "</strong> was initiated using this email address. Since you already hold a DCW account, joining an additional chapter will seamlessly connect to your existing Member ID.";
         $introText = $holdsThis
-            ? "Someone (hopefully you) tried to apply for $thisName using this email address. You are already a member, so there is no need to apply again."
-            : "Someone (hopefully you) started an application for $formTitle using this email address. You already have a DCW account, and joining another chapter keeps your existing Member ID.";
+            ? "An application for $thisName was initiated using this email address. As you are already an active member, there is no need to submit another application."
+            : "An application for $formTitle was initiated using this email address. Since you already hold a DCW account, joining an additional chapter will seamlessly connect to your existing Member ID.";
 
         $inner = "
             <p>Hello <strong>" . $e($name) . "</strong>,</p>
@@ -345,23 +345,23 @@ class MembershipMailer {
                 <strong>Member ID:</strong> <span style='font-family:Menlo,Consolas,monospace; letter-spacing:1px;'>$idHtml</span>
                 <ul style='margin:10px 0 0; padding-left:20px;'>$rowsHtml</ul>
             </div>
-            <p><strong>To sign in</strong>, use your Member ID and password. If you have forgotten your password or never set one, choose <em>Forgot password</em> on the sign-in page and we will email you a link.</p>
+            <p><strong>To sign in:</strong> Enter your Member ID and password. If you have not set a password yet or need to reset it, simply select <em>Forgot password</em> on the sign-in page.</p>
             <div class='btn-wrapper'><a href='" . $e($login) . "' class='btn'>Go to sign in</a></div>"
             . ($holdsThis
                 ? "<p>If your membership has expired, you can <a href='" . $e($renew) . "' style='color:#106b9a;'>renew it here</a>.</p>"
-                : "<p>To continue with your application, open the link below in this browser. It works once and expires on " . $e($expiryText) . ".</p>
+                : "<p>To continue with your application, please open the link below in your browser. This single-use link will expire on " . $e($expiryText) . ".</p>
                    <div class='btn-wrapper'><a href='" . $e($verifyUrl) . "' class='btn'>Continue my application</a></div>
-                   <p style='font-size:14px;'>If the button doesn't work, copy and paste this link into your browser:<br>
+                   <p style='font-size:14px;'>If the button does not work, copy and paste this link into your browser:<br>
                    <a href='" . $e($verifyUrl) . "' style='color:#106b9a; word-break:break-all;'>" . $e($verifyUrl) . "</a></p>")
-            . "<p style='font-size:14px; color:#64748b;'>Didn't do this? You can ignore this email. Nothing has changed on your account.</p>"
+            . "<p style='font-size:14px; color:#64748b;'>If you did not initiate this request, you can safely ignore this email. Your account remains secure and unchanged.</p>"
             . self::signHtml(null);
 
         $alt = "Hello $name,\n\n$introText\n\nMember ID: $idText\n$rowsText\n"
-             . "To sign in, use your Member ID and password. If you have forgotten your password or never set one, choose \"Forgot password\" on the sign-in page:\n$login\n\n"
+             . "To sign in, enter your Member ID and password. If you have not set a password yet or need to reset it, select \"Forgot password\" on the sign-in page:\n$login\n\n"
              . ($holdsThis
-                ? "If your membership has expired, renew it here:\n$renew\n\n"
-                : "To continue with your application, open this link in this browser (works once, expires $expiryText):\n$verifyUrl\n\n")
-             . "Didn't do this? You can ignore this email. Nothing has changed on your account.\n\n" . self::signText(null);
+                ? "If your membership has expired, you can renew it here:\n$renew\n\n"
+                : "To continue with your application, please open this link (single-use, expires $expiryText):\n$verifyUrl\n\n")
+             . "If you did not initiate this request, you can safely ignore this email. Your account remains secure and unchanged.\n\n" . self::signText(null);
 
         return self::send($email, $name, $subject, $inner, $alt, null);
     }
