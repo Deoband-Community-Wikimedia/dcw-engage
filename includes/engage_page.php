@@ -43,7 +43,7 @@ function engage_header(array $o) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#0c567a">
     <title><?= $e($title) ?> - DCW Engage</title>
-    <?php require __DIR__ . '/favicon.php'; ?>
+    <?php ob_start(); require __DIR__ . '/favicon.php'; echo engage_strip_social_images(ob_get_clean()); ?>
     <?php if (!engage_is_staff_path()) engage_social_meta([
         'title'       => $title . ' - DCW Engage',
         'description' => $o['description'] ?? null,
