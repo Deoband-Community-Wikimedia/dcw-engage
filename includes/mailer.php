@@ -10,14 +10,14 @@
 //   InternetSupportMail.php  internet support: verification, received, status (incl. Info Requested)
 //   MemberSupportMail.php    member conversations with DCW Support: "you have a reply" / "status changed"
 //                            notifications (never contain the message text or any staff name)
+//   membership_mailer.php    membership emails (class MembershipMailer): club-specific wording, From name and reply-to
 //
 // Every existing `Mailer::sendX(...)` call keeps working unchanged: this class
 // only forwards. New code can call the subject class directly. To add an email,
 // put it in the matching subject class (or a new file under includes/mail/) and,
 // if old-style callers need it, add a one-line forwarder here.
 //
-// includes/membership_mailer.php is unchanged (club-specific wording and
-// reply-to). It could adopt CoreMail later.
+// MembershipMailer has no forwarders here: call it directly, e.g. MembershipMailer::sendDecisionFor(...).
 
 require_once __DIR__ . '/mail/CoreMail.php';
 require_once __DIR__ . '/mail/ApplicationMail.php';
@@ -25,6 +25,7 @@ require_once __DIR__ . '/mail/OrganizerAccountMail.php';
 require_once __DIR__ . '/mail/ReimbursementMail.php';
 require_once __DIR__ . '/mail/InternetSupportMail.php';
 require_once __DIR__ . '/mail/MemberSupportMail.php';
+require_once __DIR__ . '/mail/membership_mailer.php';
 
 class Mailer {
     public static function formatExpiryIST($utcDatetime) { return CoreMail::formatExpiryIST($utcDatetime); }
