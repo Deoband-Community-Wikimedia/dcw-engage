@@ -4,10 +4,12 @@ require_once __DIR__ . '/../../includes/auth.php';
 require_once __DIR__ . '/../../includes/require_role.php';
 require_once __DIR__ . '/../../models/FormModel.php';
 
-// Creating and editing forms (and their schemas) is for organizers and
-// owners only. Before this, any signed-in account could open the builder.
+// Creating and editing forms (and their schemas): organizers and owners for ordinary forms.
+// Membership coordinators get in too, but only for membership forms of their OWN chapters
+// (FormModel::userCanEdit decides, for the form being edited and for the slug being saved).
+// Before this, any signed-in account could open the builder.
 Auth::requireLogin();
-requireRole(['owner', 'organizer']);
+requireRole(['owner', 'organizer', 'membership_coordinator']);
 
 $formModel = new FormModel();
 
@@ -20,8 +22,9 @@ $existingNotifyEmails = '';
 if (isset($_GET['edit'])) {
     $form = $formModel->getFormById($_GET['edit']);
     // Same response for "missing" and "not yours to open", so nobody can tell
-    // whether a form they can't edit exists. Membership forms: owner only here.
-    if (!$form || !FormModel::userCanOpen($form)) {
+    // whether a form they can't edit exists. Membership forms: owners, and
+    // coordinators of that form's chapter.
+    if (!$form || !FormModel::userCanEdit($form)) {
         http_response_code(404);
         die("Form not found.");
     }
@@ -46,12 +49,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // one being edited (see #56).
     $formId = !empty($_POST['form_id']) ? (int)$_POST['form_id'] : null;
 
-    // The form being edited must be one this user may open. This is checked
+    // The form being edited must be one this user may edit. This is checked
     // on the POST itself, not just on page load, since a crafted POST skips
     // the page.
     if ($formId) {
         $target = $formModel->getFormById($formId);
-        if (!$target || !FormModel::userCanOpen($target)) {
+        if (!$target || !FormModel::userCanEdit($target)) {
             http_response_code(404);
             die("Form not found.");
         }
@@ -76,10 +79,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $error = "Form type and schema are required.";
     } elseif (!preg_match('/^[a-z0-9_-]+$/', $formType)) {
         $error = "Invalid URL Slug. Use only lowercase letters, numbers, hyphens, and underscores.";
-    } elseif (!FormModel::userCanOpen(['form_type' => $formType])) {
+    } elseif (!FormModel::userCanEdit(['form_type' => $formType])) {
         // The NEW slug counts too: otherwise an organizer could rename a form
-        // into a membership slug, or create one, and bypass the rule above.
-        $error = "That URL slug is reserved for membership forms.";
+        // into a membership slug (or a coordinator into another chapter's), or
+        // create one, and bypass the rule above.
+        $error = htmlspecialchars(FormModel::editDeniedMessage($formType));
     } elseif ($badEmail !== null) {
         $error = "Notification email '" . htmlspecialchars($badEmail) . "' is not a valid address.";
     } else {
@@ -114,6 +118,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
     }
+}
+
+// Slug examples for a membership coordinator, built from the chapters they are assigned to.
+$slugHint = '';
+$coordChapters = FormModel::coordinatorChapters();
+if ($coordChapters) {
+    $examples = array_map(fn($c) => 'membership-' . $c . ' or membership-renewal-' . $c . '-2027', $coordChapters);
+    $slugHint = 'Membership forms for your chapters must start with: ' . implode('; ', $examples) . '.';
 }
 ?>
 <!DOCTYPE html>
@@ -158,6 +170,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <label>URL Slug (Identifier)</label>
                 <input type="text" name="form_type" id="form_type" required placeholder="e.g. fellowship-2026" style="margin-bottom: 0;">
                 <span style="font-size: 13px; color: #64748b; margin-top: 5px; display:block;">Users will access this form at: /&lt;slug&gt;</span>
+                <?php if ($slugHint): ?>
+                    <span style="font-size: 13px; color: #0369a1; margin-top: 5px; display:block;"><?= htmlspecialchars($slugHint) ?></span>
+                <?php endif; ?>
 
                 <label style="margin-top: 20px; display:block;">Alert Emails (Optional)</label>
                 <input type="text" name="notify_emails" id="notify_emails" placeholder="e.g. clublead@dcwwiki.org, coordinator@dcwwiki.org" value="<?= htmlspecialchars($existingNotifyEmails, ENT_QUOTES) ?>" style="margin-bottom: 0;">

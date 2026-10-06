@@ -37,12 +37,15 @@ try {
 
 // Who gets the forms grid, and which forms they see. Mirrors
 // FormModel::userCanOpen(), which form_manager.php enforces:
-//   membership forms -> membership_reviewer, owner
+//   membership forms -> membership_reviewer, owner (all chapters);
+//                       membership_coordinator (their own chapters only)
 //   other forms      -> organizer, owner
 // Hiding tiles is tidiness, not security.
-$canManageForms        = Auth::hasAnyRole(['organizer', 'owner']);   // also gates "Create a blank form"
-$canSeeMembershipForms = Auth::hasAnyRole(['membership_reviewer', 'owner']);
-$showFormsGrid         = $canManageForms || $canSeeMembershipForms;
+$canManageForms        = Auth::hasAnyRole(['organizer', 'owner']);
+$isCoordinator         = Auth::hasAnyRole(['membership_coordinator']);
+$canSeeMembershipForms = Auth::hasAnyRole(['membership_reviewer', 'owner']) || $isCoordinator;
+$canCreateForms        = $canManageForms || $isCoordinator;   // gates "Create a blank form"; the builder limits a coordinator to their chapters
+$showFormsGrid         = $canCreateForms || $canSeeMembershipForms;
 
 // Only a pure coordinator is limited to chapters; a reviewer sees them all.
 $chapterLimited = Auth::hasAnyRole(['membership_coordinator'])
@@ -161,12 +164,12 @@ function form_tile(array $icons, array $form): void
         <section class="panel">
             <div class="panel-head">
                 <h2>Application forms</h2>
-                <p><?= $canManageForms
+                <p><?= $canCreateForms
                     ? 'Create, open and close the forms volunteers apply through, and review responses.'
                     : 'Review responses to membership forms.' ?></p>
             </div>
             <div class="tiles">
-                <?php if ($canManageForms): ?>
+                <?php if ($canCreateForms): ?>
                 <a href="/admin/builder" class="tile new" style="--tone: #106b9a;">
                     <span class="tick"><svg viewBox="0 0 24 24" aria-hidden="true"><?= $icons['plus'] ?></svg></span>
                     <span><h3>Create a blank form</h3></span>
