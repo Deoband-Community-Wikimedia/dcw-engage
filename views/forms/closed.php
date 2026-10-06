@@ -2,8 +2,10 @@
 /**
  * Shown when a form exists but has been closed by an organizer.
  * Expects $closedTitle to be set by the caller (renderer.php).
+ *
+ * engage_page.php is already loaded by renderer.php before this file is
+ * included, so it is not required again here.
  */
-require_once __DIR__ . '/../includes/engage_page.php';
 
 $closedTitle = $closedTitle ?? 'This form';
 
