@@ -87,7 +87,7 @@ $galleryImages = [
 $gallery = [];
 foreach ($galleryImages as $g) {
     if (!empty($g['commons'])) {
-        $g['src'] = engage_resolve_image($g['commons'], 640);
+        $g['src'] = engage_resolve_image($g['commons'], 960);
         if (empty($g['credit'])) {
             $c = engage_commons_credit($g['commons']);
             if ($c) {
