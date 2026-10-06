@@ -47,14 +47,19 @@ if (!empty($previewSchema)) {
         $inactiveForm = $formModel->getAnyFormByType($formType);
 
         if ($inactiveForm) {
-            http_response_code(403);
+            // Do NOT send 403 here. Hosts, CDNs and browsers treat a 403 as a block
+            // and replace the body with their own error page (Chrome's "Access to
+            // ... was denied"), so closed.php never reaches the visitor. Send 200;
+            // closed.php already adds "X-Robots-Tag: noindex" so it stays out of
+            // search results.
+            http_response_code(200);
             $closedTitle = $inactiveForm['schema']['title'] ?? 'This form';
             require __DIR__ . '/closed.php';
         } else {
             http_response_code(404);
             require __DIR__ . '/not_found.php';
         }
-        die();
+        exit;
     }
 }
 
