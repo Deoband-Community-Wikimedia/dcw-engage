@@ -5,7 +5,7 @@ require_once __DIR__ . '/../../includes/wikitext.php';
 require_once __DIR__ . '/../../includes/app_log.php';
 require_once __DIR__ . '/../../includes/engage_page.php';
 require_once __DIR__ . '/../../models/MemberModel.php';
-require_once __DIR__ . '/../../includes/membership_mailer.php';
+require_once __DIR__ . '/../../includes/mail/membership_mailer.php';
 
 // Organizers only work with application forms, so they are not in this list.
 requireRole(['membership_coordinator', 'membership_reviewer', 'owner']);
