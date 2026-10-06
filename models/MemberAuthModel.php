@@ -6,9 +6,11 @@
  * password they choose themselves. Nobody is ever given a password: after approval the member
  * gets a one-time link to set one, and the same kind of link handles "forgot password".
  *
- * One Member ID can cover several memberships (the DCW Generic Community plus clubs), so several
- * members rows can share it. The Generic Community row is the PRIMARY row: it holds the password
- * and is the one used for login, password reset and set-password links.
+ * One Member ID can cover several memberships (the DCW Generic Community plus clubs, joined in
+ * any order), so several members rows can share it. The PRIMARY row is the one that holds the
+ * password (the first membership approved under the ID). If none has a password yet, the Generic
+ * Community row, then the oldest row, is used. It is the row used for login, password reset and
+ * set-password links, so joining another chapter later never moves or loses the password.
  *
  * Needs sql/member_login.sql (extra columns on members + member_password_tokens).
  * This class only deals with credentials; sessions, pages and CSRF belong in the views.
@@ -81,12 +83,14 @@ class MemberAuthModel {
     }
 
     /**
-     * The row used for login under a Member ID. With a shared ID the Generic Community row is
-     * the primary one (it holds the password), so the result never depends on row order.
+     * The row used for login under a Member ID. With a shared ID, the row that already holds the
+     * password wins (so a chapter joined later, in any order, never takes over and loses the
+     * password); otherwise the Generic Community row, then the oldest. Never depends on row order.
      */
     public function findByMemberId(string $memberId): ?array {
         $st = $this->db->prepare("SELECT * FROM members WHERE member_id = :m
-            ORDER BY (chapter = 'generic') DESC, id ASC LIMIT 1");
+            ORDER BY (password_hash IS NOT NULL AND password_hash <> '') DESC,
+                     (chapter = 'generic') DESC, id ASC LIMIT 1");
         $st->execute(['m' => self::normaliseId($memberId)]);
         $row = $st->fetch();
         return $row ?: null;
@@ -208,8 +212,8 @@ class MemberAuthModel {
     /**
      * Called right after an approval: if the member has no password yet, make a 'set' link for them
      * and return ['member' => row, 'token' => raw token] to email. Returns null when they already have
-     * a password (a renewal, or a club joined under an existing Member ID), so those members are not
-     * asked to set one again.
+     * a password (a renewal, or another chapter joined under an existing Member ID), so those members
+     * are not asked to set one again.
      */
     public function setLinkIfNeeded(string $memberId): ?array {
         $m = $this->findByMemberId($memberId);
