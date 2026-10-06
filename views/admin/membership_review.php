@@ -415,7 +415,15 @@ engage_header([
         <div class="empty-note">This application has been decided and is locked.</div>
     <?php endif; ?>
 
-<?php else: $rows = $model->listApplications($fSlug, $fStatus, $scope); ?>
+<?php else:
+    $rows = $model->listApplications($fSlug, $fStatus, $scope);
+    // Accepted applications live in their own section below, with the Member ID each person was assigned.
+    $queue = array_values(array_filter($rows, fn($r) => $r['status'] !== 'Accepted'));
+    $accepted = array_values(array_filter($rows, fn($r) => $r['status'] === 'Accepted'));
+    usort($accepted, fn($a, $b) => strcmp((string) ($b['approved_at'] ?? $b['created_at']), (string) ($a['approved_at'] ?? $a['created_at'])));
+    $infoMap = $model->memberInfoMap();
+    $showQueue = $fStatus !== 'Accepted';
+    $showAccepted = $fStatus === '' || $fStatus === 'Accepted'; ?>
     <section class="sect">
         <form method="GET" class="filters">
             <select name="form"><option value="">All memberships</option>
@@ -446,11 +454,12 @@ engage_header([
             <button type="submit" id="bulkApply" class="btn-solid sm">Apply to selected</button>
         </form>
 
+        <?php if ($showQueue): ?>
         <div class="tbl-wrap">
         <table class="tbl"><thead><tr>
             <th class="pick"><input type="checkbox" id="pickAll" aria-label="Select all"></th>
             <th>Applicant</th><th>Membership</th><th>Status</th><th>Submitted</th><th>Update</th></tr></thead><tbody>
-        <?php foreach ($rows as $r):
+        <?php foreach ($queue as $r):
             $rowOpen = in_array($r['status'], MemberModel::OPEN, true);
             $kind = MemberModel::kindLabel($r, $held); ?>
             <tr>
@@ -478,15 +487,45 @@ engage_header([
                     </form>
                 <?php else: ?><span style="color:#94a3b8">&mdash;</span><?php endif; ?>
                 </td></tr>
-        <?php endforeach; if (!$rows): ?><tr><td colspan="6">No applications yet.</td></tr><?php endif; ?>
+        <?php endforeach; if (!$queue): ?><tr><td colspan="6">Nothing to review here.</td></tr><?php endif; ?>
         </tbody></table>
         </div>
+        <?php endif; ?>
     </section>
+
+    <?php if ($showAccepted): ?>
+    <section class="sect">
+        <h3 style="margin:0 0 4px; font-size:17px; font-weight:800;">Accepted members (<?= count($accepted) ?>)</h3>
+        <p class="qmeta" style="margin:0 0 14px;">Approved applications: the Member ID assigned, who approved it and when, and how long it is valid.</p>
+        <?php if (!$accepted): ?>
+            <div class="empty-note">No accepted memberships yet.</div>
+        <?php else: ?>
+        <div class="tbl-wrap">
+        <table class="tbl"><thead><tr>
+            <th>Member</th><th>Membership</th><th>Member ID</th><th>Approved by</th><th>Accepted</th><th>Valid until</th></tr></thead><tbody>
+        <?php foreach ($accepted as $r):
+            $info = $infoMap[strtolower((string) $r['email']) . '|' . (MemberModel::chapterOf($r) ?? '')] ?? null;
+            $mid = $info['member_id'] ?? ''; ?>
+            <tr>
+                <td><a class="dl" href="?id=<?= (int) $r['id'] ?>"><?= $h($r['applicant_name'] ?: $r['email']) ?></a>
+                    <span class="sub"><?= $h($r['email']) ?></span></td>
+                <td><?= $h($chapterLabel($r)) ?></td>
+                <td><?= $mid !== '' ? '<code>' . $h($mid) . '</code>' : '<span style="color:#94a3b8">&mdash;</span>' ?></td>
+                <td><?= !empty($r['approved_by']) ? $h($r['approved_by']) : '<span style="color:#94a3b8">&mdash;</span>' ?></td>
+                <td><?= !empty($r['approved_at']) ? $h(MemberAuthModel::formatIst($r['approved_at'])) : '<span style="color:#94a3b8">&mdash;</span>' ?></td>
+                <td><?= !empty($info['expires_at']) ? $h(MemberAuthModel::formatIst($info['expires_at'], 'j M Y')) : '<span style="color:#94a3b8">&mdash;</span>' ?></td>
+            </tr>
+        <?php endforeach; ?>
+        </tbody></table>
+        </div>
+        <?php endif; ?>
+    </section>
+    <?php endif; ?>
 
     <script>
     (function () {
         var bulkForm = document.getElementById('bulkForm');
-        var all = document.getElementById('pickAll');
+        var all = document.getElementById('pickAll') || { addEventListener: function () {}, style: {} };
         var rows = Array.prototype.slice.call(document.querySelectorAll('.pick-row:not(:disabled)'));
         var count = document.getElementById('bulkCount');
         var action = document.getElementById('bulkAction');
