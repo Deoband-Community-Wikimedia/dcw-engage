@@ -131,7 +131,12 @@ $about = engage_about_links(true);
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#0c567a">
     <title>DCW Engage — Applications &amp; Forms</title>
-    <meta name="description" content="The engagement hub for Deoband Community Wikimedia — scholarships, fellowships, volunteering, and more, all in one place.">
+    <?php engage_social_meta([
+        'title'       => 'DCW Engage — Applications & Forms',
+        'description' => 'Scholarships, fellowships, volunteering, membership and more from Deoband Community Wikimedia.',
+        'image'       => 'Group photo from DCW 5th Anniversary.jpg',   // Commons file name; change to any other photo
+        'image_alt'   => 'Group photo from the DCW 5th Anniversary',
+    ]); ?>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         :root {
