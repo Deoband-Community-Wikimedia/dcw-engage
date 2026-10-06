@@ -61,17 +61,35 @@ class MemberModel {
         return str_starts_with($app['form_type'], 'membership-renewal');
     }
 
+    /**
+     * Chapter named in a membership form's slug, or null when the slug does not name one.
+     *   membership-amu, membership-amu-2027           -> amu   (join forms)
+     *   membership-renewal-amu-2027                   -> amu   (a chapter's own renewal form)
+     *   membership-renewal-2026                       -> null  (the shared renewal form: chapter is an answer)
+     * Used for the chapter of an application AND for which forms a chapter coordinator may manage.
+     */
+    public static function chapterOfSlug(string $slug): ?string {
+        if (!str_starts_with($slug, 'membership-')) return null;
+        $rest = substr($slug, strlen('membership-'));
+        if (str_starts_with($rest, 'renewal-')) $rest = substr($rest, strlen('renewal-'));
+        foreach (self::CHAPTERS as $c) {
+            if ($rest === $c || str_starts_with($rest, $c . '-')) return $c;
+        }
+        return null;
+    }
+
     public static function chapterOf(array $app): ?string {
+        $fromSlug = self::chapterOfSlug((string) $app['form_type']);
         if (self::isRenewal($app)) {
-            $d = json_decode($app['form_data'] ?? '', true) ?: [];
+            if ($fromSlug !== null) return $fromSlug;   // a chapter's own renewal form
+            $d = json_decode($app['form_data'] ?? '', true) ?: [];   // the shared renewal form: read the answer
             $label = '';
             foreach (self::RENEWAL_CHAPTER_FIELDS as $key) {
                 if (!empty($d[$key])) { $label = trim((string) $d[$key]); break; }
             }
             return self::LABELS[$label] ?? null;
         }
-        $c = substr($app['form_type'], strlen('membership-'));
-        return in_array($c, self::CHAPTERS, true) ? $c : null;
+        return $fromSlug;
     }
 
     /**
