@@ -416,12 +416,16 @@ $isDraftPost = ($_POST['intent'] ?? '') === 'draft';
 $member = $loggedMember;
 
 engage_header([
-    'title'   => $schema['title'],
-    'heading' => $schema['title'],
-    'kicker'  => 'Application',
-    'lead'    => '',
-    'member'  => $member,
-    'crumbs'  => [['Home', '/'], [$schema['title']]],
+    'title'       => $schema['title'],
+    'heading'     => $schema['title'],
+    'kicker'      => 'Application',
+    'lead'        => '',
+    'member'      => $member,
+    'crumbs'      => [['Home', '/'], [$schema['title']]],
+    // Social preview: the banner is the thumbnail, the description is the preview text.
+    'description' => MiniWikiText::stripToPlainText($schema['description'] ?? ''),
+    'image'       => $schema['banner_image'] ?? null,
+    'image_alt'   => $schema['title'],
 ]);
 ?>
 <style>
@@ -430,8 +434,12 @@ engage_header([
     /* Long titles wrap evenly instead of running as one very wide line */
     .hero h1 { max-width: 880px; margin-left: auto; margin-right: auto; text-wrap: balance; }
 
-    /* Banner is the card's header image: flush with the card edges (card padding is 30px) */
-    .banner-img { display: block; width: calc(100% + 60px); max-width: none; height: auto; max-height: 260px; object-fit: cover; margin: -30px -30px 26px; border-radius: 16px 16px 0 0; }
+    /* Banner is the card's header image: flush with the card edges (card padding is 30px).
+       The credit line (for Commons images) sits right under it. */
+    .banner-fig { margin: -30px -30px 26px; }
+    .banner-img { display: block; width: 100%; height: auto; max-height: 260px; object-fit: cover; border-radius: 16px 16px 0 0; }
+    .banner-credit { padding: 6px 30px 0; font-size: 12px; color: var(--muted); text-align: right; }
+    .banner-credit a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
 
     /* Program description: readable body text, divided from the form below */
     .form-desc { margin: 0 0 26px; padding-bottom: 24px; border-bottom: 1px solid var(--border); color: var(--ink); font-size: 15.5px; line-height: 1.7; }
@@ -482,7 +490,10 @@ engage_header([
 
 <div class="fcard">
     <?php if (!empty($schema['banner_image'])): ?>
-        <img class="banner-img" src="<?= htmlspecialchars($schema['banner_image']) ?>" alt="">
+        <figure class="banner-fig">
+            <img class="banner-img" src="<?= htmlspecialchars(engage_resolve_image($schema['banner_image'], 1280)) ?>" alt="">
+            <?= engage_commons_caption($schema['banner_image']) ?>
+        </figure>
     <?php endif; ?>
 
     <?php if (!empty($previewSchema)): ?>
