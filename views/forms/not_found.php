@@ -1,8 +1,10 @@
 <?php
 /**
  * Shown when a requested form slug does not exist at all.
+ *
+ * engage_page.php is already loaded by renderer.php before this file is
+ * included, so it is not required again here.
  */
-require_once __DIR__ . '/../includes/engage_page.php';
 
 // The old page had <meta name="robots" content="noindex">; the shared header has no such
 // option, so send the equivalent as an HTTP header instead. The 404 status is also set here
