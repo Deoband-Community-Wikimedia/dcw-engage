@@ -392,8 +392,21 @@ engage_header([
 ?>
 <style>
     /* Application form only. Everything else comes from /assets/css/engage.css */
-    .banner-img { display: block; width: 100%; height: auto; max-height: 250px; object-fit: cover; border-radius: 16px; margin: 0 0 20px; }
-    .form-desc { color: var(--muted); font-size: 15px; line-height: 1.6; margin: 0 0 24px; }
+
+    /* Long titles wrap evenly instead of running as one very wide line */
+    .hero h1 { max-width: 880px; margin-left: auto; margin-right: auto; text-wrap: balance; }
+
+    /* Banner is the card's header image: flush with the card edges (card padding is 30px) */
+    .banner-img { display: block; width: calc(100% + 60px); max-width: none; height: auto; max-height: 260px; object-fit: cover; margin: -30px -30px 26px; border-radius: 16px 16px 0 0; }
+
+    /* Program description: readable body text, divided from the form below */
+    .form-desc { margin: 0 0 26px; padding-bottom: 24px; border-bottom: 1px solid var(--border); color: var(--ink); font-size: 15.5px; line-height: 1.7; }
+    .form-desc p { margin: 0 0 12px; }
+    .form-desc > :last-child { margin-bottom: 0; }
+    .form-desc ol, .form-desc ul { margin: 0 0 12px; padding-left: 22px; }
+    .form-desc li { margin: 0 0 6px; }
+    .form-desc h2, .form-desc h3, .form-desc h4 { margin: 22px 0 8px; padding: 0; border: 0; font-size: 17px; font-weight: 800; line-height: 1.3; }
+
     .boxed { background: #f8fafc; border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; margin: 0 0 24px; }
     .boxed .field { margin-bottom: 0; }
     .verified-line { margin: 0 0 16px; font-size: 14px; color: var(--muted); }
@@ -405,8 +418,12 @@ engage_header([
     .btnrow { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
     .fcard .btnrow button { width: auto; flex: 1 1 180px; }
     .error-text { display: block; margin-top: 6px; font-size: 13px; color: #b91c1c; }
-    .alert h3 { margin: 0 0 6px; font-size: 17px; }
+    .alert h3 { margin: 0 0 6px; padding: 0; border: 0; font-size: 17px; }
     .alert p { margin: 8px 0 0; font-size: 14px; }
+
+    /* Input types engage.css does not style yet */
+    .field input[type=url], .field input[type=time] { width: 100%; padding: 12px 14px; background: #fff; color: var(--ink); border: 1px solid var(--border); border-radius: 10px; font: inherit; font-size: 15px; }
+    .field input[type=url]:focus, .field input[type=time]:focus { outline: 2px solid var(--primary); outline-offset: -1px; border-color: transparent; }
 
     .opt { display: flex; align-items: flex-start; gap: 10px; margin: 0 0 8px; font-weight: 500; font-size: 15px; cursor: pointer; }
     .opt input { width: 17px; height: 17px; margin: 3px 0 0; accent-color: var(--primary); flex: none; }
@@ -429,11 +446,11 @@ engage_header([
     .fcard .dropzone-remove:hover:not(:disabled) { transform: none; box-shadow: none; background: #fef2f2; }
 </style>
 
-<?php if (!empty($schema['banner_image'])): ?>
-    <img class="banner-img" src="<?= htmlspecialchars($schema['banner_image']) ?>" alt="">
-<?php endif; ?>
-
 <div class="fcard">
+    <?php if (!empty($schema['banner_image'])): ?>
+        <img class="banner-img" src="<?= htmlspecialchars($schema['banner_image']) ?>" alt="">
+    <?php endif; ?>
+
     <?php if (!empty($previewSchema)): ?>
         <div class="action-banner" role="status">🔍 Preview — this is how the form will look. Submissions are disabled here.</div>
     <?php endif; ?>
@@ -532,7 +549,9 @@ engage_header([
                     $label = $field['label'] ?? $name;
                     $type = $field['type'] ?? 'text';
                     $required = !empty($field['required']) ? 'required' : '';
-                    $value = is_array($_POST[$name] ?? null) ? '' : htmlspecialchars($_POST[$name] ?? '');
+                    // Raw posted value (for comparisons) and its escaped twin (for printing).
+                    $rawValue = is_array($_POST[$name] ?? null) ? '' : (string) ($_POST[$name] ?? '');
+                    $value = htmlspecialchars($rawValue);
                     $fieldError = $errors[$name] ?? null;
                     $star = $required ? ' <span class="req-star">*</span>' : '';
                     $safeName = htmlspecialchars($name);
@@ -568,7 +587,7 @@ engage_header([
                                 <select name="<?= $safeName ?>" id="<?= $safeName ?>" <?= $required ?>>
                                     <option value="">-- Select --</option>
                                     <?php foreach ($field['options'] ?? [] as $opt): ?>
-                                        <option value="<?= htmlspecialchars($opt) ?>" <?= $value === $opt ? 'selected' : '' ?>>
+                                        <option value="<?= htmlspecialchars($opt) ?>" <?= $rawValue === $opt ? 'selected' : '' ?>>
                                             <?= htmlspecialchars($opt) ?></option>
                                     <?php endforeach; ?>
                                 </select>
