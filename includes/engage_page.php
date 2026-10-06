@@ -1,4 +1,6 @@
 <?php
+require_once __DIR__ . '/social_meta.php';
+
 /**
  * Compact DCW Engage page shell.
  * Usage: engage_header([...]); ...content...; engage_footer();
@@ -14,6 +16,10 @@
  *   crumbs   breadcrumb trail, e.g. [['Home','/'],['Support','/support'],['Reimbursement']].
  *            The last item is the current page (no link). A "Back" button pointing to the
  *            nearest linked crumb is added automatically. Defaults to Home > heading.
+ *   description  social preview text (optional; a default is used)
+ *   image        social preview image: a Commons file name or link, any URL, or a path (optional;
+ *                the default Commons photo in includes/social_meta.php is used)
+ *   image_alt    alt text for the preview image (defaults to the heading)
  */
 function engage_header(array $o) {
     $title   = $o['title'];
@@ -38,6 +44,12 @@ function engage_header(array $o) {
     <meta name="theme-color" content="#0c567a">
     <title><?= $e($title) ?> - DCW Engage</title>
     <?php require __DIR__ . '/favicon.php'; ?>
+    <?php if (!engage_is_staff_path()) engage_social_meta([
+        'title'       => $title . ' - DCW Engage',
+        'description' => $o['description'] ?? null,
+        'image'       => $o['image'] ?? null,
+        'image_alt'   => $o['image_alt'] ?? $heading,
+    ]); ?>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/assets/css/engage.css">
 </head>
