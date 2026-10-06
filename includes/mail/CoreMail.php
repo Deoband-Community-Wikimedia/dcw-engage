@@ -2,8 +2,8 @@
 // includes/mail/CoreMail.php
 //
 // The one place that knows how to talk to SMTP and how an email looks.
-// Every subject class (ApplicationMail, ReimbursementMail, ...) builds its own
-// wording and hands it to CoreMail::send(); none of them touch PHPMailer.
+// Every subject class (ApplicationMail, ReimbursementMail, MembershipMailer, ...) builds its
+// own wording and hands it to CoreMail::send(); none of them touch PHPMailer.
 //
 // Note: ensure `composer install` has been run for PHPMailer.
 if (file_exists(__DIR__ . '/../../vendor/autoload.php')) {
@@ -47,6 +47,11 @@ class CoreMail {
      *   subject     string        plain text, never HTML-escaped
      *   html        string        INNER html; already escaped by the caller
      *   alt         string        plain-text body
+     *   from_name   string        optional. Display name on the From line (default 'DCW Engage').
+     *                             The address is always the SMTP account's own mailbox.
+     *   reply_to    array         optional. [address, name] for a Reply-To header.
+     *   header_sub  string        optional. Small line under the title in the header
+     *                             (e.g. a club name). Plain text; escaped here.
      *   dev_result  bool          what to return when nothing is really sent
      *                             (PHPMailer missing, or the placeholder host
      *                             smtp.example.com). Senders whose callers show
@@ -85,7 +90,12 @@ class CoreMail {
                 $mail->SMTPSecure = $secure;
             }
 
-            $mail->setFrom($mailConfig['user'], 'DCW Engage');
+            // Same mailbox as always (that is what the SMTP account may send as);
+            // only the display name can change.
+            $mail->setFrom($mailConfig['user'], $o['from_name'] ?? 'DCW Engage');
+            if (!empty($o['reply_to'][0])) {
+                $mail->addReplyTo($o['reply_to'][0], (string) ($o['reply_to'][1] ?? ''));
+            }
             $name = count($to) === 1 ? (string) ($o['to_name'] ?? '') : '';
             foreach ($to as $address) {
                 $mail->addAddress($address, $name);
@@ -93,7 +103,7 @@ class CoreMail {
 
             $mail->isHTML(true);
             $mail->Subject = $o['subject'];   // plain text: never HTML-escape a subject line
-            $mail->Body    = self::template($o['html']);
+            $mail->Body    = self::template($o['html'], $o['header_sub'] ?? null);
             $mail->AltBody = $o['alt'];
 
             $mail->send();
@@ -109,8 +119,15 @@ class CoreMail {
         return "<div class='btn-wrapper'><a href='" . self::e($url) . "' class='btn'>" . self::e($label) . "</a></div>";
     }
 
-    /** The look shared by every DCW Engage email. $innerHtml must already be escaped by the caller. */
-    public static function template($innerHtml) {
+    /**
+     * The look shared by every DCW Engage email. $innerHtml must already be escaped by the caller.
+     * $headerSub (plain text, optional) is shown under the title, e.g. a club name.
+     */
+    public static function template($innerHtml, $headerSub = null) {
+        $subLine = ($headerSub !== null && $headerSub !== '')
+            ? "<div style='margin-top:6px; font-size:15px; opacity:0.9;'>" . self::e($headerSub) . "</div>"
+            : '';
+
         return "
         <!DOCTYPE html>
         <html>
@@ -129,7 +146,7 @@ class CoreMail {
         </head>
         <body>
             <div class='email-container'>
-                <div class='header'><h1>DCW Engage</h1></div>
+                <div class='header'><h1>DCW Engage</h1>$subLine</div>
                 <div class='body-content'>$innerHtml</div>
                 <div class='footer'>
                     &copy; " . date('Y') . " Deoband Community Wikimedia. All rights reserved.<br>
