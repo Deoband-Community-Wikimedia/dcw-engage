@@ -11,11 +11,12 @@ require_once __DIR__ . '/../models/MemberModel.php';   // static helpers only; n
  * Renewal runs on a per-term slug (UNIQUE(form_id, email) allows one
  * application per email per form). Change it once per cycle.
  *
- * One person, one Member ID. The Generic Community ID is shared with any club:
+ * One person, one Member ID, whichever chapter it was first issued for:
  *   - Renewing: Member ID given and well formed (letter + 8 digits, e.g. A48213977) -> renewal form
- *   - Joining a club while already a Generic Community member: Member ID given
- *     (starts with D) -> the same form, which asks which club and verifies the ID,
- *     so approval reuses it instead of creating a new one
+ *   - Joining another chapter (Generic -> club, club -> Generic, club -> club): always the
+ *     chapter's OWN form. A signed-in member needs to type nothing: the renderer uses their
+ *     session. A guest may type their Member ID; it is parked in the session here and checked
+ *     against their verified email on submit, so approval reuses the ID instead of making a new one.
  *   - ID left blank -> a normal application for the chosen membership
  */
 const MEMBERSHIP_NEW = [
@@ -25,6 +26,18 @@ const MEMBERSHIP_NEW = [
     'photographers' => ['DCW Photographers Club', 'membership-photographers'],
 ];
 const MEMBERSHIP_RENEWAL_SLUG = 'membership-renewal-2026';
+
+// Public page; a signed-in member gets their name in the top bar and is never asked for an ID.
+// Loaded first because the routing below depends on it.
+$member = null;
+try {
+    require_once __DIR__ . '/../includes/member_session.php';
+    $member = MemberSession::current();
+} catch (Throwable $ex) {
+    $member = null;
+}
+$sessionId = (string) ($member['member_id'] ?? '');
+$loggedIn = $sessionId !== '';
 
 $type = (string) ($_GET['type'] ?? '');
 $chapter = (string) ($_GET['chapter'] ?? '');
@@ -38,6 +51,7 @@ $badFormat = 'That Member ID is not valid. It is one letter ('
 // Whitelisted slugs only, so this can never redirect anywhere else.
 $slug = null;
 if ($type === 'renewal') {
+    if ($memberId === '' && $loggedIn) $memberId = $sessionId;   // signed in: use their own ID
     if ($memberId !== '') {
         if (MemberModel::chapterFromMemberId($memberId) !== null) {
             $slug = MEMBERSHIP_RENEWAL_SLUG;
@@ -50,18 +64,18 @@ if ($type === 'renewal') {
         $error = 'Enter your Member ID to renew, or choose a membership to apply as a new member.';
     }
 } elseif ($type === 'new' && isset(MEMBERSHIP_NEW[$chapter])) {
-    if ($chapter !== 'generic' && $memberId !== '') {
-        // Already a Generic Community member joining a club: the ID must be a Generic one.
-        if (MemberModel::chapterFromMemberId($memberId) === 'generic') {
-            $slug = MEMBERSHIP_RENEWAL_SLUG;
+    $target = MEMBERSHIP_NEW[$chapter][1];     // always the chapter's own form, never the renewal form
+    if (!$loggedIn && $memberId !== '') {      // guest who typed an ID
+        if (MemberModel::chapterFromMemberId($memberId) === null) {
+            $error = $badFormat;
         } else {
-            $error = MemberModel::chapterFromMemberId($memberId) === null
-                ? $badFormat
-                : 'To join a club with an existing ID, use your DCW Generic Community Member ID '
-                    . '(it starts with ' . MemberModel::ID_PREFIX['generic'] . '). Otherwise leave the box empty.';
+            // Parked server-side (not in the URL). The renderer checks it against the verified email.
+            $_SESSION['join_member_id'][$target] = $memberId;
+            $slug = $target;
         }
     } else {
-        $slug = MEMBERSHIP_NEW[$chapter][1];
+        unset($_SESSION['join_member_id'][$target]);   // signed in, or no ID: nothing to carry over
+        $slug = $target;
     }
 }
 if ($slug !== null) {
@@ -71,15 +85,6 @@ if ($slug !== null) {
 if ($error === '' && isset($_GET['go'])) {
     $error = $type === '' ? 'Choose whether you are a new applicant or renewing.'
                           : 'Choose the membership you want to join.';
-}
-
-// Public page; a signed-in member just gets their name in the top bar.
-$member = null;
-try {
-    require_once __DIR__ . '/../includes/member_session.php';
-    $member = MemberSession::current();
-} catch (Throwable $ex) {
-    $member = null;
 }
 
 engage_header([
@@ -114,9 +119,8 @@ engage_header([
                    placeholder="e.g. D48213977" value="<?= htmlspecialchars($memberId) ?>">
             <span class="hint" id="hint-renewal">It is in your membership confirmation email.
                 No Member ID? Leave this empty and choose a membership below to apply as a new member.</span>
-            <span class="hint" id="hint-club">Already a DCW Generic Community member? Enter your Member ID
-                (it starts with <?= htmlspecialchars(MemberModel::ID_PREFIX['generic']) ?>) and your club membership will share it,
-                so you keep one ID. You will pick the club again on the next page. Not a member yet? Leave this empty.</span>
+            <span class="hint" id="hint-club">Already a DCW member of any chapter? Enter your Member ID and
+                you will keep one ID for all your memberships. Not a member yet? Leave this empty.</span>
         </div>
 
         <div class="field" id="chapter-row">
@@ -139,10 +143,10 @@ engage_header([
 </div>
 
 <script>
-    // Two reasons to ask for a Member ID:
+    // When to ask for a Member ID (never when signed in: the session already knows it):
     //  - Renewal: the ID is needed, and with it the chapter dropdown is hidden (the form asks inside).
-    //  - New applicant picking a club: optional, for someone who is already a Generic Community member.
-    // For a new Generic Community applicant there is nothing to ask, so the box is hidden.
+    //  - New applicant, any membership: optional, for someone who already holds a membership in another chapter.
+    const loggedIn = <?= $loggedIn ? 'true' : 'false' ?>;
     const type = document.getElementById('type');
     const idRow = document.getElementById('member-id-row');
     const idInput = document.getElementById('member_id');
@@ -152,13 +156,13 @@ engage_header([
     const chapter = document.getElementById('chapter');
     function sync() {
         const renewal = type.value === 'renewal';
-        const club = type.value === 'new' && chapter.value !== '' && chapter.value !== 'generic';
-        const showId = renewal || club;
-        const hasId = renewal && idInput.value.trim() !== '';
+        const joining = type.value === 'new' && chapter.value !== '' && !loggedIn;
+        const showId = (renewal && !loggedIn) || joining;
+        const hasId = renewal && (loggedIn || idInput.value.trim() !== '');
         idRow.style.display = showId ? '' : 'none';
         idInput.disabled = !showId;
-        hintRenewal.style.display = renewal ? '' : 'none';
-        hintClub.style.display = club ? '' : 'none';
+        hintRenewal.style.display = (renewal && !loggedIn) ? '' : 'none';
+        hintClub.style.display = joining ? '' : 'none';
         row.style.display = hasId ? 'none' : '';
         chapter.disabled = hasId;
     }
