@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/../includes/wikitext.php';
+require_once __DIR__ . '/../includes/engage_page.php';
 require_once __DIR__ . '/../models/FormModel.php';
 require_once __DIR__ . '/../models/InternetSupportModel.php';
 require_once __DIR__ . '/../models/ReimbursementSettingsModel.php';
@@ -118,6 +119,9 @@ foreach ($activeForms as $form) {
     ];
 }
 
+// Same "About DCW" menu as every other Engage page.
+$about = engage_about_links(true);
+
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -146,13 +150,13 @@ foreach ($activeForms as $form) {
             margin: 0; background: var(--page); color: var(--ink);
             font-family: 'Inter', -apple-system, sans-serif; line-height: 1.6;
         }
-        a:focus-visible { outline: 3px solid #f59e0b; outline-offset: 3px; }
+        a:focus-visible, summary:focus-visible { outline: 3px solid #f59e0b; outline-offset: 3px; }
         .wrap { max-width: 1060px; margin: 0 auto; padding: 0 22px; }
 
         /* Hero: brand gradient with soft shapes, cards overlap its lower edge */
         .hero {
             position: relative; overflow: hidden; text-align: center; color: #fff;
-            padding: 54px 22px 100px;
+            padding: 84px 22px 100px;
             background:
                 radial-gradient(circle at 12% 18%, rgba(255,255,255,.14) 0, rgba(255,255,255,0) 38%),
                 radial-gradient(circle at 88% 80%, rgba(151,22,27,.55) 0, rgba(151,22,27,0) 46%),
@@ -175,6 +179,21 @@ foreach ($activeForms as $form) {
             max-width: 640px; margin: 0 auto; color: rgba(255,255,255,.88);
             font-size: clamp(16px, 2.2vw, 19px);
         }
+
+        /* Top bar inside the hero: the same "About DCW" menu and member links as the other Engage pages */
+        .hero .topbar {
+            position: absolute; top: 18px; left: 22px; right: 22px; z-index: 5;
+            display: flex; flex-wrap: wrap; align-items: center; gap: 10px; text-align: left;
+        }
+        .hero .topbar .about { margin: 0 auto 0 0; }
+        .hero .topbar .tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-left: auto; font-size: 14px; }
+        .hero .topbar .who { color: rgba(255,255,255,.9); font-weight: 600; }
+        .chip-btn {
+            display: inline-flex; align-items: center; gap: 6px; padding: 7px 15px; border-radius: 999px;
+            background: rgba(255,255,255,.16); border: 1px solid rgba(255,255,255,.32);
+            color: #fff; font: inherit; font-size: 14px; font-weight: 600; text-decoration: none; cursor: pointer;
+        }
+        .chip-btn:hover { background: rgba(255,255,255,.28); }
 
         /* Cards: one centred flow, so any number of cards looks tidy */
         .cards-wrap { margin-top: -62px; position: relative; }
@@ -280,17 +299,9 @@ foreach ($activeForms as $form) {
         }
         .empty h3 { color: var(--ink); margin: 0 0 8px; }
 
-        /* Footer */
-        footer {
-            border-top: 1px solid var(--border); margin-top: 40px; padding: 26px 0 40px;
-            text-align: center; color: var(--muted); font-size: 14px;
-        }
-        footer a { color: var(--primary); text-decoration: none; }
-        footer .org { display: inline-flex; align-items: center; gap: 9px; margin-bottom: 6px; }
-        footer .org img { width: 26px; height: auto; }
-
         @media (max-width: 640px) {
-            .hero { padding: 40px 18px 100px; }
+            .hero { padding: 76px 18px 100px; }
+            .hero .topbar { left: 14px; right: 14px; }
             .prog, .prog.featured { max-width: none; flex-basis: 100%; }
             .prog.featured {
                 grid-template-columns: 1fr; row-gap: 4px; padding: 24px;
@@ -306,6 +317,18 @@ foreach ($activeForms as $form) {
 </head>
 <body>
     <header class="hero">
+        <div class="topbar">
+            <?php engage_about_menu($about); ?>
+            <div class="tools">
+                <?php if ($signedInMember): ?>
+                    <span class="who"><?= htmlspecialchars($signedInMember['full_name'] ?: $signedInMember['member_id']) ?></span>
+                    <a class="chip-btn" href="/member/dashboard">My dashboard</a>
+                    <a class="chip-btn" href="/member/logout">Sign out</a>
+                <?php else: ?>
+                    <a class="chip-btn" href="/member/login?next=%2Fmember%2Fdashboard">Member sign in</a>
+                <?php endif; ?>
+            </div>
+        </div>
         <img class="logo" src="https://dcwwiki.org/dcwwiki/images/5/56/DCW_logo.png" alt="Deoband Community Wikimedia">
         <p class="kicker">Deoband Community Wikimedia</p>
         <h1>DCW Engage</h1>
@@ -402,14 +425,4 @@ foreach ($activeForms as $form) {
                 </div>
             </section>
         <?php endif; ?>
-    </main>
-
-    <footer>
-        <div class="org">
-            <img src="https://dcwwiki.org/dcwwiki/images/5/56/DCW_logo.png" alt="">
-            <span>Deoband Community Wikimedia</span>
-        </div>
-        <div>&copy; <?= date('Y') ?> · <a href="https://dcwwiki.org">dcwwiki.org</a></div>
-    </footer>
-</body>
-</html>
+<?php engage_footer(); ?>
