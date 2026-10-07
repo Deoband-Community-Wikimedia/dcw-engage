@@ -18,6 +18,11 @@
  * no receipt file links, this is a printed record, not a file browser). See
  * the note on ReimbursementModel::getPaidRequestForReceipt() for why this
  * document itemises where the finance queue deliberately doesn't.
+ *
+ * AMOUNTS: the headline figure is what was actually PAID. When the approved
+ * or paid amount differs from the claim, the Payment section also lists the
+ * claimed, approved and paid amounts with the reasons staff gave for the
+ * applicant. Internal notes are never included.
  */
 
 /**
@@ -58,6 +63,22 @@ function reimbursement_receipt_format_ist(?string $utcDatetime, string $format):
 }
 
 /**
+ * Claimed / approved / paid, falling back so rows paid before approved and
+ * paid amounts existed print exactly as they used to.
+ */
+function reimbursement_receipt_amounts(array $data): array {
+    $claimed  = (int) $data['total_amount_paise'];
+    $approved = ($data['approved_amount_paise'] ?? null) !== null ? (int) $data['approved_amount_paise'] : $claimed;
+    $paid     = ($data['paid_amount_paise'] ?? null) !== null ? (int) $data['paid_amount_paise'] : $approved;
+    return [
+        'claimed'  => $claimed,
+        'approved' => $approved,
+        'paid'     => $paid,
+        'differs'  => $claimed !== $approved || $approved !== $paid,
+    ];
+}
+
+/**
  * $data is the array returned by ReimbursementModel::getPaidRequestForReceipt().
  */
 function reimbursement_receipt_html(array $data): string {
@@ -89,6 +110,28 @@ function reimbursement_receipt_html(array $data): string {
         : "<tr><td class='label'>Account Holder</td><td>" . htmlspecialchars($data['bank_account_name']) . "</td></tr>"
           . "<tr><td class='label'>Account Number</td><td>" . htmlspecialchars($data['bank_account_number_masked'] ?? '—') . "</td></tr>"
           . "<tr><td class='label'>IFSC</td><td>" . htmlspecialchars($data['bank_ifsc']) . "</td></tr>";
+
+    // Amounts. The extra rows only appear when the figures differ, so a
+    // receipt where everything matches looks exactly as it did before.
+    $amt = reimbursement_receipt_amounts($data);
+    $totalLabel = $amt['differs'] ? 'Total claimed' : 'Total';
+
+    $why = function ($note): string {
+        $note = trim((string) $note);
+        return $note !== ''
+            ? "<br><span style='color:#64748b; font-size:11px;'>Reason: " . nl2br(htmlspecialchars($note)) . "</span>"
+            : '';
+    };
+    $amountRowsHtml = '';
+    if ($amt['differs']) {
+        $amountRowsHtml .= "<tr><td class='label'>Amount Claimed</td><td>" . $rupees($amt['claimed']) . "</td></tr>";
+        if ($amt['approved'] !== $amt['claimed']) {
+            $amountRowsHtml .= "<tr><td class='label'>Amount Approved</td><td>" . $rupees($amt['approved'])
+                . $why($data['approved_amount_note'] ?? '') . "</td></tr>";
+        }
+        $amountRowsHtml .= "<tr><td class='label'>Amount Paid</td><td><strong>" . $rupees($amt['paid']) . "</strong>"
+            . ($amt['paid'] !== $amt['approved'] ? $why($data['paid_amount_note'] ?? '') : '') . "</td></tr>";
+    }
 
     $eventDate = reimbursement_receipt_format_ist($data['event_date'] ?? null, 'j F Y');
     $decidedAt = reimbursement_receipt_format_ist($data['decided_at'] ?? null, 'j F Y, H:i') . ' IST';
@@ -131,7 +174,7 @@ function reimbursement_receipt_html(array $data): string {
 
         <div class='amount-box'>
             <div class='status'>Paid</div>
-            <div class='amount'>" . $rupees((int) $data['total_amount_paise']) . "</div>
+            <div class='amount'>" . $rupees($amt['paid']) . "</div>
         </div>
 
         <h2>Applicant</h2>
@@ -156,14 +199,15 @@ function reimbursement_receipt_html(array $data): string {
             </tbody>
             <tfoot>
                 <tr>
-                    <td colspan='2'>Total</td>
-                    <td class='amount'>" . $rupees((int) $data['total_amount_paise']) . "</td>
+                    <td colspan='2'>$totalLabel</td>
+                    <td class='amount'>" . $rupees($amt['claimed']) . "</td>
                 </tr>
             </tfoot>
         </table>
 
         <h2>Payment</h2>
         <table class='details'>
+            $amountRowsHtml
             <tr><td class='label'>Method</td><td>" . htmlspecialchars($method) . "</td></tr>
             $paymentDetailsHtml
             <tr><td class='label'>Transaction Reference</td><td>" . htmlspecialchars($data['payment_reference'] ?: '—') . "</td></tr>
