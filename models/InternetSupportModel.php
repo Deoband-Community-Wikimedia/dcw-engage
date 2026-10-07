@@ -15,6 +15,16 @@ require_once __DIR__ . '/../includes/crypto.php';
  *   Awaiting Receipt --(applicant, via /track)--> Receipt Submitted
  *   Receipt Submitted --(finance)--> Closed | Awaiting Receipt (receipt bounced)
  *
+ * AMOUNTS. Three figures can exist for one request:
+ *   - requested: package_price_paise, typed by the applicant
+ *   - approved:  approved_amount_paise, set by the reviewer when approving.
+ *                NULL means "approved as requested" (see approvedAmountPaise()).
+ *   - paid:      paid_amount_paise, set by finance when marking the recharge done.
+ *                NULL means "recharged as approved" (older rows).
+ * Whenever a figure differs from the one before it, a reason is stored
+ * (approved_amount_note, paid_amount_note). Those reasons ARE shown to the
+ * applicant; staff-only remarks live in internal_notes (InternalNoteModel).
+ *
  * "Info Requested" sends the request back to the applicant AS A DRAFT: on
  * /track they see the reviewer's question and their own editable answers
  * (getDraftForApplicant()), correct them, add a note and resubmit in one
@@ -47,6 +57,9 @@ class InternetSupportModel {
     /** Bounds for reviewer questions and applicant replies. */
     public const MIN_MESSAGE_LENGTH = 5;
     public const MAX_MESSAGE_LENGTH = 1000;
+
+    /** Longest reason a reviewer or finance may give for changing an amount. */
+    public const MAX_AMOUNT_NOTE_LENGTH = 500;
 
     /** One request per email per this many days (rejected/discarded ones don't count). Policy default: change freely. */
     public const MIN_DAYS_BETWEEN_REQUESTS = 30;
@@ -118,8 +131,9 @@ class InternetSupportModel {
     /**
      * Organisers can't know in advance which pack a volunteer needs, so the
      * operator, plan and amount are all stated by the applicant and are
-     * UNVERIFIED. Reviewers judge whether the amount is reasonable; finance
-     * confirms the operator's real price when doing the recharge.
+     * UNVERIFIED. Reviewers judge whether the amount is reasonable (and may
+     * approve a different amount); finance confirms the operator's real price
+     * when doing the recharge (and may recharge a different amount).
      *
      * Eligibility answers are self-declared too. Rule: an applicant who is
      * actively contributing to DCW technical projects is eligible outright;
@@ -289,6 +303,27 @@ class InternetSupportModel {
     }
 
     // ------------------------------------------------------------------
+    // Amounts
+    // ------------------------------------------------------------------
+
+    /** What the applicant asked for (the pack price they typed). */
+    public function requestedAmountPaise($requestId) {
+        $stmt = $this->db->prepare("SELECT package_price_paise FROM internet_requests WHERE id = :id");
+        $stmt->execute(['id' => (int) $requestId]);
+        return (int) $stmt->fetchColumn();
+    }
+
+    /** What the reviewer approved: the requested price unless they changed it. */
+    public function approvedAmountPaise($requestId) {
+        $stmt = $this->db->prepare(
+            "SELECT COALESCE(approved_amount_paise, package_price_paise)
+             FROM internet_requests WHERE id = :id"
+        );
+        $stmt->execute(['id' => (int) $requestId]);
+        return (int) $stmt->fetchColumn();
+    }
+
+    // ------------------------------------------------------------------
     // Support reviewers: is the request reasonable?
     // ------------------------------------------------------------------
 
@@ -300,10 +335,13 @@ class InternetSupportModel {
      * actually paid for, to help spot repeat asks.
      * edits_80 / attended_ch / tech_contributor are NULL on requests made
      * before the eligibility questions existed.
+     * approved_amount_paise is NULL until a reviewer has approved; for a
+     * 'Recharge Failed' request it holds the amount approved the first time.
      */
     public function listForReview($status = null) {
         $sql = "SELECT r.id, r.tracking_id, r.email, r.applicant_name,
                        r.operator, r.package_name, r.package_price_paise, r.package_validity_days,
+                       r.approved_amount_paise,
                        r.reason, r.wikimedia_username, r.edits_80, r.attended_ch, r.tech_contributor,
                        r.contributions, r.plans,
                        r.status, r.admin_notes, r.decided_by, r.decided_at,
@@ -328,13 +366,25 @@ class InternetSupportModel {
         return $stmt->fetchAll();
     }
 
-    public function approve($requestId, $adminIdentifier) {
+    /**
+     * Approve the request for $amountPaise (null = approve as requested).
+     * $amountNote is the reason the amount differs from the request; the
+     * applicant sees it. Pass '' when the amount is unchanged.
+     */
+    public function approve($requestId, $adminIdentifier, $amountPaise = null, $amountNote = '') {
+        $amountNote = trim((string) $amountNote);
         $stmt = $this->db->prepare(
             "UPDATE internet_requests
-             SET status = 'Approved for Support', decided_by = :who, decided_at = NOW()
+             SET status = 'Approved for Support', decided_by = :who, decided_at = NOW(),
+                 approved_amount_paise = :amt, approved_amount_note = :note
              WHERE id = :id AND status IN ('Submitted', 'Recharge Failed')"
         );
-        $stmt->execute(['who' => $adminIdentifier, 'id' => (int) $requestId]);
+        $stmt->execute([
+            'who'  => $adminIdentifier,
+            'amt'  => $amountPaise !== null ? (int) $amountPaise : null,
+            'note' => $amountNote !== '' ? mb_substr($amountNote, 0, self::MAX_AMOUNT_NOTE_LENGTH) : null,
+            'id'   => (int) $requestId,
+        ]);
         return $stmt->rowCount() === 1;
     }
 
@@ -675,11 +725,15 @@ class InternetSupportModel {
      * Approved requests waiting for a recharge. Phone is decrypted only
      * here, only for rows finance is actively meant to act on. The reason
      * is not selected: finance needs the number, operator and pack.
+     * approved_paise is the amount the reviewer approved (the requested
+     * price unless they changed it); package_price_paise stays as the
+     * applicant's own figure.
      */
     public function listForRechargeQueue() {
         $rows = $this->db->query(
             "SELECT id, tracking_id, applicant_name, email, phone_enc,
                     operator, package_name, package_price_paise, package_validity_days,
+                    COALESCE(approved_amount_paise, package_price_paise) AS approved_paise,
                     decided_by, decided_at
              FROM internet_requests
              WHERE status = 'Approved for Support'
@@ -694,6 +748,8 @@ class InternetSupportModel {
         $rows = $this->db->query(
             "SELECT id, tracking_id, applicant_name, email, phone_enc,
                     operator, package_name, package_price_paise,
+                    COALESCE(approved_amount_paise, package_price_paise) AS approved_paise,
+                    COALESCE(paid_amount_paise, approved_amount_paise, package_price_paise) AS paid_paise,
                     recharge_reference, recharged_at, receipt_path, receipt_submitted_at
              FROM internet_requests
              WHERE status = 'Receipt Submitted'
@@ -728,15 +784,27 @@ class InternetSupportModel {
         return $rows;
     }
 
-    /** Finance recharged the number. The request now waits on the applicant's receipt. */
-    public function markRechargeDone($requestId, $financeIdentifier, $reference) {
+    /**
+     * Finance recharged the number. The request now waits on the applicant's receipt.
+     * $paidPaise is the amount actually recharged; $amountNote is the reason it
+     * differs from the approved amount (the applicant sees it; '' if it doesn't differ).
+     */
+    public function markRechargeDone($requestId, $financeIdentifier, $reference, $paidPaise = null, $amountNote = '') {
+        $amountNote = trim((string) $amountNote);
         $stmt = $this->db->prepare(
             "UPDATE internet_requests
              SET status = 'Awaiting Receipt', recharged_by = :who, recharged_at = NOW(),
-                 recharge_reference = :ref, recharge_notes = NULL
+                 recharge_reference = :ref, recharge_notes = NULL,
+                 paid_amount_paise = :paid, paid_amount_note = :pnote
              WHERE id = :id AND status = 'Approved for Support'"
         );
-        $stmt->execute(['who' => $financeIdentifier, 'ref' => $reference, 'id' => (int) $requestId]);
+        $stmt->execute([
+            'who'   => $financeIdentifier,
+            'ref'   => $reference,
+            'paid'  => $paidPaise !== null ? (int) $paidPaise : null,
+            'pnote' => $amountNote !== '' ? mb_substr($amountNote, 0, self::MAX_AMOUNT_NOTE_LENGTH) : null,
+            'id'    => (int) $requestId,
+        ]);
         return $stmt->rowCount() === 1;
     }
 
@@ -805,6 +873,8 @@ class InternetSupportModel {
     public function listClosedForFinance() {
         return $this->db->query(
             "SELECT id, tracking_id, applicant_name, email, operator, package_name, package_price_paise,
+                    COALESCE(approved_amount_paise, package_price_paise) AS approved_paise,
+                    COALESCE(paid_amount_paise, approved_amount_paise, package_price_paise) AS paid_paise,
                     recharge_reference, closed_by, closed_at
              FROM internet_requests
              WHERE status = 'Closed'
@@ -821,12 +891,15 @@ class InternetSupportModel {
      * becomes a standalone file that can be saved or emailed outside the app
      * (same treatment as the masked bank account on the reimbursement
      * receipt). The reason, eligibility answers and the receipt file the
-     * volunteer uploaded are deliberately not included.
+     * volunteer uploaded are deliberately not included. Internal notes are
+     * never included either.
      */
     public function getClosedRequestForReceipt($requestId) {
         $stmt = $this->db->prepare(
             "SELECT id, tracking_id, applicant_name, email, phone_enc,
                     operator, package_name, package_price_paise, package_validity_days,
+                    approved_amount_paise, approved_amount_note,
+                    paid_amount_paise, paid_amount_note,
                     created_at, decided_by, decided_at,
                     recharged_by, recharged_at, recharge_reference,
                     closed_by, closed_at
@@ -860,11 +933,21 @@ class InternetSupportModel {
      * admin_notes (shown on rejection, as with reimbursements) and
      * finance_notes (shown only so the applicant knows why a receipt was
      * sent back). 'Discarded' is excluded: it must look like "no record".
+     *
+     * approved_paise / paid_paise always hold a figure (falling back to the
+     * requested price) so callers can compare them; the page decides when
+     * each is meaningful for the current status. The two *_amount_note
+     * columns are the reasons the applicant is meant to see. Staff-only
+     * internal notes are never selected here.
      */
     public function getStatusForApplicant($trackingId, $email) {
         $stmt = $this->db->prepare(
             "SELECT tracking_id, operator, package_name, package_price_paise, status,
-                    admin_notes, finance_notes, recharge_reference, created_at
+                    admin_notes, finance_notes, recharge_reference, created_at,
+                    COALESCE(approved_amount_paise, package_price_paise) AS approved_paise,
+                    approved_amount_note,
+                    COALESCE(paid_amount_paise, approved_amount_paise, package_price_paise) AS paid_paise,
+                    paid_amount_note
              FROM internet_requests
              WHERE tracking_id = :tracking_id AND email = :email
                AND status <> 'Discarded'"
@@ -881,10 +964,17 @@ class InternetSupportModel {
      * dashboard. Same privacy rules as getStatusForApplicant(): no phone,
      * no reason, no internal notes, and Discarded requests are left out so
      * they look like "no record".
+     *
+     * paid_paise is only filled once money has moved (recharge done); it is
+     * NULL before that.
      */
     public function listForMember($email) {
         $stmt = $this->db->prepare(
-            "SELECT tracking_id, package_name, package_price_paise, status, created_at
+            "SELECT tracking_id, package_name, package_price_paise, status, created_at,
+                    COALESCE(approved_amount_paise, package_price_paise) AS approved_paise,
+                    CASE WHEN status IN ('Awaiting Receipt', 'Receipt Submitted', 'Closed')
+                         THEN COALESCE(paid_amount_paise, approved_amount_paise, package_price_paise)
+                    END AS paid_paise
              FROM internet_requests
              WHERE email = :email AND status <> 'Discarded'
              ORDER BY created_at DESC"
