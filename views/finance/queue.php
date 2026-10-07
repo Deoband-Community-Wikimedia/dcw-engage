@@ -343,7 +343,7 @@ engage_header([
                 <input type="hidden" name="request_id" value="<?= (int) $req['id'] ?>">
                 <!-- Required for "Mark paid". "Payment failed" has formnovalidate. -->
                 <input type="text" name="payment_reference" required maxlength="255" placeholder="UTR / transaction reference (required to mark paid)">
-                <input type="text" name="paid_amount" required inputmode="decimal" value="<?= $e(paid_amount_value($approved)) ?>" placeholder="Amount you are paying (₹)" title="Amount you are paying (₹). Starts as the approved amount.">
+                <input type="text" name="paid_amount" required inputmode="decimal" value="<?= $e(paise_to_rupees($approved)) ?>" placeholder="Amount you are paying (₹)" title="Amount you are paying (₹). Starts as the approved amount.">
                 <input type="text" name="amount_note" maxlength="500" placeholder="Reason, only if this differs from the approved amount (the applicant sees it)">
                 <textarea name="notes" placeholder="Notes (required if marking failed)"></textarea>
                 <?php if (!empty($req['receipts'])): ?>
@@ -411,7 +411,7 @@ engage_header([
                 <?php if (!$req['phone_error']): ?>
                     <!-- Required for "Recharge done"; "Recharge failed" has formnovalidate. -->
                     <input type="text" name="recharge_reference" required maxlength="255" placeholder="Operator reference / transaction ID (required when done)">
-                    <input type="text" name="paid_amount" required inputmode="decimal" value="<?= $e(paid_amount_value($approved)) ?>" placeholder="Amount you recharged (₹)" title="Amount you recharged (₹). Starts as the approved amount.">
+                    <input type="text" name="paid_amount" required inputmode="decimal" value="<?= $e(paise_to_rupees($approved)) ?>" placeholder="Amount you recharged (₹)" title="Amount you recharged (₹). Starts as the approved amount.">
                     <input type="text" name="amount_note" maxlength="500" placeholder="Reason, only if this differs from the approved amount (the applicant sees it)">
                 <?php endif; ?>
                 <textarea name="notes" placeholder="Notes (required if recharge failed)"></textarea>
