@@ -47,14 +47,20 @@ class Mailer {
     // --- Reimbursements (members only) --------------------------------------
     // ($email, $applicantName, $trackingId, $eventTitle)
     public static function sendReimbursementReceived(...$a)     { return ReimbursementMail::received(...$a); }
-    // ($email, $applicantName, $trackingId, $eventTitle, $status, $note = '', $paymentReference = '')
+    // ($email, $applicantName, $trackingId, $eventTitle, $status, $note = '', $paymentReference = '',
+    //  $amountPaise = null, $amountNote = '')
+    // $amountPaise / $amountNote are used for 'Approved for Payment' (approved amount) and 'Paid'
+    // (amount paid); $amountNote is the reason the amount differs, shown to the member.
     // Returns false (sends nothing) for 'Payment Failed' and 'Discarded'.
     public static function sendReimbursementStatusUpdate(...$a) { return ReimbursementMail::statusUpdate(...$a); }
 
     // --- Internet support (members only) ------------------------------------
     // ($email, $applicantName, $trackingId)
     public static function sendInternetReceived(...$a)       { return InternetSupportMail::received(...$a); }
-    // ($email, $applicantName, $trackingId, $status, $note = '', $reference = '')
+    // ($email, $applicantName, $trackingId, $status, $note = '', $reference = '',
+    //  $amountPaise = null, $amountNote = '')
+    // $amountPaise / $amountNote are used for 'Approved for Support' (approved amount) and
+    // 'Awaiting Receipt' (amount recharged); $amountNote is the reason the amount differs.
     // Returns false (sends nothing) for 'Recharge Failed' and 'Discarded'.
     public static function sendInternetStatusUpdate(...$a)   { return InternetSupportMail::statusUpdate(...$a); }
 

@@ -6,14 +6,22 @@ require_once __DIR__ . '/../../includes/require_role.php';
 require_once __DIR__ . '/../../includes/app_log.php';
 require_once __DIR__ . '/../../includes/mailer.php';
 require_once __DIR__ . '/../../includes/engage_page.php';
+require_once __DIR__ . '/../../includes/amount_helpers.php';
+require_once __DIR__ . '/../../includes/internal_notes_ui.php';
 require_once __DIR__ . '/../../models/InternetSupportModel.php';
+require_once __DIR__ . '/../../models/InternalNoteModel.php';
 
 // Support reviewers decide whether a request is reasonable. Owners are
 // trusted to do the same. This page never selects the phone number (see
 // InternetSupportModel::listForReview()); finance is the only role that sees it.
+//
+// A reviewer may approve a DIFFERENT amount than the applicant asked for. A
+// reason is then required and the applicant is told. Finance later sees the
+// approved amount and may still adjust it when recharging.
 requireRole(['support_reviewer', 'owner']);
 
 $model = new InternetSupportModel();
+$noteModel = new InternalNoteModel();
 $message = '';
 $error = '';
 
@@ -32,12 +40,46 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $notes = trim($_POST['notes'] ?? '');
     $decision = $_POST['decision'] ?? '';
 
-    if ($decision === 'approve') {
-        if ($model->approve($requestId, Auth::email())) {
+    if ($decision === 'internal_note') {
+        // Staff-only; never shown to the applicant.
+        try {
+            $noteModel->add('internet', $requestId, Auth::email(), $_POST['internal_note'] ?? '');
+            AuditLog::record('internet.internal_note', Auth::id(), Auth::email(), null, "Request #$requestId");
+            $message = 'Internal note added.';
+        } catch (\InvalidArgumentException $ex) {
+            $error = $ex->getMessage();
+        }
+    } elseif ($decision === 'approve') {
+        $approvedPaise  = rupees_to_paise($_POST['approved_amount'] ?? '');
+        $requestedPaise = $model->requestedAmountPaise($requestId);
+        $settings       = $model->getSettings();
+        $maxPaise       = $settings ? (int) $settings['max_amount_paise'] : 0;
+        $amountNote     = trim($_POST['amount_note'] ?? '');
+        $differs        = $approvedPaise !== null && $approvedPaise !== $requestedPaise;
+        $approvedNote   = $differs ? $amountNote : '';
+
+        if ($approvedPaise === null) {
+            $error = "Enter the amount to approve, in ₹ (for example 299 or 299.50).";
+        } elseif ($maxPaise > 0 && $approvedPaise > $maxPaise) {
+            $error = "That is above the programme limit of " . rupees_label($maxPaise) . ".";
+        } elseif ($differs && $amountNote === '') {
+            // The applicant reads this as a message from "DCW reviewer".
+            $error = "You are approving a different amount than requested (" . rupees_label($requestedPaise) . "). Add a reason: the applicant will see it (without your name).";
+        } elseif (mb_strlen($amountNote) > 500) {
+            $error = "The reason is too long (500 characters max).";
+        } elseif ($model->approve($requestId, Auth::email(), $approvedPaise, $approvedNote)) {
             $info = $model->getForNotification($requestId);
-            AuditLog::record('internet.approved', Auth::id(), Auth::email(), $info['email'], 'Tracking: ' . $info['tracking_id']);
-            Mailer::sendInternetStatusUpdate($info['email'], $info['applicant_name'], $info['tracking_id'], 'Approved for Support');
-            $message = "Request {$info['tracking_id']} approved and passed to finance.";
+            AuditLog::record(
+                'internet.approved', Auth::id(), Auth::email(), $info['email'],
+                'Tracking: ' . $info['tracking_id'] . ' | Approved ' . rupees_label($approvedPaise)
+                . ($differs ? ' (requested ' . rupees_label($requestedPaise) . ' | Reason: ' . $approvedNote . ')' : '')
+            );
+            Mailer::sendInternetStatusUpdate(
+                $info['email'], $info['applicant_name'], $info['tracking_id'],
+                'Approved for Support', '', '', $approvedPaise, $approvedNote
+            );
+            $message = "Request {$info['tracking_id']} approved for " . rupees_label($approvedPaise) . " and passed to finance."
+                . ($differs ? " This differs from the requested " . rupees_label($requestedPaise) . "; the applicant has been told why." : '');
         } else {
             $error = "That request was already handled by someone else, or is waiting on the applicant's reply.";
         }
@@ -89,7 +131,7 @@ $failed  = array_filter($requests, function ($r) { return $r['status'] === 'Rech
 $fresh   = array_filter($requests, function ($r) { return $r['status'] === 'Submitted'; });
 $waiting = array_filter($requests, function ($r) { return $r['status'] === 'Info Requested'; });
 
-function internet_review_card(array $req, InternetSupportModel $model) {
+function internet_review_card(array $req, InternetSupportModel $model, InternalNoteModel $noteModel) {
     $yn = function ($v) {
         return $v === null ? '—' : ((int) $v === 1 ? 'Yes' : 'No');
     };
@@ -98,6 +140,10 @@ function internet_review_card(array $req, InternetSupportModel $model) {
         && ((int) $req['edits_80'] !== 1 || (int) $req['attended_ch'] !== 1);
     $wikiUser = (string) ($req['wikimedia_username'] ?? '');
     $thread = $model->getMessagesForReview((int) $req['id']);
+    $internalNotes = $noteModel->forRequest('internet', (int) $req['id']);
+    // The amount box starts at the earlier approval (a re-approval after a failed recharge), else the request.
+    $requestedPaise = (int) $req['package_price_paise'];
+    $prefillPaise = $req['approved_amount_paise'] !== null ? (int) $req['approved_amount_paise'] : $requestedPaise;
     // Left-edge colour of the card: red = recharge failed, blue = waiting on the applicant.
     $tone = $req['status'] === 'Recharge Failed' ? '#b91c1c'
         : ($req['status'] === 'Info Requested' ? '#1e40af' : 'var(--primary)');
@@ -105,7 +151,7 @@ function internet_review_card(array $req, InternetSupportModel $model) {
     <article class="qcard" style="--tone:<?= $tone ?>;">
         <div class="qhead">
             <h3><?= htmlspecialchars($req['applicant_name']) ?> <code>#<?= htmlspecialchars($req['tracking_id']) ?></code></h3>
-            <span class="qamount">₹<?= number_format($req['package_price_paise'] / 100, 2) ?></span>
+            <span class="qamount" title="Amount requested">₹<?= number_format($requestedPaise / 100, 2) ?></span>
         </div>
         <p class="qmeta">
             <?= htmlspecialchars($req['email']) ?> · submitted <?= htmlspecialchars($req['created_at']) ?> UTC
@@ -199,10 +245,17 @@ function internet_review_card(array $req, InternetSupportModel $model) {
             </div>
         <?php endif; ?>
 
+        <?php internal_notes_block('internet', (int) $req['id'], $internalNotes, 'decision'); ?>
+
         <form method="POST" class="qform">
             <?= CSRF::getInputField() ?>
             <?= CSRF::getSubmitField() ?>
             <input type="hidden" name="request_id" value="<?= (int) $req['id'] ?>">
+            <?php if ($req['status'] !== 'Info Requested'): ?>
+                <p class="qlabel">Amount to approve (₹): starts as <?= $req['approved_amount_paise'] !== null ? 'the earlier approval' : 'what the applicant asked for' ?></p>
+                <input type="text" name="approved_amount" inputmode="decimal" value="<?= htmlspecialchars(paise_to_rupees($prefillPaise)) ?>" placeholder="Amount to approve (₹)">
+                <input type="text" name="amount_note" maxlength="500" placeholder="Reason, only if this differs from the requested ₹<?= number_format($requestedPaise / 100, 2) ?> (the applicant sees it)">
+            <?php endif; ?>
             <textarea name="notes" placeholder="Notes. Required to reject or to request info: the applicant sees them (reviewer name hidden). Optional for discard: internal only."></textarea>
             <?php if ($req['status'] !== 'Info Requested'): ?>
                 <button type="submit" name="decision" value="approve" class="btn-ok">Approve</button>
@@ -222,7 +275,7 @@ engage_header([
     'title'   => 'Internet support review',
     'heading' => 'Internet support review',
     'kicker'  => 'Organizer workspace',
-    'lead'    => "Decide whether each request is reasonable. Phone numbers aren't shown here; finance sees them when doing the recharge.",
+    'lead'    => "Decide whether each request is reasonable, and for how much. Phone numbers aren't shown here; finance sees them when doing the recharge.",
     'tools'   => '',
     'wide'    => true,
     'crumbs'  => [['Workspace', '/admin/dashboard'], ['Internet support review']],
@@ -255,7 +308,7 @@ engage_header([
 <?php if (!empty($failed)): ?>
     <section class="sect">
         <h2 class="sec-title" style="color:#b91c1c;">Recharge failed — needs attention</h2>
-        <?php foreach ($failed as $req) { internet_review_card($req, $model); } ?>
+        <?php foreach ($failed as $req) { internet_review_card($req, $model, $noteModel); } ?>
     </section>
 <?php endif; ?>
 
@@ -264,13 +317,13 @@ engage_header([
     <?php if (empty($fresh)): ?>
         <div class="empty-note" style="margin-bottom:16px;">Nothing waiting for review.</div>
     <?php endif; ?>
-    <?php foreach ($fresh as $req) { internet_review_card($req, $model); } ?>
+    <?php foreach ($fresh as $req) { internet_review_card($req, $model, $noteModel); } ?>
 </section>
 
 <?php if (!empty($waiting)): ?>
     <section class="sect">
         <h2 class="sec-title" style="color:#1e40af;">Waiting for applicant's reply</h2>
-        <?php foreach ($waiting as $req) { internet_review_card($req, $model); } ?>
+        <?php foreach ($waiting as $req) { internet_review_card($req, $model, $noteModel); } ?>
     </section>
 <?php endif; ?>
 <?php engage_footer(); ?>

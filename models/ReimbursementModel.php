@@ -14,6 +14,17 @@ require_once __DIR__ . '/../includes/crypto.php';
  *     receipts. Finance needs to know how much and where to send it, not
  *     what was bought.
  *
+ * AMOUNTS. Three figures can exist for one request:
+ *   - claimed:  total_amount_paise, summed from the applicant's line items
+ *   - approved: approved_amount_paise, set by the reviewer when approving
+ *               (never above the claimed total). NULL means "approved as claimed"
+ *               (see approvedAmountPaise()).
+ *   - paid:     paid_amount_paise, set by finance when marking the request paid.
+ *               NULL means "paid as approved" (older rows).
+ * Whenever a figure differs from the one before it, a reason is stored
+ * (approved_amount_note, paid_amount_note). Those reasons ARE shown to the
+ * applicant; staff-only remarks live in internal_notes (InternalNoteModel).
+ *
  * Send-back-as-draft: a reviewer may return a claim with a question
  * (requestInfo(): Submitted/Under Review -> Info Requested). On /track the
  * applicant then sees the question plus their own editable claim
@@ -50,6 +61,9 @@ class ReimbursementModel {
 
     /** Cap for an expense description edited from /track. */
     public const MAX_ITEM_DESCRIPTION_LENGTH = 500;
+
+    /** Longest reason a reviewer or finance may give for changing an amount. */
+    public const MAX_AMOUNT_NOTE_LENGTH = 500;
 
     /** "Today" for the claim window is judged in India time, not server time. */
     private const CLAIM_TIMEZONE = 'Asia/Kolkata';
@@ -303,6 +317,27 @@ class ReimbursementModel {
     }
 
     // ------------------------------------------------------------------
+    // Amounts
+    // ------------------------------------------------------------------
+
+    /** What the applicant claimed (the sum of their line items). */
+    public function claimedAmountPaise($requestId) {
+        $stmt = $this->db->prepare("SELECT total_amount_paise FROM reimbursement_requests WHERE id = :id");
+        $stmt->execute(['id' => (int) $requestId]);
+        return (int) $stmt->fetchColumn();
+    }
+
+    /** What the reviewer approved: the claimed total unless they changed it. */
+    public function approvedAmountPaise($requestId) {
+        $stmt = $this->db->prepare(
+            "SELECT COALESCE(approved_amount_paise, total_amount_paise)
+             FROM reimbursement_requests WHERE id = :id"
+        );
+        $stmt->execute(['id' => (int) $requestId]);
+        return (int) $stmt->fetchColumn();
+    }
+
+    // ------------------------------------------------------------------
     // Admin/organizer: substance review (is the claim valid?)
     // ------------------------------------------------------------------
 
@@ -325,10 +360,13 @@ class ReimbursementModel {
      *
      * Each request also carries its reviewer <-> applicant conversation
      * under 'messages' (see getMessagesForReview()).
+     *
+     * approved_amount_paise is NULL until a reviewer has approved; for a
+     * 'Payment Failed' request it holds the amount approved the first time.
      */
     public function listForAdminReview($status = null) {
         $sql = "SELECT id, email, applicant_name, event_name, event_date,
-                       total_amount_paise, status, tracking_id,
+                       total_amount_paise, approved_amount_paise, status, tracking_id,
                        admin_notes, decided_by, decided_at,
                        payment_notes, created_at
                 FROM reimbursement_requests";
@@ -366,13 +404,26 @@ class ReimbursementModel {
         return $stmt->fetchAll();
     }
 
-    public function approveForPayment($requestId, $adminIdentifier) {
+    /**
+     * Approve the claim for $amountPaise (null = approve the full claimed total).
+     * $amountNote is the reason the amount differs from the claim; the
+     * applicant sees it. Pass '' when the amount is unchanged. The caller is
+     * responsible for checking $amountPaise is positive and not above the claim.
+     */
+    public function approveForPayment($requestId, $adminIdentifier, $amountPaise = null, $amountNote = '') {
+        $amountNote = trim((string) $amountNote);
         $stmt = $this->db->prepare(
             "UPDATE reimbursement_requests
-             SET status = 'Approved for Payment', decided_by = :who, decided_at = NOW()
+             SET status = 'Approved for Payment', decided_by = :who, decided_at = NOW(),
+                 approved_amount_paise = :amt, approved_amount_note = :note
              WHERE id = :id AND status IN ('Submitted', 'Under Review', 'Payment Failed')"
         );
-        $stmt->execute(['who' => $adminIdentifier, 'id' => $requestId]);
+        $stmt->execute([
+            'who'  => $adminIdentifier,
+            'amt'  => $amountPaise !== null ? (int) $amountPaise : null,
+            'note' => $amountNote !== '' ? mb_substr($amountNote, 0, self::MAX_AMOUNT_NOTE_LENGTH) : null,
+            'id'   => $requestId,
+        ]);
         return $stmt->rowCount() === 1;
     }
 
@@ -724,10 +775,15 @@ class ReimbursementModel {
      * to keep the paperwork, not what each expense was for. Bank account
      * numbers are decrypted only here, only for rows finance is actively
      * meant to pay.
+     *
+     * approved_paise is the amount the reviewer approved (the claimed total
+     * unless they changed it); total_amount_paise stays as the applicant's
+     * own claim.
      */
     public function listForFinanceQueue() {
         $stmt = $this->db->query(
             "SELECT id, tracking_id, applicant_name, email, event_name, total_amount_paise,
+                    COALESCE(approved_amount_paise, total_amount_paise) AS approved_paise,
                     payment_method, upi_id, bank_account_name, bank_account_number_enc, bank_ifsc,
                     decided_by, decided_at
              FROM reimbursement_requests
@@ -781,19 +837,27 @@ class ReimbursementModel {
      * $receiptsDownloaded: finance confirmed they saved the receipts. That
      * timestamp is what makes the receipt files eligible for the purge cron
      * (bin/purge_receipts.php) — nothing is ever deleted without it.
+     *
+     * $paidPaise is the amount actually paid; $amountNote is the reason it
+     * differs from the approved amount (the applicant sees it; '' if it
+     * doesn't differ). The caller checks the amount; this just stores it.
      */
-    public function markPaid($requestId, $financeIdentifier, $paymentReference, $receiptsDownloaded = false) {
+    public function markPaid($requestId, $financeIdentifier, $paymentReference, $receiptsDownloaded = false, $paidPaise = null, $amountNote = '') {
+        $amountNote = trim((string) $amountNote);
         $stmt = $this->db->prepare(
             "UPDATE reimbursement_requests
              SET status = 'Paid', paid_by = :who, paid_at = NOW(), payment_reference = :ref,
-                 receipts_downloaded_at = IF(:dl = 1, NOW(), NULL)
+                 receipts_downloaded_at = IF(:dl = 1, NOW(), NULL),
+                 paid_amount_paise = :paid, paid_amount_note = :pnote
              WHERE id = :id AND status = 'Approved for Payment'"
         );
         $stmt->execute([
-            'who' => $financeIdentifier,
-            'ref' => $paymentReference,
-            'dl'  => $receiptsDownloaded ? 1 : 0,
-            'id'  => $requestId,
+            'who'   => $financeIdentifier,
+            'ref'   => $paymentReference,
+            'dl'    => $receiptsDownloaded ? 1 : 0,
+            'paid'  => $paidPaise !== null ? (int) $paidPaise : null,
+            'pnote' => $amountNote !== '' ? mb_substr($amountNote, 0, self::MAX_AMOUNT_NOTE_LENGTH) : null,
+            'id'    => $requestId,
         ]);
         return $stmt->rowCount() === 1;
     }
@@ -848,10 +912,14 @@ class ReimbursementModel {
      * include payment_method, upi_id, bank details, or line items: this is
      * an index to click into a receipt from, not a place to read payment
      * details directly. Most recently paid first.
+     *
+     * total_amount_paise is the claim; paid_paise is what was actually paid.
      */
     public function listPaidForFinance() {
         return $this->db->query(
-            "SELECT id, tracking_id, applicant_name, event_name, total_amount_paise, paid_by, paid_at
+            "SELECT id, tracking_id, applicant_name, event_name, total_amount_paise,
+                    COALESCE(paid_amount_paise, approved_amount_paise, total_amount_paise) AS paid_paise,
+                    paid_by, paid_at
              FROM reimbursement_requests
              WHERE status = 'Paid'
              ORDER BY paid_at DESC"
@@ -873,11 +941,18 @@ class ReimbursementModel {
      * where to send it" is genuinely all that's needed; this method backs
      * the *finished* receipt handed out afterward, where showing what the
      * payment covered is the point of the document.
+     *
+     * It also carries the approved/paid amounts and their reasons, so the
+     * receipt can show claimed vs approved vs paid when they differ.
+     * Internal notes are never included.
      */
     public function getPaidRequestForReceipt($requestId) {
         $stmt = $this->db->prepare(
             "SELECT id, tracking_id, applicant_name, email, event_name, event_date,
-                    total_amount_paise, payment_method, upi_id, bank_account_name,
+                    total_amount_paise,
+                    approved_amount_paise, approved_amount_note,
+                    paid_amount_paise, paid_amount_note,
+                    payment_method, upi_id, bank_account_name,
                     bank_account_number_enc, bank_ifsc, payment_reference,
                     decided_by, decided_at, paid_by, paid_at
              FROM reimbursement_requests
@@ -924,6 +999,12 @@ class ReimbursementModel {
      * those echoed back, and payment_reference is only ever surfaced once
      * Paid — that's on your own successful payment, not a preview of it.
      *
+     * approved_paise / paid_paise always hold a figure (falling back to the
+     * claimed total) so callers can compare them; the page decides when each
+     * is meaningful for the current status. The two *_amount_note columns are
+     * the reasons the applicant is meant to see. Staff-only internal notes
+     * are never selected here.
+     *
      * Excludes 'Discarded' requests on purpose — see discard()'s docblock.
      * A discarded request must look exactly like "no record found" here,
      * the same way it never generates a notification.
@@ -931,7 +1012,11 @@ class ReimbursementModel {
     public function getStatusForApplicant($trackingId, $email) {
         $stmt = $this->db->prepare(
             "SELECT tracking_id, event_name, event_date, total_amount_paise, status,
-                    admin_notes, payment_reference, paid_at, created_at
+                    admin_notes, payment_reference, paid_at, created_at,
+                    COALESCE(approved_amount_paise, total_amount_paise) AS approved_paise,
+                    approved_amount_note,
+                    COALESCE(paid_amount_paise, approved_amount_paise, total_amount_paise) AS paid_paise,
+                    paid_amount_note
              FROM reimbursement_requests
              WHERE tracking_id = :tracking_id AND email = :email
                AND status <> 'Discarded'"
@@ -949,10 +1034,16 @@ class ReimbursementModel {
      * the member dashboard. Same privacy rules as getStatusForApplicant():
      * no payment details and no line items, and Discarded requests are left
      * out so they look like "no record".
+     *
+     * paid_paise is only filled once the request is Paid; it is NULL before that.
      */
     public function listForMember($email) {
         $stmt = $this->db->prepare(
-            "SELECT tracking_id, event_name, total_amount_paise, status, created_at
+            "SELECT tracking_id, event_name, total_amount_paise, status, created_at,
+                    COALESCE(approved_amount_paise, total_amount_paise) AS approved_paise,
+                    CASE WHEN status = 'Paid'
+                         THEN COALESCE(paid_amount_paise, approved_amount_paise, total_amount_paise)
+                    END AS paid_paise
              FROM reimbursement_requests
              WHERE email = :email AND status <> 'Discarded'
              ORDER BY created_at DESC"

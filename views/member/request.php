@@ -16,7 +16,8 @@ require_once __DIR__ . '/../../models/InternetSupportModel.php';
  * Open to every signed-in member, including expired ones: a request already in flight
  * must be finishable (reply to a reviewer, upload a receipt).
  *
- * Never shown here: payment details, phone number, uploaded receipts.
+ * Never shown here: payment details, phone number, uploaded receipts, internal staff notes.
+ * The amounts shown are requested / approved / paid, with the reasons staff wrote for the member.
  */
 MemberSession::requireLogin();
 $member = MemberSession::current();
@@ -242,7 +243,19 @@ engage_header([
         <div class="result">
             <h3>Reimbursement — <?= $e($reimbursement['event_name']) ?></h3>
             Tracking ID: <code><?= $e($reimbursement['tracking_id']) ?></code><br>
-            Amount: ₹<?= number_format($reimbursement['total_amount_paise'] / 100, 2) ?><br>
+            <?php
+            $st = (string) $reimbursement['status'];
+            foreach (member_amount_rows(
+                'Amount claimed', (int) $reimbursement['total_amount_paise'],
+                (int) $reimbursement['approved_paise'], (int) $reimbursement['paid_paise'],
+                $reimbursement['approved_amount_note'], $reimbursement['paid_amount_note'],
+                in_array($st, ['Approved for Payment', 'Paid'], true), $st === 'Paid', 'Amount paid'
+            ) as [$amtLabel, $amtValue, $amtWhy]): ?>
+                <?= $e($amtLabel) ?>: <strong><?= $e($amtValue) ?></strong><br>
+                <?php if ($amtWhy !== ''): ?>
+                    <span style="font-size:14px; color:var(--muted);">Reason for the difference: <?= nl2br($e($amtWhy)) ?></span><br>
+                <?php endif; ?>
+            <?php endforeach; ?>
             Status: <strong><?= $e($statusLabel) ?></strong><br>
             <?php if ($reimbursement['status'] === 'Paid'): ?>
                 <?php if (!empty($reimbursement['payment_reference'])): ?>Transaction reference: <strong><?= $e($reimbursement['payment_reference']) ?></strong><br><?php endif; ?>
@@ -297,7 +310,20 @@ engage_header([
         <div class="result">
             <h3>Internet support — <?= $e($internet['operator']) ?>, <?= $e($internet['package_name']) ?></h3>
             Tracking ID: <code><?= $e($internet['tracking_id']) ?></code><br>
-            Amount requested: ₹<?= number_format($internet['package_price_paise'] / 100, 2) ?><br>
+            <?php
+            $st = (string) $internet['status'];
+            $internetMoneyMoved = in_array($st, ['Awaiting Receipt', 'Receipt Submitted', 'Closed'], true);
+            foreach (member_amount_rows(
+                'Amount requested', (int) $internet['package_price_paise'],
+                (int) $internet['approved_paise'], (int) $internet['paid_paise'],
+                $internet['approved_amount_note'], $internet['paid_amount_note'],
+                $internetMoneyMoved || $st === 'Approved for Support', $internetMoneyMoved, 'Amount recharged'
+            ) as [$amtLabel, $amtValue, $amtWhy]): ?>
+                <?= $e($amtLabel) ?>: <strong><?= $e($amtValue) ?></strong><br>
+                <?php if ($amtWhy !== ''): ?>
+                    <span style="font-size:14px; color:var(--muted);">Reason for the difference: <?= nl2br($e($amtWhy)) ?></span><br>
+                <?php endif; ?>
+            <?php endforeach; ?>
             Status: <strong><?= $e($statusLabel) ?></strong><br>
             <?php if ($internet['status'] === 'Rejected' && !empty($internet['admin_notes'])): ?>
                 Reviewer notes: <?= nl2br($e($internet['admin_notes'])) ?><br>
@@ -317,7 +343,8 @@ engage_header([
                     </div>
                 <?php endif; ?>
                 <p style="font-size:14px; color:var(--muted); margin-top:0;">
-                    Your number has been recharged. Please upload the operator's receipt or confirmation
+                    Your number has been recharged with ₹<?= $e(number_format(((int) $internet['paid_paise']) / 100, 2)) ?>.
+                    Please upload the operator's receipt or confirmation
                     (PDF, JPG or PNG, up to 10 MB) so we can close the request.
                 </p>
                 <form method="POST" enctype="multipart/form-data">

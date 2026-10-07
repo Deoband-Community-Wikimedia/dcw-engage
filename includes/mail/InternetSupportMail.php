@@ -46,8 +46,13 @@ class InternetSupportMail {
      *
      * 'Recharge Failed' and 'Discarded' are refused here (return false): the first is
      * finance-to-reviewer plumbing, the second must be silent.
+     *
+     * $amountPaise / $amountNote: for 'Approved for Support' this is the approved amount,
+     * for 'Awaiting Receipt' the amount actually recharged. $amountNote is the reason the
+     * amount differs from the previous figure (pass '' when it doesn't); the member sees it.
+     * They are ignored for every other status, and never carry internal notes.
      */
-    public static function statusUpdate($email, $applicantName, $trackingId, $status, $note = '', $reference = '') {
+    public static function statusUpdate($email, $applicantName, $trackingId, $status, $note = '', $reference = '', $amountPaise = null, $amountNote = '') {
         // Never tell the member about internal-only states, even if a caller forgets.
         if (in_array($status, ['Recharge Failed', 'Discarded'], true)) {
             return false;
@@ -112,14 +117,29 @@ class InternetSupportMail {
                 $extra = $button;
         }
 
+        // Amount line: only for the two statuses that carry one.
+        $amountNote = trim((string) $amountNote);
+        $amountHtml = '';
+        $amountAlt  = '';
+        if ($amountPaise !== null && in_array($status, ['Approved for Support', 'Awaiting Receipt'], true)) {
+            $label = $status === 'Awaiting Receipt' ? 'Amount recharged' : 'Approved amount';
+            $amt   = '₹' . number_format(((int) $amountPaise) / 100, 2);
+            $amountHtml = "<p><strong>$label:</strong> $amt"
+                        . ($amountNote !== ''
+                            ? "<br><span style='font-size:14px; color:#64748b;'>Reason for the difference: " . nl2br($e($amountNote)) . "</span>"
+                            : '')
+                        . "</p>";
+            $amountAlt  = "\n\n$label: $amt" . ($amountNote !== '' ? "\nReason for the difference: $amountNote" : '');
+        }
+
         $safeNote = $note !== '' ? "<p><strong>Remarks / Notes:</strong><br>" . nl2br($e($note)) . "</p>" : '';
         $altNote  = $note !== '' ? "\n\nRemarks / Notes:\n$note" : '';
 
         return CoreMail::send([
             'to' => $email, 'to_name' => $applicantName,
             'subject' => $subject,
-            'html' => "<p>" . CoreMail::greeting($applicantName) . "</p><p>$line</p>$safeNote$extra",
-            'alt' => CoreMail::greeting($applicantName, false) . "\n\n$alt$altNote",
+            'html' => "<p>" . CoreMail::greeting($applicantName) . "</p><p>$line</p>$amountHtml$safeNote$extra",
+            'alt' => CoreMail::greeting($applicantName, false) . "\n\n$alt$amountAlt$altNote",
             'dev_result' => false, 'dev_log' => "Internet support email to $email: $subject",
         ]);
     }
