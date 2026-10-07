@@ -10,9 +10,11 @@
  * finished document is written to disk. The logo is fetched into memory on
  * every call for the same reason.
  *
- * The amount shown is the amount the request was APPROVED for. The actual
- * price the operator charged is not recorded separately; what finance
- * records at recharge time is the operator's reference.
+ * The headline amount is what finance actually recharged. If that differs
+ * from the requested or approved amount, the Recharge section lists each
+ * figure with the reasons staff gave for the applicant. Rows closed before
+ * approved and recharged amounts existed print exactly as they used to.
+ * Internal notes are never included.
  */
 
 /**
@@ -48,6 +50,19 @@ function internet_receipt_format_ist(?string $utcDatetime, string $format): stri
     return $dt->setTimezone(new DateTimeZone('Asia/Kolkata'))->format($format);
 }
 
+/** Requested / approved / recharged, falling back so older rows print unchanged. */
+function internet_receipt_amounts(array $data): array {
+    $requested = (int) $data['package_price_paise'];
+    $approved  = ($data['approved_amount_paise'] ?? null) !== null ? (int) $data['approved_amount_paise'] : $requested;
+    $paid      = ($data['paid_amount_paise'] ?? null) !== null ? (int) $data['paid_amount_paise'] : $approved;
+    return [
+        'requested' => $requested,
+        'approved'  => $approved,
+        'paid'      => $paid,
+        'differs'   => $requested !== $approved || $approved !== $paid,
+    ];
+}
+
 /**
  * $data is the array returned by InternetSupportModel::getClosedRequestForReceipt().
  */
@@ -67,6 +82,26 @@ function internet_receipt_html(array $data): string {
 
     $validity = !empty($data['package_validity_days']) ? (int) $data['package_validity_days'] . ' days' : '—';
     $phone = !empty($data['phone_masked']) ? $data['phone_masked'] : '—';
+
+    // Amounts. The extra rows only appear when the figures differ.
+    $amt = internet_receipt_amounts($data);
+    $why = function ($note) use ($e): string {
+        $note = trim((string) $note);
+        return $note !== ''
+            ? "<br><span style='color:#64748b; font-size:11px;'>Reason: " . nl2br($e($note)) . "</span>"
+            : '';
+    };
+    if ($amt['differs']) {
+        $amountRowsHtml = "<tr><td class='label'>Amount Requested</td><td>" . $rupees($amt['requested']) . "</td></tr>";
+        if ($amt['approved'] !== $amt['requested']) {
+            $amountRowsHtml .= "<tr><td class='label'>Amount Approved</td><td>" . $rupees($amt['approved'])
+                . $why($data['approved_amount_note'] ?? '') . "</td></tr>";
+        }
+        $amountRowsHtml .= "<tr><td class='label'>Amount Recharged</td><td><strong>" . $rupees($amt['paid']) . "</strong>"
+            . ($amt['paid'] !== $amt['approved'] ? $why($data['paid_amount_note'] ?? '') : '') . "</td></tr>";
+    } else {
+        $amountRowsHtml = "<tr><td class='label'>Amount Recharged</td><td>" . $rupees($amt['paid']) . "</td></tr>";
+    }
 
     $requestedAt = internet_receipt_format_ist($data['created_at'] ?? null, 'j F Y, H:i') . ' IST';
     $approvedAt  = internet_receipt_format_ist($data['decided_at'] ?? null, 'j F Y, H:i') . ' IST';
@@ -103,7 +138,7 @@ function internet_receipt_html(array $data): string {
 
         <div class='amount-box'>
             <div class='status'>Recharge completed</div>
-            <div class='amount'>" . $rupees((int) $data['package_price_paise']) . "</div>
+            <div class='amount'>" . $rupees($amt['paid']) . "</div>
         </div>
 
         <h2>Requester</h2>
@@ -119,7 +154,7 @@ function internet_receipt_html(array $data): string {
             <tr><td class='label'>Operator</td><td>" . $e($data['operator']) . "</td></tr>
             <tr><td class='label'>Plan</td><td>" . $e($data['package_name']) . "</td></tr>
             <tr><td class='label'>Validity</td><td>" . $e($validity) . "</td></tr>
-            <tr><td class='label'>Approved Amount</td><td>" . $rupees((int) $data['package_price_paise']) . "</td></tr>
+            $amountRowsHtml
             <tr><td class='label'>Operator Reference</td><td>" . $e($data['recharge_reference'] ?: '—') . "</td></tr>
             <tr><td class='label'>Recharged By</td><td>" . $e($data['recharged_by'] ?: '—') . "</td></tr>
             <tr><td class='label'>Recharged On</td><td>" . $e($rechargedAt) . "</td></tr>
