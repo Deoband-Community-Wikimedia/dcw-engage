@@ -6,8 +6,8 @@
 //   CoreMail.php        SMTP + the shared look (nothing else talks to PHPMailer)
 //   ApplicationMail.php      event applications: verification, magic link, received, status, organizer alert
 //   OrganizerAccountMail.php organizer invitations and password resets
-//   ReimbursementMail.php    reimbursement: verification, received, status (incl. Info Requested)
-//   InternetSupportMail.php  internet support: verification, received, status (incl. Info Requested)
+//   ReimbursementMail.php    reimbursement (members only): received, status (incl. Info Requested)
+//   InternetSupportMail.php  internet support (members only): received, status (incl. Info Requested)
 //   MemberSupportMail.php    member conversations with DCW Support: "you have a reply" / "status changed"
 //                            notifications (never contain the message text or any staff name)
 //   membership_mailer.php    membership emails (class MembershipMailer): club-specific wording, From name and reply-to
@@ -16,6 +16,9 @@
 // only forwards. New code can call the subject class directly. To add an email,
 // put it in the matching subject class (or a new file under includes/mail/) and,
 // if old-style callers need it, add a one-line forwarder here.
+//
+// Reimbursement and internet support no longer send an email-verification message:
+// they are members-only, so signing in already proves the email.
 //
 // MembershipMailer has no forwarders here: call it directly, e.g. MembershipMailer::sendDecisionFor(...).
 
@@ -41,14 +44,18 @@ class Mailer {
     public static function sendOrganizerInvite(...$a)     { return OrganizerAccountMail::invite(...$a); }
     public static function sendPasswordReset(...$a)       { return OrganizerAccountMail::passwordReset(...$a); }
 
-    // --- Reimbursements -----------------------------------------------------
-    public static function sendReimbursementVerification(...$a) { return ReimbursementMail::verification(...$a); }
+    // --- Reimbursements (members only) --------------------------------------
+    // ($email, $applicantName, $trackingId, $eventTitle)
     public static function sendReimbursementReceived(...$a)     { return ReimbursementMail::received(...$a); }
+    // ($email, $applicantName, $trackingId, $eventTitle, $status, $note = '', $paymentReference = '')
+    // Returns false (sends nothing) for 'Payment Failed' and 'Discarded'.
     public static function sendReimbursementStatusUpdate(...$a) { return ReimbursementMail::statusUpdate(...$a); }
 
-    // --- Internet support ---------------------------------------------------
-    public static function sendInternetVerification(...$a)   { return InternetSupportMail::verification(...$a); }
+    // --- Internet support (members only) ------------------------------------
+    // ($email, $applicantName, $trackingId)
     public static function sendInternetReceived(...$a)       { return InternetSupportMail::received(...$a); }
+    // ($email, $applicantName, $trackingId, $status, $note = '', $reference = '')
+    // Returns false (sends nothing) for 'Recharge Failed' and 'Discarded'.
     public static function sendInternetStatusUpdate(...$a)   { return InternetSupportMail::statusUpdate(...$a); }
 
     // --- Member support (DCW Support conversations) -------------------------
