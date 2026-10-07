@@ -274,7 +274,7 @@ function engage_footer() {
                 <ul>
                     <li><a href="/">All programs</a></li>
                     <li><a href="/membership">Join or renew</a></li>
-                    <li><a href="/support">Request support</a></li>
+                    <li><a href="/member/support">Request support</a></li>
                     <li><a href="/track">Track an application</a></li>
                     <li><a href="/member/login">Member sign in</a></li>
                 </ul>
