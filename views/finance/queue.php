@@ -6,7 +6,7 @@ require_once __DIR__ . '/../../includes/require_role.php';
 require_once __DIR__ . '/../../includes/app_log.php';
 require_once __DIR__ . '/../../includes/mailer.php';
 require_once __DIR__ . '/../../includes/engage_page.php';
-require_once __DIR__ . '/../../includes/money.php';
+require_once __DIR__ . '/../../includes/amount_helpers.php';
 require_once __DIR__ . '/../../includes/internal_notes_ui.php';
 require_once __DIR__ . '/../../models/ReimbursementModel.php';
 require_once __DIR__ . '/../../models/InternetSupportModel.php';
