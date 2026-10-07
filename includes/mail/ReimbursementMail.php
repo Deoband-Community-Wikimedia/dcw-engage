@@ -44,8 +44,13 @@ class ReimbursementMail {
      * $paymentReference is the transaction reference (UTR / transaction ID)
      * finance recorded when marking the request paid. Only used for 'Paid',
      * so the member can match the payment against their own statement.
+     *
+     * $amountPaise / $amountNote: for 'Approved for Payment' this is the approved amount,
+     * for 'Paid' the amount actually paid. $amountNote is the reason the amount differs from
+     * the previous figure (pass '' when it doesn't); the member sees it. They are ignored for
+     * every other status, and never carry internal notes.
      */
-    public static function statusUpdate($email, $applicantName, $trackingId, $eventTitle, $status, $note = '', $paymentReference = '') {
+    public static function statusUpdate($email, $applicantName, $trackingId, $eventTitle, $status, $note = '', $paymentReference = '', $amountPaise = null, $amountNote = '') {
         // Never tell the member about internal-only states, even if a caller forgets.
         if (in_array($status, ['Payment Failed', 'Discarded'], true)) {
             return false;
@@ -86,16 +91,31 @@ class ReimbursementMail {
                 $alt  = "The status of your reimbursement request for $eventTitle (Tracking ID: $trackingId) has been updated to: $status.";
         }
 
+        // Amount line: only for the two statuses that carry one.
+        $amountNote = trim((string) $amountNote);
+        $amountHtml = '';
+        $amountAlt  = '';
+        if ($amountPaise !== null && in_array($status, ['Approved for Payment', 'Paid'], true)) {
+            $label = $status === 'Paid' ? 'Amount paid' : 'Approved amount';
+            $amt   = '₹' . number_format(((int) $amountPaise) / 100, 2);
+            $amountHtml = "<p><strong>$label:</strong> $amt"
+                        . ($amountNote !== ''
+                            ? "<br><span style='font-size:14px; color:#64748b;'>Reason for the difference: " . nl2br($e($amountNote)) . "</span>"
+                            : '')
+                        . "</p>";
+            $amountAlt  = "\n\n$label: $amt" . ($amountNote !== '' ? "\nReason for the difference: $amountNote" : '');
+        }
+
         $noteHtml = $note !== '' ? "<p><strong>Remarks / Notes:</strong><br>" . nl2br($e($note)) . "</p>" : '';
         $altNote  = $note !== '' ? "\n\nRemarks / Notes:\n$note" : '';
 
-        $inner = "<p>" . CoreMail::greeting($applicantName) . "</p><p>$line</p>$referenceHtml$noteHtml$button";
+        $inner = "<p>" . CoreMail::greeting($applicantName) . "</p><p>$line</p>$referenceHtml$amountHtml$noteHtml$button";
 
         return CoreMail::send([
             'to' => $email, 'to_name' => $applicantName,
             'subject' => $subject,
             'html' => $inner,
-            'alt' => CoreMail::greeting($applicantName, false) . "\n\n$alt$altReference$altNote$altLink",
+            'alt' => CoreMail::greeting($applicantName, false) . "\n\n$alt$altReference$amountAlt$altNote$altLink",
             'dev_result' => true,
             'dev_log' => "Reimbursement status update for $email: $trackingId ($eventTitle) is now '$status'" . ($note ? " | note: $note" : ''),
         ]);
