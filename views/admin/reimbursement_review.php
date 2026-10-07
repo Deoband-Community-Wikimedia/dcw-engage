@@ -4,19 +4,28 @@ require_once __DIR__ . '/../../includes/auth.php';
 require_once __DIR__ . '/../../includes/audit.php';
 require_once __DIR__ . '/../../includes/require_role.php';
 require_once __DIR__ . '/../../includes/engage_page.php';
+require_once __DIR__ . '/../../includes/amount_helpers.php';
+require_once __DIR__ . '/../../includes/internal_notes_ui.php';
 require_once __DIR__ . '/../../models/ReimbursementModel.php';
+require_once __DIR__ . '/../../models/InternalNoteModel.php';
 
 // Support reviewers and owners review claim substance. Organizers only work
 // with application forms, so they are not in this list. Finance is NOT in
 // this list either: they get reimbursement_queue.php instead, which shows
 // payment details, not claim substance.
+//
+// A reviewer may approve LESS than the applicant claimed (never more). A reason
+// is then required and the applicant is told. Finance later sees the approved
+// amount and may still adjust it when paying.
 requireRole(['support_reviewer', 'owner']);
 
 // Global now — one reimbursement form covers every event, so there's no
 // per-event slug to look up (no more FormModel/ReimbursementFormModel here
 // at all). Every open request across every event lands on this one page.
 $reimbursementModel = new ReimbursementModel();
+$noteModel = new InternalNoteModel();
 $message = '';
+$error = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!CSRF::validate($_POST['csrf_token'] ?? '')) {
@@ -34,19 +43,50 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $requestId = (int) ($_POST['request_id'] ?? 0);
     $notes = trim($_POST['notes'] ?? '');
+    $decision = $_POST['decision'] ?? '';
 
-    if (($_POST['decision'] ?? '') === 'approve') {
-        if ($reimbursementModel->approveForPayment($requestId, Auth::email())) {
+    if ($decision === 'internal_note') {
+        // Staff-only; never shown to the applicant.
+        try {
+            $noteModel->add('reimbursement', $requestId, Auth::email(), $_POST['internal_note'] ?? '');
+            AuditLog::record('reimbursement.internal_note', Auth::id(), Auth::email(), null, "Request #$requestId");
+            $message = 'Internal note added.';
+        } catch (\InvalidArgumentException $ex) {
+            $error = $ex->getMessage();
+        }
+    } elseif ($decision === 'approve') {
+        $approvedPaise = rupees_to_paise($_POST['approved_amount'] ?? '');
+        $claimedPaise  = $reimbursementModel->claimedAmountPaise($requestId);
+        $amountNote    = trim($_POST['amount_note'] ?? '');
+        $differs       = $approvedPaise !== null && $approvedPaise !== $claimedPaise;
+        $approvedNote  = $differs ? $amountNote : '';
+
+        if ($approvedPaise === null) {
+            $error = "Enter the amount to approve, in ₹ (for example 250 or 250.50).";
+        } elseif ($approvedPaise > $claimedPaise) {
+            $error = "You can't approve more than the applicant claimed (" . rupees_label($claimedPaise) . ").";
+        } elseif ($differs && $amountNote === '') {
+            $error = "You are approving a different amount than claimed (" . rupees_label($claimedPaise) . "). Add a reason: the applicant will see it.";
+        } elseif (mb_strlen($amountNote) > 500) {
+            $error = "The reason is too long (500 characters max).";
+        } elseif ($reimbursementModel->approveForPayment($requestId, Auth::email(), $approvedPaise, $approvedNote)) {
             $info = $reimbursementModel->getForNotification($requestId);
-            AuditLog::record('reimbursement.approved', Auth::id(), Auth::email(), $info['email'], 'Tracking: ' . $info['tracking_id']);
+            AuditLog::record(
+                'reimbursement.approved', Auth::id(), Auth::email(), $info['email'],
+                'Tracking: ' . $info['tracking_id'] . ' | Approved ' . rupees_label($approvedPaise)
+                . ($differs ? ' (claimed ' . rupees_label($claimedPaise) . ' | Reason: ' . $approvedNote . ')' : '')
+            );
             require_once __DIR__ . '/../../includes/mailer.php';
             Mailer::sendReimbursementStatusUpdate(
                 $info['email'], $info['applicant_name'], $info['tracking_id'],
-                $info['event_name'], 'Approved for Payment'
+                $info['event_name'], 'Approved for Payment', '', '', $approvedPaise, $approvedNote
             );
-            $message = "Request #$requestId approved for payment. It now moves to the finance queue.";
+            $message = "Request #$requestId approved for " . rupees_label($approvedPaise) . ". It now moves to the finance queue."
+                . ($differs ? " This is less than the claimed " . rupees_label($claimedPaise) . "; the applicant has been told why." : '');
+        } else {
+            $error = "That request was already handled by someone else, or is waiting on the applicant's reply.";
         }
-    } elseif (($_POST['decision'] ?? '') === 'reject') {
+    } elseif ($decision === 'reject') {
         // Substance-based: the applicant plausibly belonged here, the claim
         // itself didn't hold up. They get an email — see ReimbursementModel::reject().
         if ($reimbursementModel->reject($requestId, Auth::email(), $notes)) {
@@ -58,8 +98,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $info['event_name'], 'Rejected', $notes
             );
             $message = "Request #$requestId rejected.";
+        } else {
+            $error = "That request was already handled by someone else.";
         }
-    } elseif (($_POST['decision'] ?? '') === 'discard') {
+    } elseif ($decision === 'discard') {
         // Never had a real claim to begin with — spam, unrelated email,
         // no connection to any event. Deliberately silent: no Mailer call,
         // by design, per ReimbursementModel::discard()'s docblock. $notes
@@ -67,6 +109,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($reimbursementModel->discard($requestId, Auth::email(), $notes ?: null)) {
             AuditLog::record('reimbursement.discarded', Auth::id(), Auth::email(), null, 'Request #' . $requestId . ($notes ? ' | ' . $notes : ''));
             $message = "Request #$requestId discarded. No email was sent.";
+        } else {
+            $error = "That request was already handled by someone else.";
         }
     }
 }
@@ -82,8 +126,12 @@ $requests = array_merge($pending, $underReview);
 $h = fn($v) => htmlspecialchars((string) $v);
 
 /** One claim card: header, line items, and the decision form. */
-function reimbursement_card(array $req, bool $failed, callable $h): void
+function reimbursement_card(array $req, bool $failed, callable $h, InternalNoteModel $noteModel): void
 {
+    // The amount box starts at the earlier approval (a re-approval after a failed payment), else the full claim.
+    $claimedPaise = (int) $req['total_amount_paise'];
+    $prefillPaise = $req['approved_amount_paise'] !== null ? (int) $req['approved_amount_paise'] : $claimedPaise;
+    $internalNotes = $noteModel->forRequest('reimbursement', (int) $req['id']);
     ?>
     <section class="sect<?= $failed ? ' sect-failed' : '' ?>">
         <div class="qhead">
@@ -131,14 +179,24 @@ function reimbursement_card(array $req, bool $failed, callable $h): void
         </div>
         <?php endif; ?>
 
-        <p class="total">Total <strong>₹<?= number_format($req['total_amount_paise'] / 100, 2) ?></strong></p>
+        <p class="total">Claimed <strong>₹<?= number_format($claimedPaise / 100, 2) ?></strong></p>
+
+        <?php internal_notes_block('reimbursement', (int) $req['id'], $internalNotes, 'decision'); ?>
 
         <form method="POST" class="actform">
             <?= CSRF::getInputField() ?>
             <?= CSRF::getSubmitField() ?>
             <input type="hidden" name="request_id" value="<?= (int) $req['id'] ?>">
             <div class="field">
-                <label>Notes (required if rejecting, optional if discarding)</label>
+                <label>Amount to approve (₹): starts as <?= $req['approved_amount_paise'] !== null ? 'the earlier approval' : 'the full claim' ?>; you can approve less, never more</label>
+                <input type="text" name="approved_amount" inputmode="decimal" value="<?= $h(paise_to_rupees($prefillPaise)) ?>">
+            </div>
+            <div class="field">
+                <label>Reason, only if this is less than the claimed ₹<?= number_format($claimedPaise / 100, 2) ?> (the applicant sees it)</label>
+                <input type="text" name="amount_note" maxlength="500">
+            </div>
+            <div class="field">
+                <label>Notes (required if rejecting: the applicant sees them. Optional if discarding: audit trail only)</label>
                 <textarea name="notes" rows="2"></textarea>
             </div>
             <div class="actrow">
@@ -156,7 +214,7 @@ engage_header([
     'title'   => 'Reimbursement review',
     'heading' => 'Reimbursement review',
     'kicker'  => 'Organizer workspace',
-    'lead'    => 'Approve or reject claims. Line items and receipts only, no payment details.',
+    'lead'    => 'Approve or reject claims, and for how much. Line items and receipts only, no payment details.',
     'tools'   => '',
     'wide'    => true,
     'crumbs'  => [['Workspace', '/admin/dashboard'], ['Reimbursement review']],
@@ -180,6 +238,7 @@ engage_header([
 
     .actform { margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--border); }
     .actform .field { margin-bottom: 12px; }
+    .actform .field input[type="text"] { width: 100%; box-sizing: border-box; }
     .actrow { display: flex; flex-wrap: wrap; gap: 10px; }
     .actrow button { width: auto; }
 
@@ -187,12 +246,13 @@ engage_header([
 </style>
 
 <?php if ($message): ?><div class="alert ok"><?= $h($message) ?></div><?php endif; ?>
+<?php if ($error): ?><div class="alert error"><?= $h($error) ?></div><?php endif; ?>
 
 <?php if (empty($requests)): ?>
     <div class="empty-note">Nothing awaiting review.</div>
 <?php endif; ?>
 
-<?php foreach ($requests as $req) { reimbursement_card($req, false, $h); } ?>
+<?php foreach ($requests as $req) { reimbursement_card($req, false, $h, $noteModel); } ?>
 
 <?php if (!empty($paymentFailed)): ?>
     <h2 class="failed-head">Payment failed: needs attention</h2>
@@ -201,6 +261,6 @@ engage_header([
         fix the payment details if needed (the applicant may need to resubmit
         correct bank/UPI details), then re-approve or reject.
     </p>
-    <?php foreach ($paymentFailed as $req) { reimbursement_card($req, true, $h); } ?>
+    <?php foreach ($paymentFailed as $req) { reimbursement_card($req, true, $h, $noteModel); } ?>
 <?php endif; ?>
 <?php engage_footer(); ?>
