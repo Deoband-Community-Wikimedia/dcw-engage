@@ -8,7 +8,7 @@ require_once __DIR__ . '/../includes/crypto.php';
  * move a request at each step:
  *
  *   Submitted --(support reviewer)--> Approved for Support | Rejected | Discarded
- *   Approved for Support --(finance)--> Awaiting Receipt | Recharge Failed
+ *   Approved for Support --(finance)--> Awaiting Receipt | Recharge Failed | Submitted (sent back to review)
  *   Recharge Failed --(support reviewer)--> Approved for Support | Rejected | Discarded
  *   Submitted --(support reviewer)--> Info Requested --(applicant, via /track)--> Submitted
  *   Info Requested --(support reviewer)--> Rejected | Discarded (applicant never replied)
@@ -341,7 +341,7 @@ class InternetSupportModel {
     public function listForReview($status = null) {
         $sql = "SELECT r.id, r.tracking_id, r.email, r.applicant_name,
                        r.operator, r.package_name, r.package_price_paise, r.package_validity_days,
-                       r.approved_amount_paise,
+                       r.approved_amount_paise, r.sent_back_note, r.sent_back_at,
                        r.reason, r.wikimedia_username, r.edits_80, r.attended_ch, r.tech_contributor,
                        r.contributions, r.plans,
                        r.status, r.admin_notes, r.decided_by, r.decided_at,
@@ -376,13 +376,43 @@ class InternetSupportModel {
         $stmt = $this->db->prepare(
             "UPDATE internet_requests
              SET status = 'Approved for Support', decided_by = :who, decided_at = NOW(),
-                 approved_amount_paise = :amt, approved_amount_note = :note
+                 approved_amount_paise = :amt, approved_amount_note = :note,
+                 sent_back_by = NULL, sent_back_at = NULL, sent_back_note = NULL
              WHERE id = :id AND status IN ('Submitted', 'Recharge Failed')"
         );
         $stmt->execute([
             'who'  => $adminIdentifier,
             'amt'  => $amountPaise !== null ? (int) $amountPaise : null,
             'note' => $amountNote !== '' ? mb_substr($amountNote, 0, self::MAX_AMOUNT_NOTE_LENGTH) : null,
+            'id'   => (int) $requestId,
+        ]);
+        return $stmt->rowCount() === 1;
+    }
+
+    /**
+     * Finance sends an approved request BACK to the reviewers (for example an
+     * accidental approval). Moves 'Approved for Support' -> 'Submitted', so it
+     * lands in the reviewers' "New requests" list as if new, where they can
+     * approve, ask the applicant for information, reject or discard it again.
+     *
+     * The earlier approval is wiped (approved amount and its reason), so the
+     * reviewer decides afresh from the requested price. $note is shown to the
+     * reviewers only. NO applicant email: like 'Recharge Failed', this is
+     * finance-to-reviewer plumbing, and on the member side the request simply
+     * reads "In review" again. Returns false if the request is no longer
+     * 'Approved for Support' (someone else got there first).
+     */
+    public function sendBackToReview($requestId, $financeIdentifier, $note) {
+        $stmt = $this->db->prepare(
+            "UPDATE internet_requests
+             SET status = 'Submitted',
+                 approved_amount_paise = NULL, approved_amount_note = NULL,
+                 sent_back_by = :who, sent_back_at = NOW(), sent_back_note = :note
+             WHERE id = :id AND status = 'Approved for Support'"
+        );
+        $stmt->execute([
+            'who'  => $financeIdentifier,
+            'note' => mb_substr(trim((string) $note), 0, 1000),
             'id'   => (int) $requestId,
         ]);
         return $stmt->rowCount() === 1;
