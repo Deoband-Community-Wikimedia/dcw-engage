@@ -84,14 +84,23 @@ try {
 
 // ---- The member's own requests -----------------------------------------------------------------
 // Needs InternetSupportModel::listForMember() and ReimbursementModel::listForMember().
-// dash_status() / dash_date() live in includes/member_requests.php (shared with /member/request).
+// dash_status() / dash_date() / dash_money() live in includes/member_requests.php (shared with /member/request).
 // Applicants never see internal states: "Recharge Failed" and "Payment Failed" show as "In review".
+//
+// Each row carries three figures:
+//   amount   what the member asked for
+//   approved what the reviewer approved (same as amount unless changed)
+//   paid     what finance actually recharged / paid, or null until money has moved
 $requests = [];
 try {
     foreach ((new InternetSupportModel())->listForMember($email) as $r) {
         [$label, $tone, $act] = dash_status('internet', (string) $r['status']);
         $requests[] = ['type' => 'Internet support', 'icon' => 'wifi', 'title' => $r['package_name'],
-            'amount' => (int) $r['package_price_paise'], 'tracking' => $r['tracking_id'], 'created' => $r['created_at'],
+            'amount' => (int) $r['package_price_paise'],
+            'approved' => (int) $r['approved_paise'],
+            'paid' => $r['paid_paise'] !== null ? (int) $r['paid_paise'] : null,
+            'paid_label' => 'Recharged',
+            'tracking' => $r['tracking_id'], 'created' => $r['created_at'],
             'label' => $label, 'tone' => $tone, 'act' => $act];
     }
 } catch (Throwable $e) { /* method not added yet, or table missing: show nothing rather than break */ }
@@ -99,7 +108,11 @@ try {
     foreach ((new ReimbursementModel())->listForMember($email) as $r) {
         [$label, $tone, $act] = dash_status('reimbursement', (string) $r['status']);
         $requests[] = ['type' => 'Reimbursement', 'icon' => 'card', 'title' => $r['event_name'],
-            'amount' => (int) $r['total_amount_paise'], 'tracking' => $r['tracking_id'], 'created' => $r['created_at'],
+            'amount' => (int) $r['total_amount_paise'],
+            'approved' => (int) $r['approved_paise'],
+            'paid' => $r['paid_paise'] !== null ? (int) $r['paid_paise'] : null,
+            'paid_label' => 'Paid',
+            'tracking' => $r['tracking_id'], 'created' => $r['created_at'],
             'label' => $label, 'tone' => $tone, 'act' => $act];
     }
 } catch (Throwable $e) { }
@@ -238,7 +251,13 @@ engage_header([
                             <div>
                                 <h3><?= htmlspecialchars($r['title']) ?></h3>
                                 <p class="meta">
-                                    <?= htmlspecialchars($r['type']) ?> &middot; &#8377;<?= number_format($r['amount'] / 100, $r['amount'] % 100 ? 2 : 0) ?>
+                                    <?= htmlspecialchars($r['type']) ?> &middot; Requested &#8377;<?= dash_money($r['amount']) ?>
+                                    <?php if ($r['paid'] === null && $r['approved'] !== $r['amount']): ?>
+                                        &middot; Approved &#8377;<?= dash_money($r['approved']) ?>
+                                    <?php endif; ?>
+                                    <?php if ($r['paid'] !== null): ?>
+                                        &middot; <strong><?= htmlspecialchars($r['paid_label']) ?> &#8377;<?= dash_money($r['paid']) ?></strong>
+                                    <?php endif; ?>
                                     &middot; <?= htmlspecialchars(dash_date($r['created'])) ?>
                                     &middot; <code><?= htmlspecialchars($r['tracking']) ?></code><button type="button" class="copy" data-copy="<?= htmlspecialchars($r['tracking']) ?>">Copy</button>
                                 </p>
