@@ -6,7 +6,7 @@
  * so a member login and an organizer login never interfere, and logging out of one leaves the
  * other alone. Do NOT call Auth::logout() for members: it destroys the whole session.
  *
- * Gate a page with MemberSession::requireLogin() (see views/support.php, later).
+ * Gate a page with MemberSession::requireLogin() (see member/support.php, member/request.php).
  * MemberAuthModel checks credentials; this class only keeps the session.
  */
 require_once __DIR__ . '/../models/MemberAuthModel.php';
@@ -78,15 +78,14 @@ class MemberSession {
     }
 
     /**
-     * Where a login may send the member afterwards: the dashboard (/member/dashboard) and
-     * /support with its sub-paths, on this site. Rejects //evil.com style values, and never the
-     * login or logout pages themselves (that would loop).
+     * Dashboard
      */
     public static function isSafeNext($next): bool {
-        return is_string($next)
-            && preg_match('#^/(support|member/dashboard)(/|\?|$)#', $next) === 1
-            && strpos($next, '//') !== 0
-            && strpos($next, "\n") === false
-            && strpos($next, "\r") === false;
+        if (!is_string($next)) return false;
+        if (strpos($next, "\n") !== false || strpos($next, "\r") !== false) return false;
+        if (strpos($next, '\\') !== false) return false;          // /\evil.com is treated as //evil.com by browsers
+        if (strpos($next, '//') === 0) return false;
+        if (preg_match('#^/member/(login|logout)(/|\?|$)#', $next) === 1) return false;
+        return preg_match('#^/(support|member(/[A-Za-z0-9_\-]+)*)(/|\?|$)#', $next) === 1;
     }
 }

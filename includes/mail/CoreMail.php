@@ -26,6 +26,23 @@ class CoreMail {
         return rtrim($config['app']['url'], '/');
     }
 
+    /** Link to one internet support / reimbursement request on the member side (sign-in required). */
+    public static function memberRequestUrl($trackingId) {
+        return self::appUrl() . '/member/request?id=' . rawurlencode((string) $trackingId);
+    }
+
+    /**
+     * Salutation for member emails: "Dear <strong>Name</strong>," or "Dear Member," when no name
+     * is available. $html = false gives the plain-text version (no escaping, no tags).
+     */
+    public static function greeting($name, $html = true) {
+        $name = trim((string) $name);
+        if ($name === '') {
+            return 'Dear Member,';
+        }
+        return $html ? 'Dear <strong>' . self::e($name) . '</strong>,' : "Dear $name,";
+    }
+
     /**
      * Formats a database timestamp (stored in UTC) for people in India,
      * e.g. "28 Sep 2026, 6:55 PM IST". Always labelled, and uses explicit
@@ -114,7 +131,7 @@ class CoreMail {
         }
     }
 
-    /** Standard "open the tracking page" button. */
+    /** Standard call-to-action button. */
     public static function button($url, $label) {
         return "<div class='btn-wrapper'><a href='" . self::e($url) . "' class='btn'>" . self::e($label) . "</a></div>";
     }

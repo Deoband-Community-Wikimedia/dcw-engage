@@ -1,51 +1,31 @@
 <?php
 // includes/mail/InternetSupportMail.php
 // Emails for internet support requests (tracking IDs start "IS-").
-// Callers must not let the result change what the visitor sees; every method
+// Internet support is MEMBERS ONLY: requests are made and followed while signed in
+// (/member/support, /member/request), so there is no email-verification step any more.
+// Callers must not let the result change what the member sees; every method
 // returns false in dev mode, so they never pretend something was sent.
 require_once __DIR__ . '/CoreMail.php';
 
 class InternetSupportMail {
-    /** "Verify your email" for the internet support form (form_id NULL verification). */
-    public static function verification($email, $verifyUrl, $expiresAt) {
-        $expiresTime = CoreMail::formatExpiryIST($expiresAt);
-        $url = CoreMail::e($verifyUrl);
-
-        $inner = "
-            <p>Hello,</p>
-            <p>Please confirm this email address to start your internet support request.</p>
-            <div class='btn-wrapper'><a href='$url' class='btn'>Verify My Email</a></div>
-            <p>If the button doesn't work, copy and paste this link into your browser:<br><br>
-               <a href='$url' style='color: #106b9a; word-break: break-all;'>$url</a></p>
-            <p><strong>This link expires at $expiresTime</strong> and can only be used once.</p>
-            <p style='margin-bottom:0;'>If you did not ask for this, ignore this email. Nothing has been submitted.</p>";
-
-        $alt = "Hello,\n\nPlease confirm this email address to start your internet support request.\n\n"
-             . "Verify your email here:\n$verifyUrl\n\nThis link expires at $expiresTime and can only be used once.\n\n"
-             . "If you did not ask for this, ignore this email. Nothing has been submitted.\n\nDeoband Community Wikimedia";
-
-        return CoreMail::send([
-            'to' => $email, 'subject' => 'Verify your email to start your internet support request',
-            'html' => $inner, 'alt' => $alt,
-            'dev_result' => false, 'dev_log' => "Internet support email to $email: verification $verifyUrl",
-        ]);
-    }
 
     public static function received($email, $applicantName, $trackingId) {
-        $name = CoreMail::e($applicantName);
-        $tid  = CoreMail::e($trackingId);
+        $tid = CoreMail::e($trackingId);
 
         $inner = "
-            <p>Hello <strong>$name</strong>,</p>
-            <p>We have received your internet support request.</p>
+            <p>" . CoreMail::greeting($applicantName) . "</p>
+            <p>We have successfully received your internet support request.</p>
             <p><strong>Tracking ID:</strong> $tid</p>
-            <p style='margin-bottom:0;'>We'll email you as it moves forward. No action is needed right now.</p>";
+            <p style='margin-bottom:0;'>We will keep you updated on the progress via email. No further action is required from your side at this stage. You can follow your request any time from your member dashboard.</p>"
+            . CoreMail::button(CoreMail::memberRequestUrl($trackingId), 'View My Request');
 
-        $alt = "Hello $applicantName,\n\nWe've received your internet support request.\nTracking ID: $trackingId\n\nWe'll email you as it moves forward.";
+        $alt = CoreMail::greeting($applicantName, false) . "\n\nWe have successfully received your internet support request.\nTracking ID: $trackingId\n\n"
+             . "We will keep you updated on the progress via email. No further action is required from your side at this stage. You can follow your request any time from your member dashboard:\n"
+             . CoreMail::memberRequestUrl($trackingId);
 
         return CoreMail::send([
             'to' => $email, 'to_name' => $applicantName,
-            'subject' => 'Internet support request received',
+            'subject' => 'Internet support request received successfully',
             'html' => $inner, 'alt' => $alt,
             'dev_result' => false, 'dev_log' => "Internet support email to $email: received $trackingId",
         ]);
@@ -55,88 +35,91 @@ class InternetSupportMail {
      * Applicant-facing status changes only. $status is one of:
      *   'Approved for Support' - reviewers approved; finance is next
      *   'Rejected'             - not approved ($note shown)
-     *   'Info Requested'       - a reviewer has a question; asks the applicant to
-     *                            reply on the tracking page. The question itself is
+     *   'Info Requested'       - a reviewer has a question; asks the member to
+     *                            reply from their signed-in request page. The question itself is
      *                            NEVER put in the email ($note is ignored): it stays
-     *                            behind the tracking ID + email pair, and the
-     *                            reviewer stays anonymous.
+     *                            behind the member sign-in, and the reviewer stays anonymous.
      *   'Awaiting Receipt'     - recharge done; asks for the receipt ($reference shown)
      *   'Receipt Rejected'     - notification-only pseudo-status: finance bounced
      *                            the uploaded receipt ($note says why)
      *   'Closed'               - all done
      *
-     * CALLER CONTRACT: never call this for 'Recharge Failed' or 'Discarded'.
-     * The first is finance-to-reviewer plumbing; the second must be silent.
+     * 'Recharge Failed' and 'Discarded' are refused here (return false): the first is
+     * finance-to-reviewer plumbing, the second must be silent.
      */
     public static function statusUpdate($email, $applicantName, $trackingId, $status, $note = '', $reference = '') {
+        // Never tell the member about internal-only states, even if a caller forgets.
+        if (in_array($status, ['Recharge Failed', 'Discarded'], true)) {
+            return false;
+        }
+
         $e = fn($s) => CoreMail::e($s);
-        $trackUrl = CoreMail::appUrl() . '/track';
-        $name = $e($applicantName);
+        $trackUrl = CoreMail::memberRequestUrl($trackingId);
         $tid  = $e($trackingId);
-        $button = CoreMail::button($trackUrl, 'Open tracking page');
+        $button = CoreMail::button($trackUrl, 'View My Request');
 
         switch ($status) {
             case 'Approved for Support':
-                $subject = 'Your internet support request was approved';
-                $line = "Good news: your internet support request (tracking ID $tid) has been approved and passed to our finance team for the recharge. We'll email you once it's done.";
-                $alt  = "Your internet support request ($trackingId) has been approved and passed to our finance team for the recharge. We'll email you once it's done.";
-                $extra = '';
+                $subject = 'Your internet support request has been approved';
+                $line = "We are pleased to inform you that your internet support request (Tracking ID: $tid) has been approved and forwarded to our finance team for processing the recharge. We will notify you once the recharge is completed.";
+                $alt  = "We are pleased to inform you that your internet support request (Tracking ID: $trackingId) has been approved and forwarded to our finance team for processing the recharge. We will notify you once the recharge is completed.\n\nView your request: $trackUrl";
+                $extra = $button;
                 break;
 
             case 'Rejected':
-                $subject = 'Update on your internet support request';
-                $line = "Your internet support request (tracking ID $tid) was not approved.";
-                $alt  = "Your internet support request ($trackingId) was not approved.";
+                $subject = 'Update regarding your internet support request';
+                $line = "Regrettably, your internet support request (Tracking ID: $tid) could not be approved.";
+                $alt  = "Regrettably, your internet support request (Tracking ID: $trackingId) could not be approved.";
                 $extra = '';
                 break;
 
             case 'Info Requested':
-                $subject = 'We need a little more information on your internet support request';
-                $line = "A reviewer has a question about your internet support request (tracking ID $tid). Please open the tracking page, enter your tracking ID and this email address, read the question, correct your answers if needed and send your reply there. Your request can't move forward until you do.";
-                $alt  = "A reviewer has a question about your internet support request ($trackingId). Please open the tracking page ($trackUrl), enter your tracking ID and this email address, read the question, correct your answers if needed and send your reply there. Your request can't move forward until you do.";
+                $subject = 'Further information required for your internet support request';
+                $line = "The reviewer has requested additional information regarding your internet support request (Tracking ID: $tid). Kindly sign in to your member account, open the request, review the query, and submit your response. Please note that your request cannot be processed further until this detail is provided.";
+                $alt  = "The reviewer has requested additional information regarding your internet support request (Tracking ID: $trackingId). Kindly sign in to your member account, open the request ($trackUrl), review the query, and submit your response. Please note that your request cannot be processed further until this detail is provided.";
                 $extra = $button;
                 $note = '';   // the question itself never goes in the email
                 break;
 
             case 'Awaiting Receipt':
-                $subject = 'Your recharge is done - please upload the receipt';
+                $subject = 'Recharge completed – Please upload the receipt';
                 $refHtml = $reference !== ''
-                    ? "<p><strong>Recharge reference:</strong> " . $e($reference) . "</p>" : '';
-                $line = "Your recharge for request <strong>$tid</strong> has been done. Please upload the operator's receipt or confirmation so we can close the request. Open the tracking page and enter your tracking ID and this email address.";
-                $alt  = "Your recharge for request $trackingId has been done. Please upload the operator's receipt on the tracking page ($trackUrl) using your tracking ID and this email address."
-                      . ($reference !== '' ? "\nRecharge reference: $reference" : '');
+                    ? "<p><strong>Recharge Reference No.:</strong> " . $e($reference) . "</p>" : '';
+                $line = "The recharge for your request <strong>$tid</strong> has been successfully completed. Kindly sign in to your member account and upload the operator's receipt or payment confirmation to help us complete the request.";
+                $alt  = "The recharge for your request $trackingId has been successfully completed. Kindly sign in to your member account and upload the operator's receipt or payment confirmation ($trackUrl)."
+                      . ($reference !== '' ? "\nRecharge Reference No.: $reference" : '');
                 $extra = $refHtml . $button;
                 break;
 
             case 'Receipt Rejected':
-                $subject = 'Please re-upload your internet recharge receipt';
-                $line = "We couldn't accept the receipt you uploaded for request <strong>$tid</strong>. Please upload a new one on the tracking page.";
-                $alt  = "We couldn't accept the receipt you uploaded for request $trackingId. Please upload a new one on the tracking page: $trackUrl";
+                $subject = 'Action required: Please re-upload your recharge receipt';
+                $line = "We were unable to accept the receipt uploaded for request <strong>$tid</strong>. Kindly sign in to your member account and upload a clear and valid receipt at your earliest convenience.";
+                $alt  = "We were unable to accept the receipt uploaded for request $trackingId. Kindly sign in to your member account and upload a clear and valid receipt ($trackUrl) at your earliest convenience.";
                 $extra = $button;
                 break;
 
             case 'Closed':
-                $subject = 'Your internet support request is complete';
-                $line = "Your internet support request (tracking ID $tid) is now complete. Thank you!";
-                $alt  = "Your internet support request ($trackingId) is now complete. Thank you!";
+                $subject = 'Your internet support request is now closed';
+                $line = "Your internet support request (Tracking ID: $tid) has been successfully closed. Thank you for your patience and cooperation!";
+                $alt  = "Your internet support request (Tracking ID: $trackingId) has been successfully closed. Thank you for your patience and cooperation!";
                 $extra = '';
                 break;
 
             default:
-                $subject = 'Update on your internet support request';
-                $line = "Your internet support request (tracking ID $tid) is now: <strong>" . $e($status) . "</strong>.";
-                $alt  = "Your internet support request ($trackingId) is now: $status.";
-                $extra = '';
+                $subject = 'Update regarding your internet support request';
+                $line = "The status of your internet support request (Tracking ID: $tid) has been updated to: <strong>" . $e($status) . "</strong>.";
+                $alt  = "The status of your internet support request (Tracking ID: $trackingId) has been updated to: $status.\n\nView your request: $trackUrl";
+                $extra = $button;
         }
 
-        $safeNote = $note !== '' ? "<p><strong>Notes:</strong><br>" . nl2br($e($note)) . "</p>" : '';
-        $altNote  = $note !== '' ? "\n\nNotes:\n$note" : '';
+        $safeNote = $note !== '' ? "<p><strong>Remarks / Notes:</strong><br>" . nl2br($e($note)) . "</p>" : '';
+        $altNote  = $note !== '' ? "\n\nRemarks / Notes:\n$note" : '';
 
         return CoreMail::send([
             'to' => $email, 'to_name' => $applicantName,
             'subject' => $subject,
-            'html' => "<p>Hello <strong>$name</strong>,</p><p>$line</p>$safeNote$extra",
-            'alt' => "Hello $applicantName,\n\n$alt$altNote",
+            'html' => "<p>" . CoreMail::greeting($applicantName) . "</p><p>$line</p>$safeNote$extra",
+            'alt' => CoreMail::greeting($applicantName, false) . "\n\n$alt$altNote",
             'dev_result' => false, 'dev_log' => "Internet support email to $email: $subject",
         ]);
     }

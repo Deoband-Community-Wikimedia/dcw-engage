@@ -79,6 +79,17 @@ if ($route === '/' || $route === '/index.php') {
     // Signed-in members only: the view calls MemberSession::requireLogin() itself.
     require __DIR__ . '/views/member/dashboard.php';
 
+// --- Member support requests (signed-in members only) -------------------
+// Internet support and reimbursement are members-only. The member signs in,
+// starts a request at /member/support?type=internet|reimbursement, and then
+// follows it (reply to a reviewer, upload a receipt) at /member/request?id=IS-... / RB-...
+// Each view calls MemberSession::requireLogin() itself, and the login redirect
+// brings the member back (see MemberSession::isSafeNext()).
+} elseif ($route === '/member/support') {
+    require __DIR__ . '/views/member/support.php';
+} elseif ($route === '/member/request') {
+    require __DIR__ . '/views/member/request.php';
+
 // --- Diagnostic & Issue Reporting (Member) -----------------------------
 } elseif ($route === '/member/report-problem') {
     require __DIR__ . '/views/member/report-problem.php';
@@ -114,7 +125,8 @@ if ($route === '/' || $route === '/index.php') {
 } elseif ($route === '/track') {
     // Public "check my application status" lookup (see #32) — a form's
     // slug is matched by the catch-all below, so this has to come before it.
-    // Handles application (DCW-), reimbursement (RB-) and internet support (IS-) IDs.
+    // Applications (DCW-) only. Reimbursement (RB-) and internet support (IS-)
+    // IDs are sent on to /member/request by the view itself.
     require __DIR__ . '/views/track.php';
 } elseif (preg_match('/^\/resume\/([a-zA-Z0-9_-]+)$/', $route, $matches)) {
     $token = $matches[1];
@@ -122,24 +134,23 @@ if ($route === '/' || $route === '/index.php') {
     $resumeToken = $token;
     require __DIR__ . '/views/forms/resume.php';
 
-// --- Unified support (public) -----------------------------------------
-// One entry point for participants to ask for support: reimbursement and
-// internet support today, more types later. The kind of support is chosen
-// with ?type=internet|reimbursement (see views/support.php). Email
-// verification happens once, inside the view. A literal route, so it must
-// come before the catch-all dynamic form route below or '/support' would be
-// treated as a form type of its own.
-} elseif ($route === '/support') {
-    require __DIR__ . '/views/support.php';
-
-// Legacy public URLs. They no longer have pages of their own: send people to
-// /support with the right type preselected. The query string is carried over
-// so verification links already sitting in inboxes (?verify=...) keep working.
+// --- Legacy support URLs ----------------------------------------------
+// Support moved to /member/support (members only, no email verification).
+// These old public URLs just redirect, carrying the query string over (minus
+// any old ?verify= token, which no longer does anything). /reimbursement and
+// /internet-support preselect the matching type.
+// Literal routes, so they must come before the catch-all dynamic form route
+// below or they would be treated as form types of their own.
 // 302 while rolling out; switch to 301 once everything has been confirmed.
-} elseif ($route === '/reimbursement' || $route === '/internet-support') {
+} elseif ($route === '/support' || $route === '/reimbursement' || $route === '/internet-support') {
     $query = $_GET;
-    $query['type'] = ($route === '/internet-support') ? 'internet' : 'reimbursement';
-    header('Location: /support?' . http_build_query($query), true, 302);
+    unset($query['verify']);
+    if ($route === '/internet-support') {
+        $query['type'] = 'internet';
+    } elseif ($route === '/reimbursement') {
+        $query['type'] = 'reimbursement';
+    }
+    header('Location: /member/support' . ($query ? '?' . http_build_query($query) : ''), true, 302);
     exit;
 
 // --- Reimbursements (staff) -------------------------------------------
