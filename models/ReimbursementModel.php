@@ -367,6 +367,7 @@ class ReimbursementModel {
     public function listForAdminReview($status = null) {
         $sql = "SELECT id, email, applicant_name, event_name, event_date,
                        total_amount_paise, approved_amount_paise, status, tracking_id,
+                       sent_back_note, sent_back_at,
                        admin_notes, decided_by, decided_at,
                        payment_notes, created_at
                 FROM reimbursement_requests";
@@ -415,7 +416,8 @@ class ReimbursementModel {
         $stmt = $this->db->prepare(
             "UPDATE reimbursement_requests
              SET status = 'Approved for Payment', decided_by = :who, decided_at = NOW(),
-                 approved_amount_paise = :amt, approved_amount_note = :note
+                 approved_amount_paise = :amt, approved_amount_note = :note,
+                 sent_back_by = NULL, sent_back_at = NULL, sent_back_note = NULL
              WHERE id = :id AND status IN ('Submitted', 'Under Review', 'Payment Failed')"
         );
         $stmt->execute([
@@ -423,6 +425,36 @@ class ReimbursementModel {
             'amt'  => $amountPaise !== null ? (int) $amountPaise : null,
             'note' => $amountNote !== '' ? mb_substr($amountNote, 0, self::MAX_AMOUNT_NOTE_LENGTH) : null,
             'id'   => $requestId,
+        ]);
+        return $stmt->rowCount() === 1;
+    }
+
+    /**
+     * Finance sends an approved claim BACK to the reviewers (for example an
+     * accidental approval, or a claim finance has doubts about). Moves
+     * 'Approved for Payment' -> 'Submitted', so it lands in the reviewers'
+     * "Awaiting review" list as if new, where they can approve, ask the
+     * applicant for information, reject or discard it again.
+     *
+     * The earlier approval is wiped (approved amount and its reason), so the
+     * reviewer decides afresh from the claimed total. $note is shown to the
+     * reviewers only. NO applicant email: like 'Payment Failed', this is
+     * finance-to-reviewer plumbing, and on the member side the request simply
+     * reads "In review" again. Returns false if the claim is no longer
+     * 'Approved for Payment' (someone else got there first).
+     */
+    public function sendBackToReview($requestId, $financeIdentifier, $note) {
+        $stmt = $this->db->prepare(
+            "UPDATE reimbursement_requests
+             SET status = 'Submitted',
+                 approved_amount_paise = NULL, approved_amount_note = NULL,
+                 sent_back_by = :who, sent_back_at = NOW(), sent_back_note = :note
+             WHERE id = :id AND status = 'Approved for Payment'"
+        );
+        $stmt->execute([
+            'who'  => $financeIdentifier,
+            'note' => mb_substr(trim((string) $note), 0, 1000),
+            'id'   => (int) $requestId,
         ]);
         return $stmt->rowCount() === 1;
     }

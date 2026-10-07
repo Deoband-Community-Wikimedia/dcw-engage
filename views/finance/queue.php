@@ -21,6 +21,10 @@ require_once __DIR__ . '/../../models/InternalNoteModel.php';
 // A reason is then required and the applicant is told. Reimbursements can never
 // be paid above what the applicant claimed, and recharges never above the
 // programme limit; both are typo guards, not policy: change them below if needed.
+//
+// Finance may also SEND A REQUEST BACK to the reviewers (for example an accidental
+// approval) with a reason. It returns to the reviewers' queue as if new; the applicant
+// is not emailed. Receipts that fail checks use the separate "Send receipt back" button.
 requireRole(['finance', 'owner']);
 
 const FINANCE_TABS = ['reimbursement', 'internet'];
@@ -151,6 +155,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             } else {
                 $error = "That request was already handled by someone else.";
             }
+        } elseif ($result === 'send_back') {
+            // Back to the reviewers (e.g. an accidental approval). No applicant email.
+            if ($notes === '') {
+                $error = "Add a note saying why you are sending this back. The reviewers will see it.";
+            } elseif ($reimbursementModel->sendBackToReview($requestId, Auth::email(), $notes)) {
+                $info = $reimbursementModel->getForNotification($requestId);
+                AuditLog::record('reimbursement.sent_back', Auth::id(), Auth::email(), $info['email'], 'Tracking: ' . $info['tracking_id'] . ' | ' . $notes);
+                $noteModel->add('reimbursement', $requestId, Auth::email(), 'Sent back to review by finance: ' . mb_substr($notes, 0, 1500));
+                $message = "Request #$requestId sent back to the reviewers. It is in their \"Awaiting review\" list again; the applicant was not emailed.";
+            } else {
+                $error = "That request was already handled by someone else.";
+            }
         }
 
     // ==================================================================
@@ -208,6 +224,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 AuditLog::record('internet.recharge_failed', Auth::id(), Auth::email(), $info['email'], 'Tracking: ' . $info['tracking_id'] . ' | ' . $notes);
                 app_log("Internet recharge failed: {$info['tracking_id']} by " . Auth::email() . " — $notes");
                 $message = "Request {$info['tracking_id']} sent back to the support reviewers.";
+            } else {
+                $error = "That request was already handled by someone else.";
+            }
+
+        } elseif ($result === 'send_back') {
+            // Back to the reviewers (e.g. an accidental approval). No applicant email.
+            if ($notes === '') {
+                $error = "Add a note saying why you are sending this back. The reviewers will see it.";
+            } elseif ($internetModel->sendBackToReview($requestId, Auth::email(), $notes)) {
+                $info = $internetModel->getForNotification($requestId);
+                AuditLog::record('internet.sent_back', Auth::id(), Auth::email(), $info['email'], 'Tracking: ' . $info['tracking_id'] . ' | ' . $notes);
+                $noteModel->add('internet', $requestId, Auth::email(), 'Sent back to review by finance: ' . mb_substr($notes, 0, 1500));
+                $message = "Request {$info['tracking_id']} sent back to the reviewers. It is in their \"New requests\" list again; the applicant was not emailed.";
             } else {
                 $error = "That request was already handled by someone else.";
             }
@@ -345,7 +374,7 @@ engage_header([
                 <input type="text" name="payment_reference" required maxlength="255" placeholder="UTR / transaction reference (required to mark paid)">
                 <input type="text" name="paid_amount" required inputmode="decimal" value="<?= $e(paise_to_rupees($approved)) ?>" placeholder="Amount you are paying (₹)" title="Amount you are paying (₹). Starts as the approved amount.">
                 <input type="text" name="amount_note" maxlength="500" placeholder="Reason, only if this differs from the approved amount (the applicant sees it)">
-                <textarea name="notes" placeholder="Notes (required if marking failed)"></textarea>
+                <textarea name="notes" placeholder="Notes (required if marking failed or sending back to review; the reviewers see them)"></textarea>
                 <?php if (!empty($req['receipts'])): ?>
                     <label class="confirm">
                         <input type="checkbox" name="receipts_downloaded" value="1">
@@ -354,6 +383,8 @@ engage_header([
                 <?php endif; ?>
                 <button type="submit" name="result" value="paid" class="btn-ok">Mark paid</button>
                 <button type="submit" name="result" value="failed" formnovalidate class="btn-bad">Payment failed</button>
+                <button type="submit" name="result" value="send_back" formnovalidate class="btn-bad" style="background:linear-gradient(135deg,#475569,#64748b); box-shadow:0 5px 14px rgba(71,85,105,.25);"
+                        onclick="return confirm('Send this request back to the reviewers? It leaves the finance queue until they approve it again. The applicant will NOT be emailed.');">Send back to review</button>
             </form>
         </div>
     <?php endforeach; ?>
@@ -414,11 +445,13 @@ engage_header([
                     <input type="text" name="paid_amount" required inputmode="decimal" value="<?= $e(paise_to_rupees($approved)) ?>" placeholder="Amount you recharged (₹)" title="Amount you recharged (₹). Starts as the approved amount.">
                     <input type="text" name="amount_note" maxlength="500" placeholder="Reason, only if this differs from the approved amount (the applicant sees it)">
                 <?php endif; ?>
-                <textarea name="notes" placeholder="Notes (required if recharge failed)"></textarea>
+                <textarea name="notes" placeholder="Notes (required if recharge failed or sending back to review; the reviewers see them)"></textarea>
                 <?php if (!$req['phone_error']): ?>
                     <button type="submit" name="result" value="done" class="btn-ok">Recharge done</button>
                 <?php endif; ?>
                 <button type="submit" name="result" value="failed" formnovalidate class="btn-bad">Recharge failed</button>
+                <button type="submit" name="result" value="send_back" formnovalidate class="btn-bad" style="background:linear-gradient(135deg,#475569,#64748b); box-shadow:0 5px 14px rgba(71,85,105,.25);"
+                        onclick="return confirm('Send this request back to the reviewers? It leaves the finance queue until they approve it again. The applicant will NOT be emailed.');">Send back to review</button>
             </form>
         </div>
     <?php endforeach; ?>

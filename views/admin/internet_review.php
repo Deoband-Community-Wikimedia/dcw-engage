@@ -220,6 +220,13 @@ function internet_review_card(array $req, InternetSupportModel $model, InternalN
             </div>
         <?php endif; ?>
 
+        <?php if ($req['status'] === 'Submitted' && !empty($req['sent_back_note'])): ?>
+            <div class="action-banner">
+                <strong>Finance sent this back for another look:</strong>
+                <?= nl2br(htmlspecialchars((string) $req['sent_back_note'])) ?>
+            </div>
+        <?php endif; ?>
+
         <?php if (!empty($thread)): ?>
             <p class="qlabel">Conversation with applicant</p>
             <div class="thread">

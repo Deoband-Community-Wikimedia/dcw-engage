@@ -149,6 +149,10 @@ function reimbursement_card(array $req, bool $failed, callable $h, InternalNoteM
             <?php endif; ?>
         </p>
 
+        <?php if (!$failed && !empty($req['sent_back_note'])): ?>
+            <div class="action-banner"><span><strong>Finance sent this back for another look:</strong> <?= $h($req['sent_back_note']) ?></span></div>
+        <?php endif; ?>
+
         <?php if ($failed && !empty($req['payment_notes'])): ?>
             <div class="action-banner"><span><strong>Finance's note:</strong> <?= $h($req['payment_notes']) ?></span></div>
         <?php endif; ?>
