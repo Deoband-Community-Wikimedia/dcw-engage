@@ -11,6 +11,7 @@ require_once __DIR__ . '/../../models/ReimbursementModel.php';
 require_once __DIR__ . '/../../models/MemberTicketModel.php';
 require_once __DIR__ . '/../../models/TechIssueModel.php';
 require_once __DIR__ . '/../../includes/member_session.php';
+require_once __DIR__ . '/../../includes/member_requests.php';
 
 /**
  * DCW Engage - member dashboard (/member/dashboard).
@@ -82,40 +83,9 @@ try {
 } catch (Throwable $e) { $programs = []; }
 
 // ---- The member's own requests -----------------------------------------------------------------
-// Needs InternetSupportModel::listForMember() and ReimbursementModel::listForMember() (see the notes).
-// Applicants never see internal states: "Recharge Failed" and "Payment Failed" go back to reviewers,
-// so they show here as plain "In review".
-function dash_status(string $type, string $status): array
-{
-    $review = ['In review', '#106b9a', false];
-    $map = $type === 'internet'
-        ? [
-            'Submitted'         => $review,
-            'Info Requested'    => ['Reply needed', '#b45309', true],
-            'Approved for Support' => ['Approved', '#0f766e', false],
-            'Recharge Failed'   => $review,
-            'Awaiting Receipt'  => ['Upload your receipt', '#b45309', true],
-            'Receipt Submitted' => ['Receipt being checked', '#106b9a', false],
-            'Closed'            => ['Completed', '#15803d', false],
-            'Rejected'          => ['Not approved', '#97161b', false],
-        ]
-        : [
-            'Submitted'            => $review,
-            'Under Review'         => $review,
-            'Approved for Payment' => ['Approved', '#0f766e', false],
-            'Payment Failed'       => $review,
-            'Paid'                 => ['Paid', '#15803d', false],
-            'Rejected'             => ['Not approved', '#97161b', false],
-        ];
-    return $map[$status] ?? $review;
-}
-
-function dash_date(?string $utc): string
-{
-    if (!$utc) return '';
-    return (new DateTimeImmutable($utc, new DateTimeZone('UTC')))->setTimezone(new DateTimeZone('Asia/Kolkata'))->format('j M Y');
-}
-
+// Needs InternetSupportModel::listForMember() and ReimbursementModel::listForMember().
+// dash_status() / dash_date() live in includes/member_requests.php (shared with /member/request).
+// Applicants never see internal states: "Recharge Failed" and "Payment Failed" show as "In review".
 $requests = [];
 try {
     foreach ((new InternetSupportModel())->listForMember($email) as $r) {
@@ -210,7 +180,7 @@ engage_header([
             <div class="action-banner" role="status">
                 <strong><?= htmlspecialchars($r['type']) ?>:</strong>
                 <span><?= htmlspecialchars($r['title']) ?> &ndash; <?= htmlspecialchars(strtolower($r['label'])) ?>.</span>
-                <a href="/track">Open tracking</a>
+                <a href="<?= htmlspecialchars(member_request_url($r['tracking'])) ?>">Open request</a>
             </div>
         <?php endforeach; ?>
 
@@ -239,10 +209,10 @@ engage_header([
                 <?php
                 $l = $lock($internetOpen);
                 dash_tile($icons, '#0f766e', 'wifi', 'Internet support', 'Help paying for a data pack so you can keep contributing.',
-                    $l === '' ? '/support?type=internet' : null, $l);
+                    $l === '' ? '/member/support?type=internet' : null, $l);
                 $l = $lock($reimbursementOpen);
                 dash_tile($icons, '#0f766e', 'card', 'Reimbursement', 'Claim back expenses for a DCW-aligned event.',
-                    $l === '' ? '/support?type=reimbursement' : null, $l);
+                    $l === '' ? '/member/support?type=reimbursement' : null, $l);
                 // Open to every signed-in member, including expired ones: someone may need to say why.
                 dash_tile($icons, '#106b9a', 'chat', 'Talk to ' . MemberTicketModel::SUPPORT_LABEL,
                     'Ask a question, make a complaint, or share a suggestion.', '/member/talk');
@@ -256,7 +226,7 @@ engage_header([
         <section class="panel">
             <div class="panel-head">
                 <h2>My requests</h2>
-                <p>Support requests you have made. Save the tracking ID: you need it, with your email, on the tracking page.</p>
+                <p>Your internet support and reimbursement requests. Open one to reply to a reviewer or upload a receipt.</p>
             </div>
             <?php if (empty($requests)): ?>
                 <div class="empty-note">You have not made any requests yet. Pick one above to get started.</div>
@@ -275,7 +245,7 @@ engage_header([
                             </div>
                             <div class="side">
                                 <span class="pill"><?= htmlspecialchars($r['label']) ?></span>
-                                <a href="/track"><?= $r['act'] ? 'Act now' : 'Track' ?> &rarr;</a>
+                                <a href="<?= htmlspecialchars(member_request_url($r['tracking'])) ?>"><?= $r['act'] ? 'Act now' : 'View' ?> &rarr;</a>
                             </div>
                         </div>
                     <?php endforeach; ?>
@@ -322,7 +292,7 @@ engage_header([
             </div>
             <div class="tiles">
                 <?php
-                dash_tile($icons, '#106b9a', 'search', 'Track an application', 'Check the status of anything you have applied for.', '/track');
+                dash_tile($icons, '#106b9a', 'search', 'Track an application', 'Check the status of a public application (ID starts with DCW-).', '/track');
                 dash_tile($icons, '#97161b', 'people', $memberActive ? 'Membership' : 'Renew membership', 'Join a club, or renew your membership.', '/membership');
                 foreach ($programs as $p) {
                     $title = $p['title'] ?: ucwords(str_replace(['-', '_'], ' ', $p['form_type']));
