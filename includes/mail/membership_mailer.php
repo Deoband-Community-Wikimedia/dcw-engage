@@ -112,7 +112,7 @@ class MembershipMailer {
                 : "Welcome to $org: your membership is confirmed";
             $good = $renewal
                 ? "We are delighted to confirm that your renewal has been approved. Thank you for continuing your journey with us."
-                : "We are thrilled to confirm that your application has been approved. Welcome to our open knowledge community!";
+                : "We are delighted to confirm that your application has been approved. Welcome to our open knowledge community!";
             $keep = $renewal
                 ? "Your Member ID remains unchanged. Please keep it handy for accessing your dashboard and future renewals."
                 : ($sharedId
