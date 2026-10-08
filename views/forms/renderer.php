@@ -84,6 +84,23 @@ $isMembershipForm = str_starts_with((string) $formType, 'membership-');
 $isRenewalForm = str_starts_with((string) $formType, 'membership-renewal');
 $memberAutoVerified = $loggedMember !== null;
 
+// A signed-in member never gets an application form for a membership they already hold
+// (any status except rejected). Send them to /membership, which explains and links to renewal.
+// Join forms only: the renewal form stays reachable. Guests are handled by the email check
+// further down, since only a real member session proves who someone is.
+if ($loggedMember !== null && $isMembershipForm && !$isRenewalForm) {
+    try {
+        require_once __DIR__ . '/../../models/MemberModel.php';
+        $joinKey = MemberModel::chapterOfSlug((string) $formType);
+        if ($joinKey !== null && isset(MemberSession::heldChapters()[$joinKey])) {
+            header('Location: /membership?held=' . rawurlencode((string) $joinKey));
+            exit;
+        }
+    } catch (Throwable $ex) {
+        // If the lookup fails, fall through: the submit-time checks below still apply.
+    }
+}
+
 // Email verification comes first (#67). Nobody — whether they mean to submit
 // or only save a draft — reaches the form until they have proved they control
 // the address, so junk entries can't create rows or trigger magic links to
