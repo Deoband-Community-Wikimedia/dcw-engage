@@ -39,6 +39,20 @@ $allForms = array_values(array_filter(
 $allowed = [];   // form id => true
 foreach ($allForms as $f) $allowed[(int) $f['id']] = true;
 
+
+// Programs that are not shown in the review queue: closed forms, and test forms.
+// A form counts as a test form when "test"/"testing"/"dummy" is a whole word in its title or URL slug
+// (so "Test form" and "scholarship-test" match, "Contest 2026" does not). Add exact slugs to $extra to hide others.
+// KEEP IN SYNC with the same function in views/admin/dashboard.php and application_review.php.
+if (!function_exists('review_hidden_form')) {
+    function review_hidden_form(array $form, array $extra = []): bool {
+        if (empty($form['is_active'])) return true;
+        if (in_array((string) $form['form_type'], $extra, true)) return true;
+        return (bool) preg_match('/(^|[^a-z])(test|testing|dummy)([^a-z]|$)/i',
+            (string) ($form['title'] ?? '') . ' ' . (string) $form['form_type']);
+    }
+}
+
 $notice = ''; $error = '';
 $id = (int) ($_GET['id'] ?? $_POST['id'] ?? 0);
 $app = false;
@@ -351,15 +365,21 @@ engage_header([
     <?php endif; ?>
 
 <?php else:
-    $rows = array_values(array_filter($model->getAllApplications(), function ($r) use ($allowed, $fForm, $fStatus) {
-        return isset($allowed[(int) $r['form_id']])
+    // The queue lists open, non-test programs only. A program the person asked for by name (?form=...,
+    // e.g. from the form manager) is shown even if it is closed or a test form.
+    $listedForms = array_values(array_filter($allForms, fn($f) => $f['form_type'] === $fForm || !review_hidden_form($f)));
+    $listed = [];
+    foreach ($listedForms as $f) $listed[(int) $f['id']] = true;
+
+    $rows = array_values(array_filter($model->getAllApplications(), function ($r) use ($listed, $fForm, $fStatus) {
+        return isset($listed[(int) $r['form_id']])
             && ($fForm === '' || $r['form_type'] === $fForm)
             && ($fStatus === '' || $r['status'] === $fStatus);
     }));
 
     // One group per program (form): programs with applications waiting come first, then the busiest.
     $groups = [];
-    foreach ($allForms as $f) {
+    foreach ($listedForms as $f) {
         $groups[(int) $f['id']] = ['form' => $f, 'rows' => [], 'waiting' => 0, 'counts' => []];
     }
     foreach ($rows as $r) {
@@ -376,7 +396,7 @@ engage_header([
     <section class="sect">
         <form method="GET" class="filters">
             <select name="form"><option value="">All programs</option>
-                <?php foreach ($allForms as $f): ?>
+                <?php foreach ($listedForms as $f): ?>
                     <option value="<?= $h($f['form_type']) ?>" <?= $f['form_type'] === $fForm ? 'selected' : '' ?>><?= $h($f['title'] ?: $f['form_type']) ?></option>
                 <?php endforeach; ?></select>
             <select name="status"><option value="">All statuses</option>
