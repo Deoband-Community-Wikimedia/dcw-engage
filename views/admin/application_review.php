@@ -234,6 +234,28 @@ engage_header([
     .tbl th.pick, .tbl td.pick { width: 36px; padding-right: 0; }
     .tbl td.pick input, .tbl th.pick input { width: 16px; height: 16px; cursor: pointer; accent-color: var(--primary); }
     .tbl td.pick input:disabled { cursor: not-allowed; }
+
+    .pill.badge-attn { color: #fff; background: var(--accent); padding: 3px 12px; font-size: 12px; }
+    .pill.st-review { --tone: #6d28d9; }
+    .pill.st-wait { --tone: #b45309; }
+
+    /* One collapsible block per program */
+    details.prog-group { padding: 0; overflow: hidden; border-left: 5px solid var(--primary); }
+    details.prog-group > summary {
+        display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 16px 22px;
+        cursor: pointer; list-style: none; background: linear-gradient(90deg, var(--primary-tint), #fff 70%);
+    }
+    details.prog-group > summary::-webkit-details-marker { display: none; }
+    details.prog-group > summary::before { content: '\25B8'; color: var(--primary); font-size: 15px; }
+    details.prog-group[open] > summary::before { content: '\25BE'; }
+    details.prog-group > summary:focus-visible { outline: 3px solid #f59e0b; outline-offset: -3px; }
+    details.prog-group .pg-title { font-size: 17px; font-weight: 800; letter-spacing: -.01em; }
+    details.prog-group .pg-slug { font-size: 12.5px; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    details.prog-group .pg-stats { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 13px; font-weight: 600; color: var(--muted); }
+    details.prog-group .pg-body { padding: 4px 18px 18px; border-top: 1px solid var(--border); }
+    details.prog-group .tbl-wrap { margin-top: 14px; }
+    .toolbar-right { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+    .toolbar-right .total { font-size: 13.5px; font-weight: 600; color: var(--muted); }
 </style>
 
 <?php if ($notice): ?><div class="alert ok"><?= $h($notice) ?></div><?php endif; ?>
@@ -333,10 +355,27 @@ engage_header([
         return isset($allowed[(int) $r['form_id']])
             && ($fForm === '' || $r['form_type'] === $fForm)
             && ($fStatus === '' || $r['status'] === $fStatus);
-    })); ?>
+    }));
+
+    // One group per program (form): programs with applications waiting come first, then the busiest.
+    $groups = [];
+    foreach ($allForms as $f) {
+        $groups[(int) $f['id']] = ['form' => $f, 'rows' => [], 'waiting' => 0, 'counts' => []];
+    }
+    foreach ($rows as $r) {
+        $fid = (int) $r['form_id'];
+        if (!isset($groups[$fid])) continue;
+        $groups[$fid]['rows'][] = $r;
+        $groups[$fid]['counts'][$r['status']] = ($groups[$fid]['counts'][$r['status']] ?? 0) + 1;
+        if (in_array($r['status'], ['New', 'Submitted'], true)) $groups[$fid]['waiting']++;
+    }
+    $groups = array_filter($groups, fn($g) => $g['rows']);
+    uasort($groups, fn($a, $b) => ($b['waiting'] <=> $a['waiting']) ?: (count($b['rows']) <=> count($a['rows'])));
+    $filtering = $fForm !== '' || $fStatus !== '';
+    $totalWaiting = array_sum(array_column($groups, 'waiting')); ?>
     <section class="sect">
         <form method="GET" class="filters">
-            <select name="form"><option value="">All forms</option>
+            <select name="form"><option value="">All programs</option>
                 <?php foreach ($allForms as $f): ?>
                     <option value="<?= $h($f['form_type']) ?>" <?= $f['form_type'] === $fForm ? 'selected' : '' ?>><?= $h($f['title'] ?: $f['form_type']) ?></option>
                 <?php endforeach; ?></select>
@@ -345,10 +384,18 @@ engage_header([
                     <option value="<?= $h($s) ?>" <?= $s === $fStatus ? 'selected' : '' ?>><?= $h($label($s)) ?></option>
                 <?php endforeach; ?></select>
             <button class="btn-ghost sm">Filter</button>
-            <span class="total"><?= count($rows) ?> application<?= count($rows) === 1 ? '' : 's' ?></span>
+            <?php if ($filtering): ?><a href="/admin/application-review" class="btn-ghost sm" style="text-decoration:none">Clear</a><?php endif; ?>
+            <span class="toolbar-right">
+                <span class="total"><?= count($rows) ?> application<?= count($rows) === 1 ? '' : 's' ?>
+                    in <?= count($groups) ?> program<?= count($groups) === 1 ? '' : 's' ?><?= $totalWaiting ? ' &middot; ' . $totalWaiting . ' waiting' : '' ?></span>
+                <?php if (count($groups) > 1): ?>
+                    <button type="button" class="btn-ghost sm" id="expandAll">Expand all</button>
+                    <button type="button" class="btn-ghost sm" id="collapseAll">Collapse all</button>
+                <?php endif; ?>
+            </span>
         </form>
 
-        <?php /* Posts back to this same URL, so the active filters are kept. */ ?>
+        <?php /* Posts back to this same URL, so the active filters are kept. Ticks from every program count together. */ ?>
         <form method="POST" id="bulkForm" class="bulkbar" style="display:none"><?= CSRF::getInputField() ?>
             <input type="hidden" name="action" value="bulk">
             <div id="bulkIdsContainer"></div>
@@ -360,22 +407,42 @@ engage_header([
                 <option value="info">Needs information</option>
                 <option value="reject">Rejected</option>
             </select>
-            <input type="text" name="note" id="bulkNote" placeholder="Note emailed with the decision (optional) / what you need (required for Needs information)">
+            <input type="text" name="note" id="bulkNote"
+                placeholder="Note emailed with the decision (optional) / what you need (required for Needs information)">
             <button type="submit" id="bulkApply" class="btn-solid sm">Apply to selected</button>
         </form>
 
+        <?php if (!$groups): ?>
+            <div class="empty-note">Nothing to review here.</div>
+        <?php endif; ?>
+    </section>
+
+    <?php foreach ($groups as $g):
+        $f = $g['form']; $c = $g['counts']; $n = count($g['rows']);
+        $isOpen = $filtering || $g['waiting'] > 0; ?>
+    <details class="sect prog-group"<?= $isOpen ? ' open' : '' ?>>
+        <summary>
+            <span class="pg-title"><?= $h($f['title'] ?: $f['form_type']) ?></span>
+            <span class="pg-slug">/<?= $h($f['form_type']) ?></span>
+            <span class="pg-stats">
+                <?php if ($g['waiting']): ?><span class="pill badge-attn"><?= (int) $g['waiting'] ?> waiting</span><?php endif; ?>
+                <?php if (!empty($c['Under Review'])): ?><span class="pill st-review"><?= (int) $c['Under Review'] ?> under review</span><?php endif; ?>
+                <?php if (!empty($c['Draft'])): ?><span class="pill st-wait"><?= (int) $c['Draft'] ?> awaiting applicant</span><?php endif; ?>
+                <span><?= (int) ($c['Accepted'] ?? 0) ?> accepted &middot; <?= (int) ($c['Rejected'] ?? 0) ?> rejected &middot; <?= $n ?> total</span>
+            </span>
+        </summary>
+        <div class="pg-body">
         <div class="tbl-wrap">
         <table class="tbl"><thead><tr>
-            <th class="pick"><input type="checkbox" id="pickAll" aria-label="Select all"></th>
-            <th>Applicant</th><th>Form</th><th>Tracking ID</th><th>Status</th><th>Submitted</th><th>Update</th></tr></thead><tbody>
-        <?php foreach ($rows as $r):
+            <th class="pick"><input type="checkbox" class="pick-all" aria-label="Select all in <?= $h($f['title'] ?: $f['form_type']) ?>"></th>
+            <th>Applicant</th><th>Tracking ID</th><th>Status</th><th>Submitted</th><th>Update</th></tr></thead><tbody>
+        <?php foreach ($g['rows'] as $r):
             $rowOpen = in_array($r['status'], APP_OPEN, true); ?>
             <tr>
                 <td class="pick"><input type="checkbox" class="pick-row" value="<?= (int) $r['id'] ?>"
                     <?= $rowOpen ? '' : 'disabled title="Already decided or waiting on the applicant"' ?>></td>
                 <td><a class="dl" href="?id=<?= (int) $r['id'] ?>"><?= $h($r['applicant_name'] ?: $r['email']) ?></a>
                     <span class="sub"><?= $h($r['email']) ?></span></td>
-                <td><?= $h($r['form_title'] ?: $r['form_type']) ?></td>
                 <td><code><?= $h($r['tracking_id']) ?></code></td>
                 <td><span class="pill <?= $tone($r['status']) ?>"><?= $h($label($r['status'])) ?></span></td>
                 <td><?= $h($r['created_at']) ?></td>
@@ -395,39 +462,56 @@ engage_header([
                     </form>
                 <?php else: ?><span style="color:#94a3b8">&mdash;</span><?php endif; ?>
                 </td></tr>
-        <?php endforeach; if (!$rows): ?><tr><td colspan="7">Nothing to review here.</td></tr><?php endif; ?>
+        <?php endforeach; ?>
         </tbody></table>
         </div>
-    </section>
+        </div>
+    </details>
+    <?php endforeach; ?>
 
     <script>
     (function () {
         var bulkForm = document.getElementById('bulkForm');
-        var all = document.getElementById('pickAll') || { addEventListener: function () {}, style: {} };
         var rows = Array.prototype.slice.call(document.querySelectorAll('.pick-row:not(:disabled)'));
+        var alls = Array.prototype.slice.call(document.querySelectorAll('.pick-all'));
         var count = document.getElementById('bulkCount');
         var action = document.getElementById('bulkAction');
         var note = document.getElementById('bulkNote');
         var ids = document.getElementById('bulkIdsContainer');
 
         function picked() { return rows.filter(function (r) { return r.checked; }); }
+        function actionable(table) { return Array.prototype.slice.call(table.querySelectorAll('.pick-row:not(:disabled)')); }
 
-        // The bar only appears once something is ticked.
+        // The bar only appears once something is ticked, in any program.
         function sync() {
             var n = picked().length;
             bulkForm.style.display = n > 0 ? 'flex' : 'none';
             count.textContent = n + ' selected';
-            all.checked = rows.length > 0 && n === rows.length;
-            all.indeterminate = n > 0 && n < rows.length;
-            all.disabled = rows.length === 0;
+            alls.forEach(function (a) {
+                var rs = actionable(a.closest('table'));
+                var c = rs.filter(function (r) { return r.checked; }).length;
+                a.checked = rs.length > 0 && c === rs.length;
+                a.indeterminate = c > 0 && c < rs.length;
+                a.disabled = rs.length === 0;
+            });
         }
 
-        // Select all only ticks rows that can actually be acted on.
-        all.addEventListener('change', function () {
-            rows.forEach(function (r) { r.checked = all.checked; });
-            sync();
+        // "Select all" ticks only the rows of its own program that can actually be acted on.
+        alls.forEach(function (a) {
+            a.addEventListener('change', function () {
+                actionable(a.closest('table')).forEach(function (r) { r.checked = a.checked; });
+                sync();
+            });
         });
         rows.forEach(function (r) { r.addEventListener('change', sync); });
+
+        var ex = document.getElementById('expandAll'), co = document.getElementById('collapseAll');
+        if (ex) ex.addEventListener('click', function () {
+            document.querySelectorAll('details.prog-group').forEach(function (d) { d.open = true; });
+        });
+        if (co) co.addEventListener('click', function () {
+            document.querySelectorAll('details.prog-group').forEach(function (d) { d.open = false; });
+        });
 
         // Returns false (and says why) if the action needs a message and has none.
         function ok(act, text) {
