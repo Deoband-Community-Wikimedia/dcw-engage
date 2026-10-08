@@ -295,6 +295,19 @@ engage_header([
     .tbl th.pick, .tbl td.pick { width: 36px; padding-right: 0; }
     .tbl td.pick input, .tbl th.pick input { width: 16px; height: 16px; cursor: pointer; accent-color: var(--primary); }
     .tbl td.pick input:disabled { cursor: not-allowed; }
+
+    /* Accepted members: a collapsible section. The summary line is always visible. */
+    details.acc > summary {
+        display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 16px;
+        cursor: pointer; list-style: none;
+    }
+    details.acc > summary::-webkit-details-marker { display: none; }
+    details.acc > summary::before { content: '\25B8'; margin-right: 8px; color: var(--muted); }
+    details.acc[open] > summary::before { content: '\25BE'; }
+    details.acc > summary:focus-visible { outline: 3px solid #f59e0b; outline-offset: 4px; border-radius: 6px; }
+    details.acc .acc-title { flex: 1 1 auto; font-size: 17px; font-weight: 800; }
+    details.acc .acc-count { font-size: 14px; font-weight: 600; color: var(--muted); }
+    details.acc[open] > summary { margin-bottom: 4px; }
 </style>
 
 <?php if ($notice): ?><div class="alert ok"><?= $h($notice) ?></div><?php endif; ?>
@@ -476,7 +489,37 @@ engage_header([
     $infoMap = $model->memberInfoMap();
     $byEmail = $model->membershipsByEmail();   // one query for the whole queue
     $showQueue = $fStatus !== 'Accepted';
-    $showAccepted = $fStatus === '' || $fStatus === 'Accepted'; ?>
+    $showAccepted = $fStatus === '' || $fStatus === 'Accepted';
+
+    // ONE ROW PER PERSON. People are counted by Member ID: one ID is one person, even if it covers
+    // several clubs, and their memberships are listed together on that row. A row with no ID on file
+    // yet falls back to its email, so nobody is dropped. $accepted is newest first, so the first
+    // row seen for a person is their latest. A club that was accepted more than once (renewals)
+    // is listed once, linking to its latest application.
+    $acceptedGroups = [];
+    foreach ($accepted as $r) {
+        $chap = MemberModel::chapterOf($r) ?? '';
+        $inf  = $infoMap[strtolower((string) $r['email']) . '|' . $chap] ?? null;
+        $mid  = trim((string) ($inf['member_id'] ?? ''));
+        $key  = $mid !== '' ? $mid : 'email:' . strtolower((string) $r['email']);
+        $dedupe = $chap !== '' ? $chap : (string) $r['form_type'];
+
+        if (!isset($acceptedGroups[$key])) {
+            $acceptedGroups[$key] = ['mid' => $mid, 'latest' => $r, 'memberships' => [], 'expires' => null];
+        }
+        $g =& $acceptedGroups[$key];
+        if ($g['mid'] === '' && $mid !== '') $g['mid'] = $mid;
+        if (!isset($g['memberships'][$dedupe])) {
+            $exp = !empty($inf['expires_at']) ? (string) $inf['expires_at'] : null;
+            $g['memberships'][$dedupe] = ['id' => (int) $r['id'], 'label' => $chapterLabel($r), 'expires' => $exp];
+            if ($exp !== null && ($g['expires'] === null || $exp > $g['expires'])) $g['expires'] = $exp;
+        }
+        unset($g);
+    }
+    $acceptedPeopleCount = count($acceptedGroups);
+    $acceptedMembershipCount = 0;
+    foreach ($acceptedGroups as $g) $acceptedMembershipCount += count($g['memberships']);
+    ?>
     <section class="sect">
         <form method="GET" class="filters">
             <select name="form"><option value="">All memberships</option>
@@ -558,32 +601,42 @@ engage_header([
     </section>
 
     <?php if ($showAccepted): ?>
-    <section class="sect">
-        <h3 style="margin:0 0 4px; font-size:17px; font-weight:800;">Accepted members (<?= count($accepted) ?>)</h3>
-        <p class="qmeta" style="margin:0 0 14px;">Approved applications: the Member ID assigned, who approved it and when, and how long it is valid.</p>
-        <?php if (!$accepted): ?>
+    <details class="sect acc" id="acceptedSect"<?= $fStatus === 'Accepted' ? ' open' : '' ?>>
+        <summary>
+            <span class="acc-title">Accepted members</span>
+            <span class="acc-count"><?= $acceptedPeopleCount ?> <?= $acceptedPeopleCount === 1 ? 'person' : 'people' ?>
+                &middot; <?= $acceptedMembershipCount ?> membership<?= $acceptedMembershipCount === 1 ? '' : 's' ?></span>
+        </summary>
+        <p class="qmeta" style="margin:6px 0 14px;">One row per person, counted by Member ID: one ID is one person even when it covers several clubs,
+            and all their memberships are listed together (click one to open that application). Approved by and Accepted show the latest approval;
+            Valid until shows the latest expiry (hover for each membership).</p>
+        <?php if (!$acceptedGroups): ?>
             <div class="empty-note">No accepted memberships yet.</div>
         <?php else: ?>
         <div class="tbl-wrap">
         <table class="tbl"><thead><tr>
             <th>Member</th><th>Membership</th><th>Member ID</th><th>Approved by</th><th>Accepted</th><th>Valid until</th></tr></thead><tbody>
-        <?php foreach ($accepted as $r):
-            $info = $infoMap[strtolower((string) $r['email']) . '|' . (MemberModel::chapterOf($r) ?? '')] ?? null;
-            $mid = $info['member_id'] ?? ''; ?>
+        <?php foreach ($acceptedGroups as $g):
+            $latest = $g['latest'];
+            $mships = array_values($g['memberships']);
+            $expTitle = [];
+            foreach ($mships as $m) {
+                $expTitle[] = $m['label'] . ': ' . ($m['expires'] ? MemberAuthModel::formatIst($m['expires'], 'j M Y') : 'no date'); } ?>
             <tr>
-                <td><a class="dl" href="?id=<?= (int) $r['id'] ?>"><?= $h($r['applicant_name'] ?: $r['email']) ?></a>
-                    <span class="sub"><?= $h($r['email']) ?></span></td>
-                <td><?= $h($chapterLabel($r)) ?></td>
-                <td><?= $mid !== '' ? '<code>' . $h($mid) . '</code>' : '<span style="color:#94a3b8">&mdash;</span>' ?></td>
-                <td><?= !empty($r['approved_by']) ? $h($r['approved_by']) : '<span style="color:#94a3b8">&mdash;</span>' ?></td>
-                <td><?= !empty($r['approved_at']) ? $h(MemberAuthModel::formatIst($r['approved_at'])) : '<span style="color:#94a3b8">&mdash;</span>' ?></td>
-                <td><?= !empty($info['expires_at']) ? $h(MemberAuthModel::formatIst($info['expires_at'], 'j M Y')) : '<span style="color:#94a3b8">&mdash;</span>' ?></td>
+                <td><a class="dl" href="?id=<?= (int) $latest['id'] ?>"><?= $h($latest['applicant_name'] ?: $latest['email']) ?></a>
+                    <span class="sub"><?= $h($latest['email']) ?></span></td>
+                <td><?php foreach ($mships as $i => $m): ?><?= $i ? ', ' : '' ?><a class="dl" href="?id=<?= (int) $m['id'] ?>"><?= $h($m['label']) ?></a><?php endforeach; ?></td>
+                <td><?= $g['mid'] !== '' ? '<code>' . $h($g['mid']) . '</code>' : '<span style="color:#94a3b8">&mdash;</span>' ?></td>
+                <td><?= !empty($latest['approved_by']) ? $h($latest['approved_by']) : '<span style="color:#94a3b8">&mdash;</span>' ?></td>
+                <td><?= !empty($latest['approved_at']) ? $h(MemberAuthModel::formatIst($latest['approved_at'])) : '<span style="color:#94a3b8">&mdash;</span>' ?></td>
+                <td title="<?= $h(implode('; ', $expTitle)) ?>"><?= !empty($g['expires']) ? $h(MemberAuthModel::formatIst($g['expires'], 'j M Y')) : '<span style="color:#94a3b8">&mdash;</span>' ?>
+                    <?php if (count($mships) > 1): ?><span class="sub">latest of <?= count($mships) ?></span><?php endif; ?></td>
             </tr>
         <?php endforeach; ?>
         </tbody></table>
         </div>
         <?php endif; ?>
-    </section>
+    </details>
     <?php endif; ?>
 
     <script>
