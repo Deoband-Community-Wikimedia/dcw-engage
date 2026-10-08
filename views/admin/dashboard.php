@@ -3,6 +3,7 @@ require_once __DIR__ . '/../../includes/init.php';
 require_once __DIR__ . '/../../includes/auth.php';
 require_once __DIR__ . '/../../models/FormModel.php';
 require_once __DIR__ . '/../../models/ApplicationModel.php';
+require_once __DIR__ . '/../../models/MemberModel.php';
 require_once __DIR__ . '/../../models/TechIssueModel.php';
 
 Auth::requireLogin();
@@ -80,6 +81,19 @@ if ($canReviewApplications) {
             if (isset($reviewable[(int) $formId])) $appsWaiting += (int) $n;
         }
     } catch (Throwable $e) { $appsWaiting = 0; }
+}
+
+// Membership applications waiting for a first decision (New or Submitted), limited to the chapters this person
+// may see (a coordinator sees only their own). Same idea as the badge above; left out if the query fails.
+$membershipWaiting = 0;
+if ($canReviewMembership) {
+    try {
+        $memberModel = new MemberModel();
+        $memberScope = $memberModel->scopeFor(Auth::roles(), (string) Auth::email());   // null = every chapter
+        foreach ($memberModel->listApplications('', '', $memberScope) as $r) {
+            if (in_array($r['status'], ['New', 'Submitted'], true)) $membershipWaiting++;
+        }
+    } catch (Throwable $e) { $membershipWaiting = 0; }
 }
 
 // The "Review" panel holds the review queues for applications and for membership.
@@ -213,7 +227,8 @@ function form_tile(array $icons, array $form): void
                     }
                     if ($canReviewMembership) {
                         workspace_tile($icons, 'var(--accent)', 'people', 'Membership review',
-                            'Approve, reject, or send an application back for more information.', '/admin/membership-review');
+                            'Approve, reject, or send an application back for more information.', '/admin/membership-review',
+                            $membershipWaiting > 0 ? $membershipWaiting . ' waiting' : '');
                     }
                     if ($canManageTeam) {
                         workspace_tile($icons, 'var(--leaf-dark)', 'key', 'Team',
