@@ -52,10 +52,15 @@ $isMembershipForm = FormModel::isMembershipType($form['form_type']);
 // Statuses this page is allowed to set. Anything else in a POST is ignored.
 $allowedStatuses = ['New', 'Under Review', 'Accepted', 'Rejected'];
 
-// Ids of the applications that belong to THIS form. The model calls below
-// take an application id on its own, so without this check a crafted POST
-// could change, email about, or annotate an application from another form.
-$ownedIds = array_map('intval', array_column($appModel->getApplicationsByFormId($formId), 'id'));
+// Ids of the applications that belong to THIS form, and each one's current status.
+// The model calls below take an application id on its own, so without this check a
+// crafted POST could change, email about, or annotate an application from another form.
+// A Draft is still being written (or was sent back) by the applicant: it cannot be decided
+// here, so Draft ids are refused by the status handlers below.
+$formApplications = $appModel->getApplicationsByFormId($formId);
+$ownedIds = array_map('intval', array_column($formApplications, 'id'));
+$statusById = [];
+foreach ($formApplications as $a) $statusById[(int) $a['id']] = $a['status'];
 
 // Determine select-type fields in the schema (used to build filter dropdowns).
 // Defined early so it's available both to buildFilterQueryString() below
@@ -117,7 +122,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $newStatus = $_POST['status'] ?? '';
             $applicantNote = trim($_POST['applicant_note'] ?? '');
 
-            if (in_array($targetAppId, $ownedIds, true) && in_array($newStatus, $allowedStatuses, true)) {
+            if (
+                in_array($targetAppId, $ownedIds, true)
+                && ($statusById[$targetAppId] ?? '') !== 'Draft'
+                && in_array($newStatus, $allowedStatuses, true)
+            ) {
                 $appModel->updateStatus($targetAppId, $newStatus);
 
                 // Let the applicant know the moment a decision is made. Not fired
@@ -136,14 +145,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             header("Location: /admin/form_manager?id=" . $formId . buildFilterQueryString());
             exit;
         } elseif ($_POST['action'] === 'bulk_update_status') {
-            // Only ids that really belong to this form, as integers.
-            $selectedIds = array_values(array_intersect(
-                array_map('intval', (array) ($_POST['application_ids'] ?? [])),
-                $ownedIds
+            // Only ids that really belong to this form, as integers, and never Drafts.
+            $selectedIds = array_values(array_filter(
+                array_intersect(
+                    array_map('intval', (array) ($_POST['application_ids'] ?? [])),
+                    $ownedIds
+                ),
+                fn($i) => ($statusById[$i] ?? '') !== 'Draft'
             ));
             $newBulkStatus = $_POST['bulk_status'] ?? '';
             $applicantNote = trim($_POST['bulk_applicant_note'] ?? '');
             if (!empty($selectedIds) && in_array($newBulkStatus, $allowedStatuses, true)) {
+                @set_time_limit(300);   // each decision sends an email
                 $appModel->updateStatusBulk($selectedIds, $newBulkStatus, $formId);
 
                 if (in_array($newBulkStatus, ['Under Review', 'Accepted', 'Rejected'])) {
@@ -152,7 +165,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $target = $appModel->getApplicationById($targetAppId);
                         if ($target) {
                             $trackingId = $target['tracking_id'];
-                            Mailer::sendStatusUpdate($target['email'], $target['applicant_name'], $newBulkStatus, $trackingId, $target['form_title'] ?? $form['title'], $applicantNote);
+                            try {
+                                Mailer::sendStatusUpdate($target['email'], $target['applicant_name'], $newBulkStatus, $trackingId, $target['form_title'] ?? $form['title'], $applicantNote);
+                            } catch (Throwable $e) {
+                                // One failed email must not stop the rest; the status change is already saved.
+                            }
                         }
                     }
                 }
@@ -249,7 +266,17 @@ if (!empty($activeFieldFilters)) {
 
 // Safe copy of the id for use inside HTML attributes.
 $fid = htmlspecialchars((string) $formId, ENT_QUOTES, 'UTF-8');
-$publicUrl = 'http://' . $_SERVER['HTTP_HOST'] . '/' . $form['form_type'];
+
+// Public link to the form: the configured site address when there is one (so it is https on a live site),
+// otherwise the address this page was opened on.
+$appConfig = require __DIR__ . '/../../includes/config.php';
+$baseUrl = rtrim((string) ($appConfig['app']['url'] ?? ''), '/');
+if ($baseUrl === '') {
+    $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+        || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
+    $baseUrl = ($https ? 'https://' : 'http://') . $_SERVER['HTTP_HOST'];
+}
+$publicUrl = $baseUrl . '/' . $form['form_type'];
 
 engage_header([
     'title'   => $form['title'] . ' - Form Manager',
@@ -291,12 +318,15 @@ engage_header([
     .tbl td.id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 700; }
     .tbl td.when { color: var(--muted); white-space: nowrap; }
     .tbl td input[type=checkbox], .tbl th input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--primary); cursor: pointer; }
+    .tbl td input[type=checkbox]:disabled { cursor: not-allowed; }
     .tbl td.act { white-space: nowrap; }
+    .draft-note { margin-left: 10px; font-size: 13px; color: var(--muted); }
 
     .pill.status-New { --tone: var(--primary); }
     .pill.status-Under-Review { --tone: #6d28d9; }
-    .pill.status-Accepted { --tone: #047857; }
-    .pill.status-Rejected { --tone: #b91c1c; }
+    .pill.status-Draft { --tone: #b45309; }
+    .pill.status-Accepted { --tone: var(--leaf-dark); }
+    .pill.status-Rejected { --tone: var(--accent); }
 
     /* Applicant data modal */
     .modal { display: none; position: fixed; inset: 0; z-index: 50; padding: 40px 16px; overflow: auto; background: rgba(15,23,42,.55); }
@@ -329,6 +359,7 @@ engage_header([
     </p>
     <div class="controls">
         <?php if (!$isMembershipForm): ?>
+            <a href="/admin/application-review?form=<?= urlencode($form['form_type']) ?>" class="btn-ghost">Application review</a>
             <a href="?id=<?= $fid ?>&action=export" class="btn-ghost">Export CSV</a>
         <?php endif; ?>
         <?php if ($canEditSchema): ?>
@@ -367,6 +398,7 @@ engage_header([
             <option value="Under Review" <?= $filterStatus === 'Under Review' ? 'selected' : '' ?>>Under Review</option>
             <option value="Accepted" <?= $filterStatus === 'Accepted' ? 'selected' : '' ?>>Accepted</option>
             <option value="Rejected" <?= $filterStatus === 'Rejected' ? 'selected' : '' ?>>Rejected</option>
+            <option value="Draft" <?= $filterStatus === 'Draft' ? 'selected' : '' ?>>Awaiting applicant</option>
         </select>
 
         <?php foreach ($selectFields as $sf):
@@ -426,19 +458,33 @@ engage_header([
 
                 <?php foreach ($applications as $app):
                     $statusClass = 'status-' . str_replace(' ', '-', $app['status']);
+                    $isDraft = $app['status'] === 'Draft';
+                    // Everything the "View data" window needs, as ONE JSON value in a data attribute.
+                    // htmlspecialchars() makes it safe inside the attribute, and the browser hands the exact
+                    // JSON back, so nothing an applicant typed can ever run as code.
+                    $viewPayload = json_encode([
+                        'data'  => $app['form_data'],
+                        'name'  => $app['applicant_name'],
+                        'id'    => (int) $app['id'],
+                        'notes' => $notesModel->getNotesByApplication($app['id']),
+                    ], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
                     ?>
                     <tr>
                         <td><input type="checkbox" class="row-checkbox" value="<?= (int) $app['id'] ?>"
-                                onchange="updateBulkBar()"></td>
+                                onchange="updateBulkBar()"
+                                <?= $isDraft ? 'disabled title="The applicant is still working on this"' : '' ?>></td>
                         <td class="id"><?= htmlspecialchars($app['tracking_id'] ?? 'N/A') ?></td>
                         <td style="font-weight: 600;"><?= htmlspecialchars($app['applicant_name']) ?></td>
-                        <td><span class="pill status-badge <?= $statusClass ?>"><?= htmlspecialchars($app['status']) ?></span></td>
+                        <td><span class="pill status-badge <?= $statusClass ?>"><?= htmlspecialchars($isDraft ? 'Awaiting applicant' : $app['status']) ?></span></td>
                         <td class="when"><?= date('M j, Y H:i', strtotime($app['created_at'])) ?></td>
                         <td class="act">
                             <button type="button" class="btn-solid sm"
-                                onclick='viewData(<?= json_encode($app['form_data'], JSON_HEX_APOS | JSON_HEX_QUOT) ?>, "<?= htmlspecialchars($app['applicant_name'], ENT_QUOTES) ?>", <?= (int) $app['id'] ?>, <?= json_encode($notesModel->getNotesByApplication($app['id']), JSON_HEX_APOS | JSON_HEX_QUOT) ?>)'>View
-                                data</button>
+                                data-view="<?= htmlspecialchars($viewPayload, ENT_QUOTES, 'UTF-8') ?>"
+                                onclick="viewData(JSON.parse(this.dataset.view))">View data</button>
 
+                            <?php if ($isDraft): ?>
+                                <span class="draft-note">Waiting for the applicant to submit</span>
+                            <?php else: ?>
                             <form method="POST" class="rowform">
                                 <?= CSRF::getInputField() ?>
                                 <input type="hidden" name="action" value="update_applicant_status">
@@ -457,6 +503,7 @@ engage_header([
                                 <input type="text" name="applicant_note" placeholder="Optional note to applicant">
                                 <button type="submit" class="btn-ghost sm">Apply</button>
                             </form>
+                            <?php endif; ?>
                         </td>
                     </tr>
                 <?php endforeach; ?>
@@ -492,14 +539,16 @@ engage_header([
 
 <script>
     // Use the schema from PHP to properly map keys to labels if possible
-    const formSchema = <?= json_encode($form['schema']['fields']) ?>;
+    const formSchema = <?= json_encode($form['schema']['fields'] ?? [], JSON_HEX_TAG | JSON_HEX_AMP) ?>;
 
     function getLabelForName(name) {
         const field = formSchema.find(f => f.name === name);
         return field && field.label ? field.label : name.replace(/_/g, ' ');
     }
 
-    function viewData(jsonString, applicantName, appId, notes) {
+    // One object per application: { data, name, id, notes } (see data-view on the "View data" button).
+    function viewData(a) {
+        const jsonString = a.data, applicantName = a.name, appId = a.id, notes = a.notes;
         try {
             const data = typeof jsonString === 'string' ? JSON.parse(jsonString) : jsonString;
             document.getElementById('modalTitle').innerText = applicantName + "'s application";
@@ -527,7 +576,7 @@ engage_header([
                     link.innerText = 'View Uploaded File \u2197';
                     val.appendChild(link);
                 } else {
-                    val.innerText = value || '-';
+                    val.innerText = Array.isArray(value) ? value.join(', ') : (value || '-');
                 }
 
                 row.appendChild(label);
@@ -590,9 +639,9 @@ engage_header([
             const label = btn.querySelector('span');
             const originalText = label.innerText;
             label.innerText = "Copied!";
-            btn.style.background = "#d1fae5";
-            btn.style.color = "#065f46";
-            btn.style.borderColor = "#34d399";
+            btn.style.background = "var(--leaf-tint)";
+            btn.style.color = "var(--leaf-dark)";
+            btn.style.borderColor = "var(--leaf)";
             setTimeout(() => {
                 label.innerText = originalText;
                 btn.style.background = "transparent";
@@ -604,9 +653,9 @@ engage_header([
         });
     }
 
-    // --- Bulk selection logic ---
+    // --- Bulk selection logic (rows that cannot be decided, like Drafts, are disabled and never selected) ---
     function toggleSelectAll(source) {
-        document.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = source.checked);
+        document.querySelectorAll('.row-checkbox:not(:disabled)').forEach(cb => cb.checked = source.checked);
         updateBulkBar();
     }
 
@@ -622,7 +671,7 @@ engage_header([
         }
 
         // Keep "select all" checkbox in sync if some/none/all rows are checked
-        const all = document.querySelectorAll('.row-checkbox');
+        const all = document.querySelectorAll('.row-checkbox:not(:disabled)');
         const selectAll = document.getElementById('selectAll');
         selectAll.checked = all.length > 0 && checked.length === all.length;
         selectAll.indeterminate = checked.length > 0 && checked.length < all.length;

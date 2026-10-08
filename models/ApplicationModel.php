@@ -215,6 +215,22 @@ class ApplicationModel {
     }
 
     /**
+     * Applications waiting for a first decision (status New or Submitted), counted per form.
+     * Returns [form_id => count]. Powers the "N waiting" badge on the workspace dashboard,
+     * so it counts rows in the database instead of loading every application.
+     * Drafts (the applicant is still writing, or was sent back) and decided applications are not counted.
+     */
+    public function countAwaitingByForm() {
+        $rows = $this->db->query("
+            SELECT form_id, COUNT(*) AS n
+            FROM applications
+            WHERE status IN ('New', 'Submitted')
+            GROUP BY form_id
+        ")->fetchAll();
+        return array_column($rows, 'n', 'form_id');
+    }
+
+    /**
      * Get a single application by ID
      */
     public function getApplicationById($id) {
