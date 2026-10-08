@@ -43,6 +43,14 @@ if ($route === '/' || $route === '/index.php') {
     require __DIR__ . '/views/admin/dashboard.php';
 } elseif ($route === '/admin/form_manager') {
     require __DIR__ . '/views/admin/form_manager.php';
+
+// One queue for the responses to every ordinary (non-membership) form, the
+// counterpart of /admin/membership-review. Role check is inside the view:
+// requireRole(['organizer', 'owner']). Under /admin so Auth::isSafeNext()
+// lets the login redirect bring people back.
+} elseif ($route === '/admin/application-review') {
+    require __DIR__ . '/views/admin/application_review.php';
+
 } elseif ($route === '/admin/builder') {
     require __DIR__ . '/views/admin/builder.php';
 } elseif ($route === '/admin/preview_form') {
