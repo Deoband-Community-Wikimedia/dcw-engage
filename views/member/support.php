@@ -120,6 +120,7 @@ if ($action === 'submit_internet_request' && $type === 'internet') {
                     'tech_contributor'   => $_POST['tech_contributor'] ?? '',
                     'contributions'      => $_POST['contributions'] ?? '',
                     'plans'              => $_POST['plans'] ?? '',
+                    'pack_ends_on'       => $_POST['pack_ends_on'] ?? '',
                 ]
             );
 
@@ -283,9 +284,15 @@ $eligibilityQuestions = [
     'tech_contributor' => 'Are you actively contributing to DCW technical projects?',
 ];
 
-// Reimbursement: same India-time window the model enforces, used only to bound the date picker.
+// Internet support: the date picker for "when does your current pack end" uses the same window the
+// model enforces (InternetSupportModel::cleanPackEndDate), in India time.
 $_tz = new DateTimeZone('Asia/Kolkata');
 $_today = new DateTimeImmutable('today', $_tz);
+$packEndMin = $_today->modify('-' . InternetSupportModel::PACK_END_MAX_PAST_DAYS . ' days')->format('Y-m-d');
+$packEndMax = $_today->modify('+' . InternetSupportModel::PACK_END_MAX_AHEAD_DAYS . ' days')->format('Y-m-d');
+$packNoticeDays = (int) InternetSupportModel::PREFERRED_NOTICE_DAYS;
+
+// Reimbursement: same India-time window the model enforces, used only to bound the date picker.
 $maxEventDate = $_today->format('Y-m-d');
 $minEventDate = $_today->modify('-' . ReimbursementModel::CLAIM_WINDOW_DAYS . ' days')->format('Y-m-d');
 $upiMaxRupees = ReimbursementModel::UPI_MAX_PAISE / 100;
@@ -371,6 +378,7 @@ engage_header([
                 A reviewer checks the request, our finance team does the recharge, and you then upload the
                 operator's receipt so we can close it. You can submit one request every
                 <?= (int) InternetSupportModel::MIN_DAYS_BETWEEN_REQUESTS ?> days.
+                Please apply at least <?= $packNoticeDays ?> days before your current pack ends.
             </p>
 
             <form method="POST" action="/member/support?type=internet">
@@ -443,6 +451,17 @@ engage_header([
                     </div>
                 </div>
 
+                <div class="field">
+                    <label>When does your current pack end? <span class="req-star">*</span></label>
+                    <input type="date" name="pack_ends_on" id="pack-ends-on" required
+                           min="<?= htmlspecialchars($packEndMin) ?>" max="<?= htmlspecialchars($packEndMax) ?>" value="<?= $old('pack_ends_on') ?>">
+                    <span class="hint">We try to have the recharge ready by then. Please apply at least <?= $packNoticeDays ?> days before this date.</span>
+                    <div id="short-notice-note" class="alert error" style="display:none; margin:10px 0 0;">
+                        That is less than <?= $packNoticeDays ?> days away. You can still submit, but we usually need about
+                        <?= $packNoticeDays ?> days to review and recharge, so it may not be ready in time.
+                    </div>
+                </div>
+
                 <h3>Your request</h3>
                 <div class="field">
                     <label>Why do you need support with internet access? <span class="req-star">*</span></label>
@@ -477,6 +496,25 @@ engage_header([
                         submit.disabled = !!blocked;
                     }
                     form.addEventListener('change', update);
+                    update();
+                })();
+
+                // Short-notice warning for the pack end date. It never blocks the form.
+                (function () {
+                    var input = document.getElementById('pack-ends-on');
+                    var note = document.getElementById('short-notice-note');
+                    if (!input || !note) return;
+                    var PREFERRED_DAYS = <?= json_encode($packNoticeDays) ?>;
+                    var todayIst = <?= json_encode($_today->format('Y-m-d')) ?>;
+                    function daysUntil(iso) {
+                        var a = Date.parse(todayIst + 'T00:00:00Z'), b = Date.parse(iso + 'T00:00:00Z');
+                        return Math.round((b - a) / 86400000);
+                    }
+                    function update() {
+                        note.style.display = (input.value && daysUntil(input.value) < PREFERRED_DAYS) ? 'block' : 'none';
+                    }
+                    input.addEventListener('input', update);
+                    input.addEventListener('change', update);
                     update();
                 })();
             </script>
