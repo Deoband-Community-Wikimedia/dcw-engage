@@ -33,6 +33,7 @@ engage_header([
 <div class="fcard wide">
     <p class="note">
         Click a row's PDF link to generate it on demand. Nothing is stored here; each PDF is built fresh when you ask for it.
+        The amount shown is what was actually paid or recharged. When it differs from what the applicant claimed or asked for, the original figure is shown underneath.
     </p>
 
     <nav class="tabs" aria-label="Closed request type">
@@ -46,14 +47,20 @@ engage_header([
     <?php else: ?>
         <div class="tbl-wrap"><table class="tbl">
             <thead><tr>
-                <th>Applicant</th><th>Event</th><th class="num">Amount</th><th>Date processed</th><th>Paid by</th><th>Receipt</th>
+                <th>Applicant</th><th>Event</th><th class="num">Amount paid</th><th>Date processed</th><th>Paid by</th><th>Receipt</th>
             </tr></thead>
             <tbody>
             <?php foreach ($paid as $req): ?>
+                <?php $claimed = (int) $req['total_amount_paise']; $paidPaise = (int) $req['paid_paise']; ?>
                 <tr>
                     <td><?= $e($req['applicant_name']) ?><span class="sub">#<?= $e($req['tracking_id']) ?></span></td>
                     <td><?= $e($req['event_name']) ?></td>
-                    <td class="num">₹<?= number_format($req['total_amount_paise'] / 100, 2) ?></td>
+                    <td class="num">
+                        ₹<?= number_format($paidPaise / 100, 2) ?>
+                        <?php if ($paidPaise !== $claimed): ?>
+                            <span class="sub">claimed ₹<?= number_format($claimed / 100, 2) ?></span>
+                        <?php endif; ?>
+                    </td>
                     <td><?= $e(date('j M Y', strtotime($req['paid_at']))) ?></td>
                     <td><?= $e($req['paid_by']) ?></td>
                     <td><a class="dl" href="/finance/reimbursements/receipt/<?= (int) $req['id'] ?>" target="_blank">⬇ PDF</a></td>
@@ -69,14 +76,20 @@ engage_header([
     <?php else: ?>
         <div class="tbl-wrap"><table class="tbl">
             <thead><tr>
-                <th>Applicant</th><th>Operator / pack</th><th class="num">Amount</th><th>Recharge ref</th><th>Date closed</th><th>Closed by</th><th>Receipt</th>
+                <th>Applicant</th><th>Operator / pack</th><th class="num">Amount recharged</th><th>Recharge ref</th><th>Date closed</th><th>Closed by</th><th>Receipt</th>
             </tr></thead>
             <tbody>
             <?php foreach ($closed as $req): ?>
+                <?php $requested = (int) $req['package_price_paise']; $paidPaise = (int) $req['paid_paise']; ?>
                 <tr>
                     <td><?= $e($req['applicant_name']) ?><span class="sub">#<?= $e($req['tracking_id']) ?></span></td>
                     <td><?= $e($req['operator']) ?><span class="sub"><?= $e($req['package_name']) ?></span></td>
-                    <td class="num">₹<?= number_format($req['package_price_paise'] / 100, 2) ?></td>
+                    <td class="num">
+                        ₹<?= number_format($paidPaise / 100, 2) ?>
+                        <?php if ($paidPaise !== $requested): ?>
+                            <span class="sub">requested ₹<?= number_format($requested / 100, 2) ?></span>
+                        <?php endif; ?>
+                    </td>
                     <td><?= $e((string) $req['recharge_reference']) ?></td>
                     <td><?= $e(date('j M Y', strtotime($req['closed_at']))) ?></td>
                     <td><?= $e((string) $req['closed_by']) ?></td>

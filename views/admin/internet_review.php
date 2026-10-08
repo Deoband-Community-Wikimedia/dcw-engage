@@ -172,6 +172,29 @@ function internet_review_card(array $req, InternetSupportModel $model, InternalN
                 <span>Package</span>
                 <strong><?= htmlspecialchars($req['operator']) ?> — <?= htmlspecialchars($req['package_name']) ?><?= $req['package_validity_days'] ? ' · ' . (int) $req['package_validity_days'] . ' days' : '' ?></strong>
             </div>
+            <?php
+            $noticeDays = InternetSupportModel::packEndNoticeDays($req['current_pack_ends_on'] ?? null);
+            $shortNotice = $noticeDays !== null && $noticeDays < InternetSupportModel::PREFERRED_NOTICE_DAYS;
+            ?>
+            <div>
+                <span>Current pack ends</span>
+                <strong<?= $shortNotice ? ' style="color:#b45309;"' : '' ?>>
+                    <?php if ($noticeDays === null): ?>
+                        —
+                    <?php else: ?>
+                        <?= htmlspecialchars(date('j M Y', strtotime((string) $req['current_pack_ends_on']))) ?>
+                        <?php if ($noticeDays < 0): ?>
+                            (already ended)
+                        <?php elseif ($noticeDays === 0): ?>
+                            (ends today)
+                        <?php elseif ($shortNotice): ?>
+                            (in <?= $noticeDays ?> day<?= $noticeDays === 1 ? '' : 's' ?>: under the usual <?= InternetSupportModel::PREFERRED_NOTICE_DAYS ?> days' notice)
+                        <?php else: ?>
+                            (in <?= $noticeDays ?> days)
+                        <?php endif; ?>
+                    <?php endif; ?>
+                </strong>
+            </div>
             <div>
                 <span>80+ manual edits last month</span>
                 <strong><?= $yn($req['edits_80']) ?></strong>

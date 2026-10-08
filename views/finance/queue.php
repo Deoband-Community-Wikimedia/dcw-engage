@@ -287,6 +287,7 @@ if ($requestedTab === null) {
 $tab = $requestedTab;
 
 $e = fn($s) => htmlspecialchars((string) $s);
+$todayIst = (new DateTimeImmutable('today', new DateTimeZone('Asia/Kolkata')))->format('Y-m-d');
 
 engage_header([
     'title'   => 'Finance queue',
@@ -392,6 +393,7 @@ engage_header([
 <?php else: ?>
     <p class="note">
         Approved requests waiting for a recharge, then receipts waiting to be checked.
+        Recharges are listed by the date the applicant's current pack ends, soonest first; older requests with no date come last.
         The reason for a request isn't shown here; the review already happened.
         The amount shown is what the reviewer approved. If the operator's real price is different, enter what you actually recharged and give a reason: the applicant is told.
     </p>
@@ -418,6 +420,17 @@ engage_header([
                     <div><span>Mobile number</span><strong class="big"><?= $e($req['phone']) ?></strong></div>
                     <div><span>Operator</span><strong><?= $e($req['operator']) ?></strong></div>
                     <div><span>Pack</span><strong><?= $e($req['package_name']) ?><?= $req['package_validity_days'] ? ' · ' . (int) $req['package_validity_days'] . ' days' : '' ?></strong></div>
+                    <div>
+                        <span>Current pack ends</span>
+                        <?php if (empty($req['current_pack_ends_on'])): ?>
+                            <strong style="color:var(--muted);">Not given</strong>
+                        <?php else: ?>
+                            <strong<?= $req['current_pack_ends_on'] <= $todayIst ? ' style="color:#b91c1c;"' : '' ?>>
+                                <?= $e(date('j M Y', strtotime((string) $req['current_pack_ends_on']))) ?>
+                                <?= $req['current_pack_ends_on'] < $todayIst ? ' (already ended)' : ($req['current_pack_ends_on'] === $todayIst ? ' (ends today)' : '') ?>
+                            </strong>
+                        <?php endif; ?>
+                    </div>
                     <?php if ($approved !== $requested): ?>
                         <div><span>Applicant stated</span><strong><?= $e(rupees_label($requested)) ?></strong></div>
                     <?php endif; ?>
