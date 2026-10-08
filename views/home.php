@@ -215,7 +215,6 @@ engage_header([
                         <span class="lbl">Memberships across DCW and our clubs</span>
                     </div>
                 </div>
-                <p class="stat-note">Each person is counted once, however many clubs they belong to.</p>
             </section>
             <script>
                 // Gentle count-up when the stats scroll into view (skipped for reduced motion).
