@@ -5,6 +5,7 @@ require_once __DIR__ . '/../models/FormModel.php';
 require_once __DIR__ . '/../models/InternetSupportModel.php';
 require_once __DIR__ . '/../models/ReimbursementSettingsModel.php';
 require_once __DIR__ . '/../includes/member_session.php';
+require_once __DIR__ . '/../includes/member_stats.php';
 
 $formModel = new FormModel();
 $activeForms = $formModel->getActiveForms();
@@ -43,6 +44,11 @@ try {
 } catch (Throwable $e) {
     $signedInMember = null;
 }
+
+// Member numbers for the "DCW in numbers" strip. PEOPLE ARE COUNTED BY MEMBER ID: one ID is one
+// person, even when it covers several clubs (see includes/member_stats.php). Never throws; if the
+// numbers can't be read, the strip is simply left out.
+$stats = member_stats();
 
 /**
  * Moving photo strip ("From our events"). Leave the list empty to hide it.
@@ -286,6 +292,19 @@ $about = engage_about_links(true);
         }
         .prog.featured:hover { border-color: transparent; }
 
+        /* "DCW in numbers": member counts. One Member ID = one person, however many clubs. */
+        .stats { margin-top: 34px; text-align: center; }
+        .stats .section-title { margin-top: 0; }
+        .stat-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 16px; }
+        .stat {
+            flex: 1 1 200px; max-width: 280px; padding: 22px 18px;
+            background: var(--card); border: 1px solid var(--border); border-radius: 16px;
+            box-shadow: 0 6px 18px rgba(15,23,42,.06);
+        }
+        .stat strong { display: block; font-size: clamp(30px, 5vw, 42px); font-weight: 800; line-height: 1.1; letter-spacing: -1px; color: var(--primary); }
+        .stat span { display: block; margin-top: 6px; font-size: 14px; font-weight: 600; color: var(--muted); }
+        .stat-note { margin: 12px 0 0; font-size: 12.5px; color: var(--muted); }
+
         /* Help strip: tracking + support, under the cards */
         .helpbar { display: flex; flex-wrap: wrap; justify-content: center; gap: 16px; margin-top: 26px; }
         .help-item {
@@ -364,6 +383,7 @@ $about = engage_about_links(true);
             }
             .prog.featured .tick { margin-bottom: 12px; }
             .prog.featured .go { justify-self: start; margin-top: 14px; }
+            .stat { max-width: none; flex-basis: 100%; }
             .gallery figure { width: 240px; }
             .gallery img { height: 165px; }
         }
@@ -430,6 +450,27 @@ $about = engage_about_links(true);
                     </a>
                 <?php endforeach; ?>
             </div>
+        <?php endif; ?>
+
+        <?php if ($stats['ok'] && $stats['people'] > 0): ?>
+            <section class="stats" aria-label="Member Statistics">
+                <h2 class="section-title">Member Statistics</h2>
+                <div class="stat-row">
+                    <div class="stat">
+                        <strong><?= number_format($stats['people']) ?></strong>
+                        <span>Members</span>
+                    </div>
+                    <div class="stat">
+                        <strong><?= number_format($stats['active']) ?></strong>
+                        <span>Active members</span>
+                    </div>
+                    <div class="stat">
+                        <strong><?= number_format($stats['memberships']) ?></strong>
+                        <span>Memberships across DCW and our clubs</span>
+                    </div>
+                </div>
+                <p class="stat-note">Each person is counted once, however many clubs they belong to.</p>
+            </section>
         <?php endif; ?>
 
         <section class="helpbar" aria-label="Tracking and support">
