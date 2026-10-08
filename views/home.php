@@ -45,14 +45,14 @@ try {
     $signedInMember = null;
 }
 
-// Member numbers for the "DCW in numbers" strip. PEOPLE ARE COUNTED BY MEMBER ID: one ID is one
+// Member numbers for the "Member Statistics" panel. PEOPLE ARE COUNTED BY MEMBER ID: one ID is one
 // person, even when it covers several clubs (see includes/member_stats.php). Never throws; if the
-// numbers can't be read, the strip is simply left out.
+// numbers can't be read, the panel is simply left out.
 $stats = member_stats();
 
 /**
  * Moving photo strip ("From our events"). Leave the list empty to hide it.
- * It scrolls by itself, pauses on hover or touch, has a Pause button, and stands still
+ * It scrolls by itself, pauses on hover or keyboard focus, and stands still
  * (swipeable) for visitors who ask their device for reduced motion. Add as many photos as you like.
  *
  * Easiest way, for a Wikimedia Commons photo: give the file name (or the Commons page link).
@@ -115,6 +115,8 @@ $icons = [
     'wifi'   => '<path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/>',
     'search' => '<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>',
     'help'   => '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/><line x1="4.93" y1="4.93" x2="9.17" y2="9.17"/><line x1="14.83" y1="14.83" x2="19.07" y2="19.07"/><line x1="14.83" y1="9.17" x2="19.07" y2="4.93"/><line x1="4.93" y1="19.07" x2="9.17" y2="14.83"/>',
+    'pulse'  => '<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>',
+    'layers' => '<polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>',
 ];
 
 // $cards holds only the featured Membership banner.
@@ -292,18 +294,41 @@ $about = engage_about_links(true);
         }
         .prog.featured:hover { border-color: transparent; }
 
-        /* "DCW in numbers": member counts. One Member ID = one person, however many clubs. */
-        .stats { margin-top: 34px; text-align: center; }
-        .stats .section-title { margin-top: 0; }
-        .stat-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 16px; }
-        .stat {
-            flex: 1 1 200px; max-width: 280px; padding: 22px 18px;
-            background: var(--card); border: 1px solid var(--border); border-radius: 16px;
-            box-shadow: 0 6px 18px rgba(15,23,42,.06);
+        /* Member statistics: calm pastel panel under the photo strip. One Member ID = one person. */
+        .stats {
+            position: relative; overflow: hidden; margin: 44px 0 8px; padding: 36px 24px 28px; text-align: center;
+            border-radius: 24px; border: 1px solid #dbe9f0;
+            background: linear-gradient(135deg, #e8f3f8 0%, #eef6f3 55%, #f9f1ee 100%);
         }
-        .stat strong { display: block; font-size: clamp(30px, 5vw, 42px); font-weight: 800; line-height: 1.1; letter-spacing: -1px; color: var(--primary); }
-        .stat span { display: block; margin-top: 6px; font-size: 14px; font-weight: 600; color: var(--muted); }
-        .stat-note { margin: 12px 0 0; font-size: 12.5px; color: var(--muted); }
+        .stats::before, .stats::after {
+            content: ''; position: absolute; border-radius: 50%; pointer-events: none; filter: blur(2px);
+        }
+        .stats::before { width: 260px; height: 260px; top: -110px; left: -70px; background: radial-gradient(circle, rgba(27,140,192,.18) 0, rgba(27,140,192,0) 70%); }
+        .stats::after  { width: 300px; height: 300px; bottom: -150px; right: -80px; background: radial-gradient(circle, rgba(15,118,110,.16) 0, rgba(15,118,110,0) 70%); }
+        .stats > * { position: relative; z-index: 1; }
+        .stats .section-title { margin: 0 0 22px; }
+        .stat-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 20px; }
+        .stat {
+            --tone: var(--primary);
+            flex: 1 1 240px; max-width: 320px; padding: 26px 20px 22px;
+            background: #fff; border: 1px solid color-mix(in srgb, var(--tone) 16%, #fff); border-radius: 18px;
+            box-shadow: 0 8px 22px rgba(15,23,42,.07);
+            transition: transform .18s, box-shadow .18s;
+        }
+        .stat:hover { transform: translateY(-3px); box-shadow: 0 14px 30px rgba(15,23,42,.12); }
+        .stat-ico {
+            width: 46px; height: 46px; margin: 0 auto 12px; border-radius: 50%; display: grid; place-items: center;
+            background: color-mix(in srgb, var(--tone) 13%, #fff);
+        }
+        .stat-ico svg { width: 22px; height: 22px; stroke: var(--tone); fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+        .stat strong {
+            display: block; font-size: clamp(34px, 5vw, 46px); font-weight: 800; line-height: 1.1; letter-spacing: -1px;
+            color: var(--tone);
+            background: linear-gradient(135deg, var(--tone), color-mix(in srgb, var(--tone) 55%, #1b8cc0));
+            -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+        }
+        .stat span.lbl { display: block; margin-top: 6px; font-size: 14.5px; font-weight: 600; color: var(--muted); }
+        .stat-note { margin: 18px 0 0; font-size: 12.5px; color: var(--muted); }
 
         /* Help strip: tracking + support, under the cards */
         .helpbar { display: flex; flex-wrap: wrap; justify-content: center; gap: 16px; margin-top: 26px; }
@@ -330,7 +355,7 @@ $about = engage_about_links(true);
         .help-sub a:hover { text-decoration: underline; }
 
         /* Moving photo strip: two identical rows slide left in a loop (the second row is the
-           seamless continuation, hidden from screen readers). Pauses on hover, focus, or the button. */
+           seamless continuation, hidden from screen readers). Pauses on hover or keyboard focus. */
         .gallery { margin: 44px 0 6px; text-align: center; }
         .gallery h2 { margin: 0 0 16px; font-size: 13px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); font-weight: 700; }
         .marquee {
@@ -342,7 +367,7 @@ $about = engage_about_links(true);
             display: flex; gap: 14px; width: max-content;
             animation: gal-scroll var(--gal-dur, 40s) linear infinite;
         }
-        .marquee:hover .track, .marquee:focus-within .track, .marquee.paused .track { animation-play-state: paused; }
+        .marquee:hover .track, .marquee:focus-within .track { animation-play-state: paused; }
         /* Two rows with a 14px gap between them: the loop point is half the track plus half a gap. */
         @keyframes gal-scroll { to { transform: translateX(calc(-50% - 7px)); } }
         .gallery figure { flex: none; width: 280px; margin: 0; text-align: left; }
@@ -350,18 +375,12 @@ $about = engage_about_links(true);
         .gallery figcaption { margin-top: 6px; font-size: 12px; line-height: 1.4; color: var(--muted); }
         .gallery figcaption a { color: var(--muted); text-decoration: underline; text-underline-offset: 2px; }
         .gallery figcaption a:hover { color: var(--primary); }
-        .gal-toggle {
-            margin-top: 12px; padding: 5px 14px; border-radius: 999px; cursor: pointer;
-            font: inherit; font-size: 12.5px; font-weight: 600; color: var(--muted);
-            background: #fff; border: 1px solid var(--border);
-        }
-        .gal-toggle:hover { color: var(--primary); border-color: var(--primary); }
 
         /* Reduced motion: no animation. The strip becomes a normal swipeable row, without the repeat. */
         @media (prefers-reduced-motion: reduce) {
             .marquee { overflow-x: auto; -webkit-mask-image: none; mask-image: none; scroll-snap-type: x proximity; }
             .marquee .track { animation: none; }
-            .marquee .dup, .gal-toggle { display: none; }
+            .marquee .dup { display: none; }
             .gallery figure { scroll-snap-align: start; }
         }
 
@@ -452,25 +471,72 @@ $about = engage_about_links(true);
             </div>
         <?php endif; ?>
 
-        <?php if ($stats['ok'] && $stats['people'] > 0): ?>
+        <?php if (!empty($gallery)): ?>
+            <section class="gallery" aria-label="From our events">
+                <h2>From our events</h2>
+                <div class="marquee" id="galMarquee" style="--gal-dur: <?= (int) $galleryDuration ?>s;">
+                    <div class="track">
+                        <?php foreach ([false, true] as $isDup): ?>
+                            <?php foreach ($gallery as $img): ?>
+                                <figure<?= $isDup ? ' class="dup" aria-hidden="true"' : '' ?>>
+                                    <img src="<?= htmlspecialchars($img['src']) ?>" alt="<?= $isDup ? '' : htmlspecialchars($img['alt'] ?? '') ?>" decoding="async">
+                                    <?php if (!empty($img['credit'])): ?>
+                                        <figcaption>
+                                            <?php if (!empty($img['href'])): ?>
+                                                <a href="<?= htmlspecialchars($img['href']) ?>" target="_blank" rel="noopener"<?= $isDup ? ' tabindex="-1"' : '' ?>><?= htmlspecialchars($img['credit']) ?></a>
+                                            <?php else: ?>
+                                                <?= htmlspecialchars($img['credit']) ?>
+                                            <?php endif; ?>
+                                        </figcaption>
+                                    <?php endif; ?>
+                                </figure>
+                            <?php endforeach; ?>
+                        <?php endforeach; ?>
+                    </div>
+                </div>
+            </section>
+        <?php endif; ?>
+
+        <?php if ($stats['ok'] && $stats['active'] > 0): ?>
             <section class="stats" aria-label="Member Statistics">
                 <h2 class="section-title">Member Statistics</h2>
                 <div class="stat-row">
-                    <div class="stat">
-                        <strong><?= number_format($stats['people']) ?></strong>
-                        <span>Members</span>
+                    <div class="stat" style="--tone: #0f766e;">
+                        <span class="stat-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><?= $icons['pulse'] ?></svg></span>
+                        <strong data-count="<?= (int) $stats['active'] ?>"><?= number_format($stats['active']) ?></strong>
+                        <span class="lbl">Active members</span>
                     </div>
-                    <div class="stat">
-                        <strong><?= number_format($stats['active']) ?></strong>
-                        <span>Active members</span>
-                    </div>
-                    <div class="stat">
-                        <strong><?= number_format($stats['memberships']) ?></strong>
-                        <span>Memberships across DCW and our clubs</span>
+                    <div class="stat" style="--tone: #106b9a;">
+                        <span class="stat-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><?= $icons['layers'] ?></svg></span>
+                        <strong data-count="<?= (int) $stats['memberships'] ?>"><?= number_format($stats['memberships']) ?></strong>
+                        <span class="lbl">Memberships across DCW and our clubs</span>
                     </div>
                 </div>
                 <p class="stat-note">Each person is counted once, however many clubs they belong to.</p>
             </section>
+            <script>
+                // Gentle count-up when the stats scroll into view (skipped for reduced motion).
+                (function () {
+                    var els = document.querySelectorAll('.stat strong[data-count]');
+                    if (!els.length || !('IntersectionObserver' in window)
+                        || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+                    var io = new IntersectionObserver(function (entries) {
+                        entries.forEach(function (e) {
+                            if (!e.isIntersecting) return;
+                            io.unobserve(e.target);
+                            var el = e.target, end = +el.dataset.count, t0 = null;
+                            function step(t) {
+                                if (t0 === null) t0 = t;
+                                var p = Math.min((t - t0) / 1100, 1);
+                                el.textContent = Math.round(end * (1 - Math.pow(1 - p, 3))).toLocaleString();
+                                if (p < 1) requestAnimationFrame(step);
+                            }
+                            requestAnimationFrame(step);
+                        });
+                    }, { threshold: .4 });
+                    els.forEach(function (el) { io.observe(el); });
+                })();
+            </script>
         <?php endif; ?>
 
         <section class="helpbar" aria-label="Tracking and support">
@@ -502,43 +568,4 @@ $about = engage_about_links(true);
             <?php endif; ?>
         </section>
 
-        <?php if (!empty($gallery)): ?>
-            <section class="gallery" aria-label="From our events">
-                <h2>From our events</h2>
-                <div class="marquee" id="galMarquee" style="--gal-dur: <?= (int) $galleryDuration ?>s;">
-                    <div class="track">
-                        <?php foreach ([false, true] as $isDup): ?>
-                            <?php foreach ($gallery as $img): ?>
-                                <figure<?= $isDup ? ' class="dup" aria-hidden="true"' : '' ?>>
-                                    <img src="<?= htmlspecialchars($img['src']) ?>" alt="<?= $isDup ? '' : htmlspecialchars($img['alt'] ?? '') ?>" decoding="async">
-                                    <?php if (!empty($img['credit'])): ?>
-                                        <figcaption>
-                                            <?php if (!empty($img['href'])): ?>
-                                                <a href="<?= htmlspecialchars($img['href']) ?>" target="_blank" rel="noopener"<?= $isDup ? ' tabindex="-1"' : '' ?>><?= htmlspecialchars($img['credit']) ?></a>
-                                            <?php else: ?>
-                                                <?= htmlspecialchars($img['credit']) ?>
-                                            <?php endif; ?>
-                                        </figcaption>
-                                    <?php endif; ?>
-                                </figure>
-                            <?php endforeach; ?>
-                        <?php endforeach; ?>
-                    </div>
-                </div>
-                <button type="button" class="gal-toggle" id="galToggle" aria-pressed="false">Pause photos</button>
-            </section>
-            <script>
-                // Pause / play button for the moving photos.
-                (function () {
-                    var m = document.getElementById('galMarquee');
-                    var b = document.getElementById('galToggle');
-                    if (!m || !b) return;
-                    b.addEventListener('click', function () {
-                        var paused = m.classList.toggle('paused');
-                        b.setAttribute('aria-pressed', paused ? 'true' : 'false');
-                        b.textContent = paused ? 'Play photos' : 'Pause photos';
-                    });
-                })();
-            </script>
-        <?php endif; ?>
 <?php engage_footer(); ?>
