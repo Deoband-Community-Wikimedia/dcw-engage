@@ -80,7 +80,7 @@ if ($canReviewApplications) {
         foreach ((new ApplicationModel())->countAwaitingByForm() as $formId => $n) {
             if (isset($reviewable[(int) $formId])) $appsWaiting += (int) $n;
         }
-    } catch (Throwable $e) { $appsWaiting = 0; }
+    } catch (Throwable $e) { $appsWaiting = null; }
 }
 
 // Membership applications waiting for a first decision (New or Submitted), limited to the chapters this person
@@ -93,7 +93,7 @@ if ($canReviewMembership) {
         foreach ($memberModel->listApplications('', '', $memberScope) as $r) {
             if (in_array($r['status'], ['New', 'Submitted'], true)) $membershipWaiting++;
         }
-    } catch (Throwable $e) { $membershipWaiting = 0; }
+    } catch (Throwable $e) { $membershipWaiting = null; }
 }
 
 // The "Review" panel holds the review queues for applications and for membership.
@@ -139,12 +139,35 @@ function workspace_tile(array $icons, string $tone, string $icon, string $title,
     <?php
 }
 
+/**
+ * Renders one large review card (the "Review" panel). $count: a number shows as a big figure
+ * ("7 waiting"), 0 shows "All clear", null shows nothing (e.g. the Team card, or a count that could not be read).
+ */
+function review_card(array $icons, string $tone, string $icon, string $title, string $desc, string $href, ?int $count = null, string $cta = 'Open'): void
+{
+    ?>
+    <a class="rcard" href="<?= htmlspecialchars($href) ?>" style="--tone: <?= htmlspecialchars($tone) ?>;">
+        <span class="top">
+            <span class="tick"><svg viewBox="0 0 24 24" aria-hidden="true"><?= $icons[$icon] ?></svg></span>
+            <?php if ($count !== null && $count > 0): ?>
+                <span class="count"><strong><?= (int) $count ?></strong><span>waiting</span></span>
+            <?php elseif ($count === 0): ?>
+                <span class="count clear"><strong>&#10003; All clear</strong><span>nothing waiting</span></span>
+            <?php endif; ?>
+        </span>
+        <h3><?= htmlspecialchars($title) ?></h3>
+        <p><?= htmlspecialchars($desc) ?></p>
+        <span class="go"><?= htmlspecialchars($cta) ?> <span aria-hidden="true">&rarr;</span></span>
+    </a>
+    <?php
+}
+
 /** Renders one form tile (active or closed). */
 function form_tile(array $icons, array $form): void
 {
     $active = !empty($form['is_active']);
     $count  = (int) $form['applicant_count'];
-    $tone   = $active ? 'var(--leaf-dark)' : '#94a3b8';
+    $tone   = $active ? 'var(--leaf-dark, #3E7A53)' : '#94a3b8';
     ?>
     <a class="tile" href="/admin/form_manager?id=<?= (int) $form['id'] ?>" style="--tone: <?= $tone ?>;">
         <span class="tick"><svg viewBox="0 0 24 24" aria-hidden="true"><?= $icons['doc'] ?></svg></span>
@@ -170,6 +193,32 @@ function form_tile(array $icons, array $form): void
     <link rel="stylesheet" href="/assets/css/engage.css?v=2">
     <style>
         .hero { padding-bottom: 44px; }
+        /* Wider tiles so titles and paths are not squeezed */
+        .tiles { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+        @media (max-width: 640px) { .tiles { grid-template-columns: 1fr; } }
+
+        /* Large review cards */
+        .rcards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 18px; }
+        .rcard {
+            --tone: var(--primary); position: relative; overflow: hidden; display: flex; flex-direction: column; gap: 6px;
+            padding: 24px 24px 20px; text-decoration: none; color: inherit;
+            background: var(--card); border: 1px solid var(--border); border-radius: 18px;
+            box-shadow: 0 6px 18px rgba(15,23,42,.06);
+            transition: transform .18s, box-shadow .18s, border-color .18s;
+        }
+        .rcard::before { content: ''; position: absolute; inset: 0 0 auto 0; height: 5px; background: var(--tone); }
+        .rcard:hover { transform: translateY(-4px); box-shadow: 0 16px 34px rgba(15,23,42,.14); border-color: var(--tone); }
+        .rcard .top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+        .rcard .tick { width: 50px; height: 50px; border-radius: 14px; display: grid; place-items: center; background: color-mix(in srgb, var(--tone) 14%, #fff); }
+        .rcard .tick svg { width: 24px; height: 24px; stroke: var(--tone); fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+        .rcard .count { text-align: right; line-height: 1.1; }
+        .rcard .count strong { display: block; font-size: 38px; font-weight: 800; letter-spacing: -1px; color: var(--accent); }
+        .rcard .count span { display: block; margin-top: 2px; font-size: 11.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+        .rcard .count.clear strong { font-size: 16px; letter-spacing: 0; padding-top: 10px; color: var(--leaf-dark, #3E7A53); }
+        .rcard h3 { margin: 0; font-size: 20px; font-weight: 800; letter-spacing: -.01em; }
+        .rcard p { margin: 0; flex: 1; color: var(--muted); font-size: 14.5px; }
+        .rcard .go { margin-top: 14px; color: var(--tone); font-weight: 700; font-size: 14.5px; }
+        .rcard:hover .go span { display: inline-block; transform: translateX(4px); transition: transform .15s; }
         .wrap.cards-wrap { margin-top: 34px; }
         .closed-forms { margin-top: 18px; }
         .closed-forms summary { cursor: pointer; font-weight: 600; color: var(--muted); padding: 6px 0; }
@@ -217,22 +266,22 @@ function form_tile(array $icons, array $form): void
                     <h2>Review</h2>
                     <p><?= htmlspecialchars($reviewIntro) ?></p>
                 </div>
-                <div class="tiles">
+                <div class="rcards">
                     <?php
                     if ($canReviewApplications) {
-                        workspace_tile($icons, 'var(--primary)', 'inbox', 'Application review',
-                            'Accept, reject or send back responses to every program form, in one list.',
-                            '/admin/application-review',
-                            $appsWaiting > 0 ? $appsWaiting . ' waiting' : '');
+                        review_card($icons, 'var(--primary)', 'inbox', 'Application review',
+                            'Responses to every program form, grouped by program. Accept, reject or send back.',
+                            '/admin/application-review', $appsWaiting, 'Open the queue');
                     }
                     if ($canReviewMembership) {
-                        workspace_tile($icons, 'var(--accent)', 'people', 'Membership review',
-                            'Approve, reject, or send an application back for more information.', '/admin/membership-review',
-                            $membershipWaiting > 0 ? $membershipWaiting . ' waiting' : '');
+                        review_card($icons, 'var(--accent)', 'people', 'Membership review',
+                            'New applications and renewals. Approve, reject, or ask for more information.',
+                            '/admin/membership-review', $membershipWaiting, 'Open the queue');
                     }
                     if ($canManageTeam) {
-                        workspace_tile($icons, 'var(--leaf-dark)', 'key', 'Team',
-                            'Invite people, change roles, and choose which chapters each coordinator sees.', '/admin/team');
+                        review_card($icons, 'var(--leaf-dark, #3E7A53)', 'key', 'Team',
+                            'Invite people, change roles, and choose which chapters each coordinator sees.',
+                            '/admin/team', null, 'Manage team');
                     }
                     ?>
                 </div>
@@ -274,18 +323,18 @@ function form_tile(array $icons, array $form): void
                     <h2>Volunteer support</h2>
                     <p>Reimbursements and internet support, from review to payment.</p>
                     <div class="legend">
-                        <?php if ($canReviewAny): ?><span style="--tone:var(--leaf-dark)"><i></i>Review</span><?php endif; ?>
+                        <?php if ($canReviewAny): ?><span style="--tone:var(--leaf-dark, #3E7A53)"><i></i>Review</span><?php endif; ?>
                         <?php if ($canProcessFinance): ?><span style="--tone:#b45309"><i></i>Finance</span><?php endif; ?>
                     </div>
                 </div>
                 <div class="tiles">
                     <?php
                     if ($canReviewReimbursements) {
-                        workspace_tile($icons, 'var(--leaf-dark)', 'check', 'Reimbursement review',
+                        workspace_tile($icons, 'var(--leaf-dark, #3E7A53)', 'check', 'Reimbursement review',
                             'Approve or reject claims. Line items and receipts only, no payment details.', '/admin/reimbursements/review');
                     }
                     if ($canReviewInternet) {
-                        workspace_tile($icons, 'var(--leaf-dark)', 'wifi', 'Internet support review',
+                        workspace_tile($icons, 'var(--leaf-dark, #3E7A53)', 'wifi', 'Internet support review',
                             'Judge reasons and packages. No phone numbers shown.', '/admin/internet-review');
                     }
                     if ($canProcessFinance) {
