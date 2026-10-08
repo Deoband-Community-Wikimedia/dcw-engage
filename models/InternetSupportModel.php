@@ -25,6 +25,12 @@ require_once __DIR__ . '/../includes/crypto.php';
  * (approved_amount_note, paid_amount_note). Those reasons ARE shown to the
  * applicant; staff-only remarks live in internal_notes (InternalNoteModel).
  *
+ * PACK END DATE. On the request form the applicant says when their CURRENT pack ends
+ * (current_pack_ends_on; required for new requests, NULL on older ones). The programme
+ * usually wants requests at least PREFERRED_NOTICE_DAYS ahead of that date: shorter
+ * notice is flagged to the reviewers (see packEndNoticeDays()) but never blocks a
+ * request. Finance sees the date in the recharge queue, soonest first.
+ *
  * "Info Requested" sends the request back to the applicant AS A DRAFT: on
  * /track they see the reviewer's question and their own editable answers
  * (getDraftForApplicant()), correct them, add a note and resubmit in one
@@ -57,6 +63,13 @@ class InternetSupportModel {
     /** Bounds for reviewer questions and applicant replies. */
     public const MIN_MESSAGE_LENGTH = 5;
     public const MAX_MESSAGE_LENGTH = 1000;
+
+    /** The notice the programme usually wants: apply at least this many days before the current pack ends. */
+    public const PREFERRED_NOTICE_DAYS = 7;
+
+    /** Accepted range for "when does your current pack end": this many days back / ahead of today. */
+    public const PACK_END_MAX_PAST_DAYS  = 30;
+    public const PACK_END_MAX_AHEAD_DAYS = 90;
 
     /** Longest reason a reviewer or finance may give for changing an amount. */
     public const MAX_AMOUNT_NOTE_LENGTH = 500;
@@ -144,7 +157,8 @@ class InternetSupportModel {
      * @param string $amountRupees e.g. "299" or "299.50"
      * @param mixed  $validityDays optional whole days, '' for none
      * @param array  $eligibility  keys: wikimedia_username, edits_80, attended_ch, tech_contributor ('yes'|'no'),
-     *                             contributions, plans (free text)
+     *                             contributions, plans (free text), pack_ends_on ('YYYY-MM-DD': when the
+     *                             applicant's current pack ends; required)
      * @throws \InvalidArgumentException on any validation failure
      * @return array ['id' => int, 'tracking_id' => string]
      */
@@ -206,6 +220,9 @@ class InternetSupportModel {
             throw new \InvalidArgumentException('Reason is too long (' . self::MAX_REASON_LENGTH . ' characters max).');
         }
 
+        // --- When the current pack ends (short notice is flagged to reviewers, never blocked) ---
+        $packEndsOn = $this->cleanPackEndDate($eligibility['pack_ends_on'] ?? '');
+
         // --- Wikimedia username (lets reviewers check edits on XTools etc.) ---
         $wikiUser = trim(preg_replace('/\s+/', ' ', str_replace('_', ' ', (string) ($eligibility['wikimedia_username'] ?? ''))));
         $wikiUser = preg_replace('/^User:\s*/i', '', $wikiUser);
@@ -263,11 +280,13 @@ class InternetSupportModel {
             "INSERT INTO internet_requests
                 (tracking_id, email, applicant_name, phone_enc,
                  operator, package_name, package_price_paise, package_validity_days, reason,
-                 wikimedia_username, edits_80, attended_ch, tech_contributor, contributions, plans)
+                 wikimedia_username, edits_80, attended_ch, tech_contributor, contributions, plans,
+                 current_pack_ends_on)
              VALUES
                 (:tracking_id, :email, :name, :phone_enc,
                  :operator, :package_name, :price, :validity, :reason,
-                 :wikimedia_username, :edits_80, :attended_ch, :tech_contributor, :contributions, :plans)"
+                 :wikimedia_username, :edits_80, :attended_ch, :tech_contributor, :contributions, :plans,
+                 :pack_ends)"
         );
         $stmt->execute([
             'tracking_id'      => $trackingId,
@@ -285,6 +304,7 @@ class InternetSupportModel {
             'tech_contributor' => $techContrib === 'yes' ? 1 : 0,
             'contributions'    => $contributions,
             'plans'            => $plans,
+            'pack_ends'        => $packEndsOn,
         ]);
 
         return ['id' => (int) $this->db->lastInsertId(), 'tracking_id' => $trackingId];
@@ -341,7 +361,7 @@ class InternetSupportModel {
     public function listForReview($status = null) {
         $sql = "SELECT r.id, r.tracking_id, r.email, r.applicant_name,
                        r.operator, r.package_name, r.package_price_paise, r.package_validity_days,
-                       r.approved_amount_paise, r.sent_back_note, r.sent_back_at,
+                       r.approved_amount_paise, r.sent_back_note, r.sent_back_at, r.current_pack_ends_on,
                        r.reason, r.wikimedia_username, r.edits_80, r.attended_ch, r.tech_contributor,
                        r.contributions, r.plans,
                        r.status, r.admin_notes, r.decided_by, r.decided_at,
@@ -416,6 +436,50 @@ class InternetSupportModel {
             'id'   => (int) $requestId,
         ]);
         return $stmt->rowCount() === 1;
+    }
+
+    /**
+     * Validates "when does your current pack end" (a 'YYYY-MM-DD' date, India time).
+     * Must be a real date, no more than PACK_END_MAX_PAST_DAYS ago (someone whose pack
+     * has just run out can still ask) and no more than PACK_END_MAX_AHEAD_DAYS ahead.
+     * Returns the normalised string.
+     *
+     * @throws \InvalidArgumentException
+     */
+    private function cleanPackEndDate($raw) {
+        $raw = trim((string) $raw);
+        $tz  = new \DateTimeZone('Asia/Kolkata');
+
+        $date = \DateTimeImmutable::createFromFormat('!Y-m-d', $raw, $tz);
+        if (!$date || $date->format('Y-m-d') !== $raw) {
+            throw new \InvalidArgumentException('Please tell us the date your current pack ends.');
+        }
+        $today = new \DateTimeImmutable('today', $tz);
+        $days  = (int) $today->diff($date)->format('%r%a');   // negative = already ended
+        if ($days < -self::PACK_END_MAX_PAST_DAYS) {
+            throw new \InvalidArgumentException('That date is too far in the past. Please enter the date your current pack ends (or ended, if it has just run out).');
+        }
+        if ($days > self::PACK_END_MAX_AHEAD_DAYS) {
+            throw new \InvalidArgumentException('That date is too far ahead. Please enter the date your current pack ends (within the next ' . self::PACK_END_MAX_AHEAD_DAYS . ' days).');
+        }
+        return $raw;
+    }
+
+    /**
+     * Whole days from today (India time) until the current pack ends: 0 = ends today,
+     * negative = already ended, null = no date on file (older requests).
+     * Reviewers use it to spot requests made with less than PREFERRED_NOTICE_DAYS' notice.
+     */
+    public static function packEndNoticeDays($packEndsOn): ?int {
+        if (empty($packEndsOn)) {
+            return null;
+        }
+        $tz  = new \DateTimeZone('Asia/Kolkata');
+        $end = \DateTimeImmutable::createFromFormat('!Y-m-d', (string) $packEndsOn, $tz);
+        if (!$end) {
+            return null;
+        }
+        return (int) (new \DateTimeImmutable('today', $tz))->diff($end)->format('%r%a');
     }
 
     /** Valid request, but not something DCW will fund. The applicant IS notified. */
@@ -764,10 +828,11 @@ class InternetSupportModel {
             "SELECT id, tracking_id, applicant_name, email, phone_enc,
                     operator, package_name, package_price_paise, package_validity_days,
                     COALESCE(approved_amount_paise, package_price_paise) AS approved_paise,
+                    current_pack_ends_on,
                     decided_by, decided_at
              FROM internet_requests
              WHERE status = 'Approved for Support'
-             ORDER BY decided_at ASC"
+             ORDER BY (current_pack_ends_on IS NULL), current_pack_ends_on ASC, decided_at ASC"
         )->fetchAll();
 
         return $this->attachDecryptedPhones($rows);
