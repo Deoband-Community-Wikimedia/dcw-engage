@@ -2,6 +2,25 @@
 require_once __DIR__ . '/social_meta.php';
 
 /**
+ * Versioned URL for a file under the web root, e.g. engage_asset('/assets/css/engage.css').
+ * Appends ?v=<last-modified time>, so a changed file gets a new URL and is never served
+ * from a stale browser or CDN cache. If the file can't be found, the plain URL is returned.
+ */
+function engage_asset(string $path): string {
+    $candidates = array_filter([
+        !empty($_SERVER['DOCUMENT_ROOT']) ? rtrim($_SERVER['DOCUMENT_ROOT'], '/') . $path : null,
+        __DIR__ . '/../public' . $path,
+        __DIR__ . '/..' . $path,
+    ]);
+    foreach ($candidates as $file) {
+        if (is_file($file)) {
+            return $path . '?v=' . (int) filemtime($file);
+        }
+    }
+    return $path;
+}
+
+/**
  * Compact DCW Engage page shell.
  * Usage: engage_header([...]); ...content...; engage_footer();
  *
@@ -55,7 +74,8 @@ function engage_header(array $o) {
         'image_alt'   => $o['image_alt'] ?? $heading,
     ]); ?>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/assets/css/engage.css">
+    <?php /* Versioned by file modification time: edits to engage.css show up at once, never stuck in a cache. */ ?>
+    <link rel="stylesheet" href="<?= $e(engage_asset('/assets/css/engage.css')) ?>">
 </head>
 <body>
 <header class="hero<?= $home ? ' home' : '' ?>">
