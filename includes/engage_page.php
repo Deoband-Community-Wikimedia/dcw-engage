@@ -13,9 +13,12 @@ require_once __DIR__ . '/social_meta.php';
  *   member   MemberSession::current() row, or null
  *   tools    raw, already-escaped HTML for the top-bar buttons (overrides the member links)
  *   wide     true for wide layouts (finance queue and tables)
+ *   home     true for the public home page: big logo in the hero, no brand link in the top bar,
+ *            and no breadcrumbs unless 'crumbs' is given
  *   crumbs   breadcrumb trail, e.g. [['Home','/'],['Support','/support'],['Reimbursement']].
  *            The last item is the current page (no link). A "Back" button pointing to the
- *            nearest linked crumb is added automatically. Defaults to Home > heading.
+ *            nearest linked crumb is added automatically. Defaults to Home > heading
+ *            (or no trail at all when 'home' is true). Pass [] to hide the trail.
  *   description  social preview text (optional; a default is used)
  *   image        social preview image: a Commons file name or link, any URL, or a path (optional;
  *                the default Commons photo in includes/social_meta.php is used)
@@ -29,7 +32,8 @@ function engage_header(array $o) {
     $member  = $o['member'] ?? null;
     $tools   = $o['tools'] ?? null;
     $wide    = !empty($o['wide']);
-    $crumbs  = $o['crumbs'] ?? [['Home', '/'], [$heading]];
+    $home    = !empty($o['home']);
+    $crumbs  = $o['crumbs'] ?? ($home ? [] : [['Home', '/'], [$heading]]);
     $backHref = null; $backLabel = null;
     foreach ($crumbs as $c) { if (!empty($c[1])) { $backHref = $c[1]; $backLabel = $c[0]; } }
     $e = fn($s) => htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8');
@@ -41,7 +45,7 @@ function engage_header(array $o) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#0c567a">
+    <meta name="theme-color" content="#2E6599">
     <title><?= $e($title) ?> - DCW Engage</title>
     <?php ob_start(); require __DIR__ . '/favicon.php'; echo engage_strip_social_images(ob_get_clean()); ?>
     <?php if (!engage_is_staff_path()) engage_social_meta([
@@ -54,7 +58,7 @@ function engage_header(array $o) {
     <link rel="stylesheet" href="/assets/css/engage.css">
 </head>
 <body>
-<header class="hero">
+<header class="hero<?= $home ? ' home' : '' ?>">
     <div class="topbar">
         <a class="brand" href="/"><img src="https://dcwwiki.org/dcwwiki/images/5/56/DCW_logo.png" alt="">DCW Engage</a>
         <?php engage_about_menu($about); ?>
@@ -70,6 +74,10 @@ function engage_header(array $o) {
             <?php endif; ?>
         </div>
     </div>
+    <?php if ($home): ?>
+        <img class="logo" src="https://dcwwiki.org/dcwwiki/images/5/56/DCW_logo.png" alt="Deoband Community Wikimedia">
+    <?php endif; ?>
+    <?php if ($crumbs): ?>
     <nav class="crumbs" aria-label="Breadcrumb">
         <?php if ($backHref): ?><a class="back" href="<?= $e($backHref) ?>">&larr; Back</a><?php endif; ?>
         <?php foreach ($crumbs as $i => $c): ?>
@@ -81,6 +89,7 @@ function engage_header(array $o) {
             <?php endif; ?>
         <?php endforeach; ?>
     </nav>
+    <?php endif; ?>
     <p class="kicker"><?= $e($kicker) ?></p>
     <h1><?= $e($heading) ?></h1>
     <?php if ($lead): ?><p class="lead"><?= $e($lead) ?></p><?php endif; ?>
@@ -159,8 +168,8 @@ function engage_about_links(bool $withContact = false): array {
 
 /**
  * Renders the "About DCW" dropdown inside the hero top bar.
- * Used by engage_header() and by the public home page. Prints nothing when $about is empty.
- * Needs the CSS variables --border, --ink and --primary (engage.css and home.php both define them).
+ * Used by engage_header(). Prints nothing when $about is empty.
+ * Needs the CSS variables from engage.css (--border, --ink, --primary, --primary-tint).
  */
 function engage_about_menu(array $about): void {
     if (!$about) return;
@@ -180,7 +189,7 @@ function engage_about_menu(array $about): void {
         .topbar .about summary::-webkit-details-marker { display: none; }
         .topbar .about .about-menu { position: absolute; z-index: 30; top: calc(100% + 8px); left: 0; min-width: 220px; padding: 8px; background: #fff; border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 16px 34px rgba(15,23,42,.18); }
         .topbar .about .about-menu a { display: block; padding: 9px 12px; border-radius: 9px; color: var(--ink); font-size: 14.5px; font-weight: 600; text-decoration: none; }
-        .topbar .about .about-menu a:hover { background: #f1f7fb; color: var(--primary); }
+        .topbar .about .about-menu a:hover { background: var(--primary-tint); color: var(--primary); }
     </style>
     <?php
 }
@@ -215,25 +224,32 @@ function engage_footer() {
     ?>
 </main>
 <style>
-    /* Site footer. Self-contained so it works on every page; it can move into engage.css later. */
-    footer.site-footer { display: block; text-align: left; margin: 48px 0 0; padding: 0; background: #f8fafc; border-top: 1px solid var(--border); color: var(--ink); }
+    /* Site footer. Self-contained so it works on every page; colors come from the tokens in engage.css.
+       The top edge is a three-color stripe taken from the DCW logo: blue, crimson, green. */
+    footer.site-footer {
+        display: block; text-align: left; margin: 48px 0 0; padding: 0;
+        background: var(--bg); color: var(--ink);
+        border-top: 4px solid transparent;
+        border-image: linear-gradient(90deg, var(--primary) 0 40%, var(--accent) 40% 70%, var(--leaf) 70% 100%) 1;
+    }
     .site-footer .sf-inner { max-width: 1100px; margin: 0 auto; padding: 40px 24px 20px; }
     .site-footer .sf-grid { display: grid; grid-template-columns: 1.4fr repeat(3, 1fr); gap: 32px 28px; }
     .site-footer .sf-org { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 16px; letter-spacing: -.01em; }
     .site-footer .sf-org img { width: 34px; height: 34px; }
     .site-footer .sf-about { margin: 12px 0 0; font-size: 14px; line-height: 1.65; color: var(--muted); max-width: 40ch; }
     .site-footer .sf-about strong { color: var(--ink); }
-    .site-footer h2 { margin: 0 0 12px; font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+    .site-footer h2 { margin: 0 0 12px; font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--primary); }
     .site-footer ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 9px; }
     .site-footer a { color: var(--ink); text-decoration: none; font-size: 14.5px; }
-    .site-footer a:hover { color: var(--primary); text-decoration: underline; }
-    .site-footer .sf-cta { display: inline-block; margin-top: 4px; padding: 8px 16px; border-radius: 999px; background: var(--primary); color: #fff; font-weight: 600; font-size: 14px; }
-    .site-footer .sf-cta:hover { color: #fff; text-decoration: none; opacity: .92; }
+    .site-footer a:hover { color: var(--accent); text-decoration: underline; }
+    .site-footer .sf-cta { display: inline-block; margin-top: 4px; padding: 8px 16px; border-radius: 999px; background: var(--accent); color: #fff; font-weight: 600; font-size: 14px; }
+    .site-footer .sf-cta:hover { background: var(--accent-dark); color: #fff; text-decoration: none; }
     .site-footer .sf-social { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
     .site-footer .sf-social a { padding: 5px 12px; border: 1px solid var(--border); border-radius: 999px; background: #fff; font-size: 13px; font-weight: 600; }
+    .site-footer .sf-social a:hover { border-color: var(--primary); background: var(--primary-tint); color: var(--primary); text-decoration: none; }
     .site-footer .sf-bottom { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px 20px; margin-top: 32px; padding-top: 18px; border-top: 1px solid var(--border); font-size: 13px; color: var(--muted); }
     .site-footer .sf-bottom a { font-size: 13px; color: var(--muted); }
-    .site-footer .sf-bottom a:hover { color: var(--primary); }
+    .site-footer .sf-bottom a:hover { color: var(--accent); }
     .site-footer .sf-bottom nav { display: flex; flex-wrap: wrap; gap: 6px 18px; }
     @media (max-width: 860px) { .site-footer .sf-grid { grid-template-columns: 1fr 1fr; } .site-footer .sf-brand { grid-column: 1 / -1; } }
     @media (max-width: 520px) { .site-footer .sf-grid { grid-template-columns: 1fr; } }
