@@ -15,6 +15,9 @@ class MemberSession {
     /** Member row loaded by check() for this request. */
     private static $row = null;
 
+    /** Memberships held under the signed-in Member ID, cached for this request. */
+    private static $held = null;
+
     /**
      * Start a member session after MemberAuthModel::authenticate() returned 'ok'.
      * The session id changes on login so a fixated cookie is useless. The password stamp is
@@ -25,6 +28,7 @@ class MemberSession {
         $_SESSION['member_row_id']  = (int) $member['id'];
         $_SESSION['member_pw_stamp'] = $member['password_set_at'] ?? null;
         self::$row = null;
+        self::$held = null;
     }
 
     /** Is a member signed in on this session? Re-reads the member row on each request. */
@@ -52,6 +56,40 @@ class MemberSession {
     }
 
     /**
+     * Memberships the signed-in Member ID already has, keyed by chapter key:
+     *   ['amu' => ['status' => 'approved', 'expires_at' => '2027-03-31'], ...]
+     * Rejected rows are ignored (that application never took effect). Expired and pending rows
+     * DO count: an expired member should renew, and a pending one should not apply twice.
+     * Empty array when nobody is signed in. Used by /membership and by the form renderer.
+     */
+    public static function heldChapters(): array {
+        if (self::$held !== null) return self::$held;
+        $m = self::current();
+        if ($m === null) return self::$held = [];
+
+        $held = [];
+        try {
+            $st = DB::getInstance()->getConnection()->prepare(
+                "SELECT chapter, status, expires_at FROM members
+                 WHERE member_id = :mid AND status <> 'rejected'");
+            $st->execute(['mid' => $m['member_id']]);
+            foreach ($st->fetchAll() as $r) {
+                $held[(string) $r['chapter']] = [
+                    'status'     => (string) $r['status'],
+                    'expires_at' => $r['expires_at'] ?? null,
+                ];
+            }
+        } catch (Throwable $ex) {
+            // Fall back to the row that is loaded, so the page still works.
+            $held[(string) $m['chapter']] = [
+                'status'     => (string) $m['status'],
+                'expires_at' => $m['expires_at'] ?? null,
+            ];
+        }
+        return self::$held = $held;
+    }
+
+    /**
      * Active = approved and not past the expiry date, on ANY membership under this Member ID
      * (the Generic Community or a club). Use this, not just check(), for anything that is only
      * for current members (such as support requests).
@@ -74,6 +112,7 @@ class MemberSession {
     public static function logout(): void {
         unset($_SESSION['member_row_id'], $_SESSION['member_pw_stamp']);
         self::$row = null;
+        self::$held = null;
         if (session_status() === PHP_SESSION_ACTIVE) session_regenerate_id(true);
     }
 
