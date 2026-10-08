@@ -67,7 +67,21 @@ $forms = array_filter($formModel->getAllForms(), fn($f) => FormModel::userCanOpe
 $activeForms = array_filter($forms, fn($f) => !empty($f['is_active']));
 $closedForms = array_filter($forms, fn($f) => empty($f['is_active']));
 
-// Applications waiting for a first decision (New or Submitted), across the program forms this person can open.
+// Programs that are not shown in the review queue: closed forms, and test forms.
+// A form counts as a test form when "test"/"testing"/"dummy" is a whole word in its title or URL slug
+// (so "Test form" and "scholarship-test" match, "Contest 2026" does not). Add exact slugs to $extra to hide others.
+// KEEP IN SYNC with the same function in views/admin/dashboard.php and application_review.php.
+if (!function_exists('review_hidden_form')) {
+    function review_hidden_form(array $form, array $extra = []): bool {
+        if (empty($form['is_active'])) return true;
+        if (in_array((string) $form['form_type'], $extra, true)) return true;
+        return (bool) preg_match('/(^|[^a-z])(test|testing|dummy)([^a-z]|$)/i',
+            (string) ($form['title'] ?? '') . ' ' . (string) $form['form_type']);
+    }
+}
+
+// Applications waiting for a first decision (New or Submitted), across the program forms this person can open
+// (closed and test forms are left out, the same as in the review queue).
 // Shown as a badge on the "Application review" tile. Uses ApplicationModel::countAwaitingByForm();
 // if that method is not added yet, or the query fails, the badge is simply left out.
 $appsWaiting = 0;
@@ -75,7 +89,7 @@ if ($canReviewApplications) {
     try {
         $reviewable = [];
         foreach ($forms as $f) {
-            if (!FormModel::isMembershipType($f['form_type'])) $reviewable[(int) $f['id']] = true;
+            if (!FormModel::isMembershipType($f['form_type']) && !review_hidden_form($f)) $reviewable[(int) $f['id']] = true;
         }
         foreach ((new ApplicationModel())->countAwaitingByForm() as $formId => $n) {
             if (isset($reviewable[(int) $formId])) $appsWaiting += (int) $n;
