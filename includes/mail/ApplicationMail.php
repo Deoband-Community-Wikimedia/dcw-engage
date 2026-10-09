@@ -5,29 +5,48 @@
 require_once __DIR__ . '/CoreMail.php';
 
 class ApplicationMail {
-    /** The "verify your email" link that opens an application form (#67). Callers must not let the result change what the visitor sees. */
-    public static function emailVerification($email, $formTitle, $verifyUrl, $expiresAt) {
+    /** Name as it should appear in a greeting: age removed, "Applicant" when nothing usable is left. */
+    private static function displayName($name) {
+        $clean = CoreMail::cleanName($name);
+        return $clean !== '' ? $clean : 'Applicant';
+    }
+
+    /**
+     * The "verify your email" link that opens an application form (#67). Callers must not let the result change what the visitor sees.
+     * $name is the applicant's name from the gate form; when empty the greeting falls back to "Applicant".
+     */
+    public static function emailVerification($email, $formTitle, $verifyUrl, $expiresAt, $name = '') {
         $e = fn($s) => CoreMail::e($s);
         $expiresTime = CoreMail::formatExpiryIST($expiresAt);
         $url = $e($verifyUrl);
         // Form titles are organizer-typed; never drop them into HTML raw.
         $safeTitle = $e($formTitle);
 
+        // Greet by name when we have one; fall back to the generic greeting otherwise.
+        $name = CoreMail::cleanName($name);   // drops an age typed after the name
+        $greetName = $name !== '' ? $name : 'Applicant';
+        $greetHtml = $name !== '' ? '<strong>' . $e($name) . '</strong>' : 'Applicant';
+
         $inner = "
-            <p>Dear Applicant,</p>
+            <p>Dear $greetHtml,</p>
             <p>Please verify your email address to initiate your application for <strong>$safeTitle</strong>.</p>
             <div class='btn-wrapper'><a href='$url' class='btn'>Verify Email Address</a></div>
             <p>If the button above does not work, please copy and paste the following link into your browser:<br><br><a href='$url' style='color: #106b9a; word-break: break-all;'>$url</a></p>
-            <p><strong>Note: This link is valid until $expiresTime IST</strong> and can only be used once.</p>
+            <p><strong>Note: This link is valid until $expiresTime</strong> and can only be used once.</p>
             <p style='margin-bottom:0;'>If you did not initiate this request, please ignore this email. No further action will be taken and no application will be created.</p>";
 
-        $alt = "Dear Applicant,\n\nPlease verify your email address to initiate your application for $formTitle.\n\nVerify your email here:\n$verifyUrl\n\nNote: This link is valid until $expiresTime IST and can only be used once.\n\nIf you did not initiate this request, please ignore this email. No further action will be taken.\n\nDeoband Community Wikimedia";
+        $alt = "Dear $greetName,\n\nPlease verify your email address to initiate your application for $formTitle.\n\nVerify your email here:\n$verifyUrl\n\nNote: This link is valid until $expiresTime and can only be used once.\n\nIf you did not initiate this request, please ignore this email. No further action will be taken.\n\nDeoband Community Wikimedia";
 
-        return CoreMail::send([
+        $mail = [
             'to' => $email, 'subject' => 'Verify your email address to begin application',
             'html' => $inner, 'alt' => $alt,
             'dev_result' => false, 'dev_log' => "Email verification for $email: $verifyUrl",
-        ]);
+        ];
+        if ($name !== '') {
+            $mail['to_name'] = $name;   // shows the person's name on the To: line
+        }
+
+        return CoreMail::send($mail);
     }
 
     /** Magic link so an applicant can return and edit a saved application. */
@@ -35,6 +54,7 @@ class ApplicationMail {
         $e = fn($s) => CoreMail::e($s);
         $appUrl = CoreMail::appUrl() . '/resume/' . $token;
         $url = $e($appUrl);
+        $applicantName = self::displayName($applicantName);   // no age, "Applicant" if empty
         $name = $e($applicantName);
 
         $inner = "
@@ -61,6 +81,7 @@ class ApplicationMail {
      */
     public static function received($email, $applicantName, $trackingId, $formTitle) {
         $e = fn($s) => CoreMail::e($s);
+        $applicantName = self::displayName($applicantName);
         $inner = "
             <p>Dear <strong>" . $e($applicantName) . "</strong>,</p>
             <p>Thank you for submitting your application for <strong>" . $e($formTitle) . "</strong>. We have successfully received your application details.</p>
@@ -85,6 +106,7 @@ class ApplicationMail {
      */
     public static function statusUpdate($email, $applicantName, $status, $trackingId, $formTitle, $note = '') {
         $e = fn($s) => CoreMail::e($s);
+        $applicantName = self::displayName($applicantName);
         $noteHtml = $note !== ''
             ? "<p><strong>Remarks / Reviewer Notes:</strong><br>" . nl2br($e($note)) . "</p>"
             : '';

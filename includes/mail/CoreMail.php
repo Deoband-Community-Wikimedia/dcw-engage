@@ -16,6 +16,38 @@ class CoreMail {
         return htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8');
     }
 
+    /**
+     * Name for a salutation, with any age the applicant typed after it removed.
+     * Some forms ask for the age, and people put it in the name field:
+     *   "Name, 20"   "Name (20)"   "Name (20 years)"   "Name [20 yrs old]"   "Name - 20"
+     *   "Name 20"    "Name 20 years"   "Name, age 20"   "Name aged 20"   "20, Name"
+     *   "Name, 20, Male"  (everything from the age onwards is dropped)
+     * Names that legitimately contain a comma ("Khan, Mohammad") or other text are left alone.
+     * Returns '' when nothing usable is left (callers then use their own fallback greeting).
+     * Use this only for what goes into an email; never to change what is stored.
+     */
+    public static function cleanName($name) {
+        $n = trim((string) $name);
+        if ($n === '') {
+            return '';
+        }
+        // "(20)", "[20 yrs]", "(age: 20)": any bracketed group that contains a digit.
+        $n = preg_replace('/\s*[\(\[][^\)\]]*\d[^\)\]]*[\)\]]/u', '', $n);
+        // "Name, 20", "Name - 20", "Name, age 20, Male": a separator followed by the age, to the end.
+        $n = preg_replace('/(?:\s*[,;|\/:]\s*|\s+[-–—]\s*)(?:aged?\s*[:\-]?\s*)?\d.*$/isu', '', $n);
+        // "Name aged 20", "Name age 20"
+        $n = preg_replace('/\s+aged?\s*[:\-]?\s*\d.*$/isu', '', $n);
+        // "20, Name": age first.
+        $n = preg_replace('/^\d{1,3}\s*[,;:|\/\-–—]\s*/u', '', $n);
+        // "Name 20", "Name 20 years", "Name 20 yrs old".
+        $n = preg_replace('/\s+\d{1,3}(?:\s*(?:years?|yrs?|y\.?\s?o\.?|y))?(?:\s+old)?\.?$/iu', '', $n);
+
+        $n = trim(preg_replace('/\s+/u', ' ', $n), " \t\n\r,;:-–—|/");
+
+        // Only digits left (they typed just an age): not a name.
+        return preg_match('/^\d+$/', $n) ? '' : $n;
+    }
+
     public static function config() {
         return require __DIR__ . '/../config.php';
     }
@@ -34,9 +66,10 @@ class CoreMail {
     /**
      * Salutation for member emails: "Dear <strong>Name</strong>," or "Dear Member," when no name
      * is available. $html = false gives the plain-text version (no escaping, no tags).
+     * Any age typed after the name is dropped (see cleanName()).
      */
     public static function greeting($name, $html = true) {
-        $name = trim((string) $name);
+        $name = self::cleanName($name);
         if ($name === '') {
             return 'Dear Member,';
         }

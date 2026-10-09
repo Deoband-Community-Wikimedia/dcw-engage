@@ -300,6 +300,7 @@ class MembershipMailer {
      * $held = MemberModel::membershipsForEmail($email) (must include full_name).
      * $verifyUrl is null when they already hold THIS chapter (no application is needed), and set
      * when they are joining another chapter (the normal verification link is included).
+     * $expiresAt is the link's expiry as stored (UTC); it is shown to the member in IST.
      */
     public static function sendExistingAccount($email, array $held, $chapter, $formTitle, $verifyUrl = null, $expiresAt = null) {
         $base  = CoreMail::appUrl();
@@ -329,7 +330,9 @@ class MembershipMailer {
 
         $idHtml = implode(', ', array_map($e, $ids));
         $idText = implode(', ', $ids);
-        $expiryText = $expiresAt ? date('j M Y, g:i a', strtotime((string) $expiresAt)) : '';
+        // The link's expiry is stored in UTC. formatExpiryIST() converts it and already adds
+        // the " IST" label, so do not append "IST" again where this is printed.
+        $expiryText = $expiresAt ? CoreMail::formatExpiryIST((string) $expiresAt) : '';
 
         $intro = $holdsThis
             ? "An application for <strong>" . $e($thisName) . "</strong> was initiated using this email address. As you are already an active member, there is no need to submit another application."
