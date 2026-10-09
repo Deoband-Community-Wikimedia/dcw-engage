@@ -125,7 +125,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             exit;
         } elseif ($_POST['action'] === 'extend_deadline' || $_POST['action'] === 'remove_deadline') {
             // The model re-checks permission and that the new deadline is in the future
-            // and later than the current one. Its messages are written to be shown.
+            // and later than the current one. The typed value is read as IST and stored as UTC.
+            // Its messages are written to be shown.
             $removing = $_POST['action'] === 'remove_deadline';
             try {
                 $formModel->extendDeadline($formId, $removing ? null : trim((string) ($_POST['new_deadline'] ?? '')));
@@ -294,14 +295,16 @@ $fid = htmlspecialchars((string) $formId, ENT_QUOTES, 'UTF-8');
 // Deadline state for the header and the deadline section.
 // $form was loaded before any POST; after a successful change the page redirects,
 // so this always reflects the database on a normal render.
+// The stored deadline is UTC. It is shown, and typed into the extend box, in IST.
 $deadlineAt = $form['deadline_at'] ?? null;
 $hasDeadline = !empty($deadlineAt);
 $deadlinePassed = FormModel::closedByDeadline($form);                 // switched on, but past its deadline
 $switchedOff = !(int) $form['is_active'];                              // closed by hand
-$deadlineLabel = $hasDeadline ? date('j M Y, g:i A', strtotime($deadlineAt)) : '';
-// Pre-fill the extend box with the current deadline (or nothing) in datetime-local format.
-$deadlineInputValue = ($hasDeadline && !$deadlinePassed) ? date('Y-m-d\TH:i', strtotime($deadlineAt)) : '';
-$deadlineMin = date('Y-m-d\TH:i');
+$deadlineLabel = $hasDeadline ? FormModel::formatIst($deadlineAt) : '';
+// Pre-fill the extend box with the current deadline (or nothing) in datetime-local format, in IST.
+$deadlineInputValue = ($hasDeadline && !$deadlinePassed) ? FormModel::utcToIstInput($deadlineAt) : '';
+// Earliest time the picker allows: now, in IST.
+$deadlineMin = (new DateTimeImmutable('now', new DateTimeZone(FormModel::DISPLAY_TZ)))->format('Y-m-d\TH:i');
 
 // Public link to the form: the configured site address when there is one (so it is https on a live site),
 // otherwise the address this page was opened on.
@@ -449,7 +452,7 @@ engage_header([
                 <?= CSRF::getInputField() ?>
                 <input type="hidden" name="action" value="extend_deadline">
                 <input type="datetime-local" name="new_deadline" value="<?= htmlspecialchars($deadlineInputValue) ?>"
-                    min="<?= htmlspecialchars($deadlineMin) ?>" required aria-label="New deadline">
+                    min="<?= htmlspecialchars($deadlineMin) ?>" required aria-label="New deadline (IST)">
                 <button type="submit" class="btn-solid sm"><?= $hasDeadline ? 'Extend deadline' : 'Set deadline' ?></button>
             </form>
             <?php if ($hasDeadline): ?>
@@ -461,6 +464,7 @@ engage_header([
             <?php endif; ?>
         </div>
     </div>
+    <p class="deadline-note">Deadline times are in IST (India Standard Time).</p>
     <?php if ($switchedOff && $hasDeadline): ?>
         <p class="deadline-note">This form was closed by hand, so extending the deadline will not re-open it. Use "Re-open form" above.</p>
     <?php elseif ($deadlinePassed): ?>
