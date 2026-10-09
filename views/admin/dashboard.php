@@ -63,14 +63,17 @@ $canSeeSupport = $canReviewAny || $canProcessFinance;
 $formModel = new FormModel();
 $forms = array_filter($formModel->getAllForms(), fn($f) => FormModel::userCanOpen($f));
 
-// Active forms show by default; closed ones sit behind a toggle.
-$activeForms = array_filter($forms, fn($f) => !empty($f['is_active']));
-$closedForms = array_filter($forms, fn($f) => empty($f['is_active']));
+// Open forms show by default; closed ones sit behind a toggle. "Open" means switched on AND not past its
+// deadline (FormModel::isOpen), so a form that closed by deadline moves to the closed group on its own.
+$activeForms = array_filter($forms, fn($f) => FormModel::isOpen($f));
+$closedForms = array_filter($forms, fn($f) => !FormModel::isOpen($f));
 
 // Programs that are not shown in the review queue: closed forms, and test forms.
 // A form counts as a test form when "test"/"testing"/"dummy" is a whole word in its title or URL slug
 // (so "Test form" and "scholarship-test" match, "Contest 2026" does not). Add exact slugs to $extra to hide others.
 // KEEP IN SYNC with the same function in views/admin/dashboard.php and application_review.php.
+// Note: this looks at is_active only, NOT the deadline, on purpose. A form that closed by deadline is
+// exactly the one whose responses still need reviewing, so it stays in the review queue.
 if (!function_exists('review_hidden_form')) {
     function review_hidden_form(array $form, array $extra = []): bool {
         if (empty($form['is_active'])) return true;
@@ -176,20 +179,34 @@ function review_card(array $icons, string $tone, string $icon, string $title, st
     <?php
 }
 
-/** Renders one form tile (active or closed). */
+/**
+ * Renders one form tile (open or closed). Shows when an open form closes, and
+ * "Closed (deadline)" for a form that has run past its deadline.
+ */
 function form_tile(array $icons, array $form): void
 {
-    $active = !empty($form['is_active']);
-    $count  = (int) $form['applicant_count'];
-    $tone   = $active ? 'var(--leaf-dark, #3E7A53)' : '#94a3b8';
+    $open       = FormModel::isOpen($form);
+    $byDeadline = FormModel::closedByDeadline($form);
+    $hasDeadline = !empty($form['deadline_at']);
+    $count      = (int) $form['applicant_count'];
+    $tone       = $open ? 'var(--leaf-dark, #3E7A53)' : '#94a3b8';
+
+    $pill = $open ? 'Active' : ($byDeadline ? 'Closed (deadline)' : 'Closed');
+
+    $sub = '/' . $form['form_type'] . ' · ' . $count . ' response' . ($count !== 1 ? 's' : '');
+    if ($open && $hasDeadline) {
+        $sub .= ' · closes ' . FormModel::formatIst($form['deadline_at']);
+    } elseif ($byDeadline) {
+        $sub .= ' · closed ' . FormModel::formatIst($form['deadline_at']);
+    }
     ?>
     <a class="tile" href="/admin/form_manager?id=<?= (int) $form['id'] ?>" style="--tone: <?= $tone ?>;">
         <span class="tick"><svg viewBox="0 0 24 24" aria-hidden="true"><?= $icons['doc'] ?></svg></span>
         <span>
             <h3><?= htmlspecialchars($form['title']) ?></h3>
-            <p>/<?= htmlspecialchars($form['form_type']) ?> &middot; <?= $count ?> response<?= $count !== 1 ? 's' : '' ?></p>
+            <p><?= htmlspecialchars($sub) ?></p>
         </span>
-        <span class="pill"><?= $active ? 'Active' : 'Closed' ?></span>
+        <span class="pill"><?= htmlspecialchars($pill) ?></span>
     </a>
     <?php
 }
