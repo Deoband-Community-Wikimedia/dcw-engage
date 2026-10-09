@@ -1,13 +1,16 @@
 <?php
 /**
- * Shown when a form exists but has been closed by an organizer.
- * Expects $closedTitle to be set by the caller (renderer.php).
+ * Shown when a form exists but has been closed (by an organizer, or automatically
+ * by its deadline).
+ * Expects $closedTitle to be set by the caller (renderer.php). $closedDeadline is
+ * set only when the form closed because its deadline passed.
  *
  * engage_page.php is already loaded by renderer.php before this file is
  * included, so it is not required again here.
  */
 
 $closedTitle = $closedTitle ?? 'This form';
+$closedDeadline = $closedDeadline ?? null;   // set by renderer.php when the form closed by deadline
 
 // The old page had <meta name="robots" content="noindex">; the shared header has no such
 // option, so send the equivalent as an HTTP header instead.
@@ -27,8 +30,13 @@ engage_header([
         <rect x="3" y="11" width="18" height="11" rx="2"></rect>
         <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
     </svg>
-    <p style="margin:0 0 8px; font-size:16px;"><strong><?= htmlspecialchars($closedTitle) ?></strong> is no longer accepting submissions.</p>
-    <p style="margin:0; color:var(--muted); font-size:15px;">If you have already applied, you can still edit your application using the magic link sent to your email.</p>
+    <?php if (!empty($closedDeadline)): ?>
+        <p style="margin:0 0 8px; font-size:16px;"><strong><?= htmlspecialchars($closedTitle) ?></strong> stopped accepting applications on
+            <strong><?= htmlspecialchars(date('j M Y, g:i A', strtotime($closedDeadline))) ?></strong>.</p>
+    <?php else: ?>
+        <p style="margin:0 0 8px; font-size:16px;"><strong><?= htmlspecialchars($closedTitle) ?></strong> is no longer accepting submissions.</p>
+    <?php endif; ?>
+    <p style="margin:0; color:var(--muted); font-size:15px;">If you have already applied, the magic link sent to your email still lets you view your application.</p>
     <a class="back-link" href="/" style="margin:24px 0 0;">&larr; Back to DCW Engage</a>
 </div>
 <?php engage_footer(); ?>
