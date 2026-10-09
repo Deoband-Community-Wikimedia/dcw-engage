@@ -63,7 +63,7 @@ function dash_member_state(array $m, DateTimeZone $utc, DateTimeZone $ist): arra
     if (($m['status'] ?? '') === 'active') {
         return ['tone' => '#97161b', 'label' => 'Expired', 'line' => 'Ended on ' . $text, 'renew' => true, 'active' => false];
     }
-    return ['tone' => '#97161b', 'label' => 'Not active', 'line' => 'Not active right now', 'renew' => true, 'active' => false];
+    return ['tone' => '#97161b', 'label' => 'Inactive', 'line' => 'Currently inactive', 'renew' => true, 'active' => false];
 }
 
 // Every membership under this Member ID. Falls back to the signed-in row if the lookup fails.
@@ -97,12 +97,12 @@ try {
 // ---- The member's own requests -----------------------------------------------------------------
 // Needs InternetSupportModel::listForMember() and ReimbursementModel::listForMember().
 // dash_status() / dash_date() / dash_money() live in includes/member_requests.php (shared with /member/request).
-// Applicants never see internal states: "Recharge Failed" and "Payment Failed" show as "In review".
+// Applicants never see internal states: "Recharge Failed" and "Payment Failed" show as "Under review".
 //
 // Each row carries three figures:
-//   amount   what the member asked for
-//   approved what the reviewer approved (same as amount unless changed)
-//   paid     what finance actually recharged / paid, or null until money has moved
+//   amount   what the member requested
+//   approved what the reviewer approved (same as amount unless modified)
+//   paid     what finance actually disbursed / paid, or null until funds are transferred
 $requests = [];
 try {
     foreach ((new InternetSupportModel())->listForMember($email) as $r) {
@@ -150,7 +150,7 @@ $certs = [];
 try { $certs = (new MemberCertificateModel())->listForMember($email); } catch (Throwable $e) { error_log('Engage certificates lookup failed: ' . $e->getMessage()); }
 $certBase = 'https://certificates.dcwwiki.org';
 
-// ---- One combined "needs your attention" list ---------------------------------------------------
+// ---- One combined "requires your attention" list ---------------------------------------------------
 $alerts = [];
 foreach ($needsAction as $r) {
     $alerts[] = ['who' => $r['type'], 'text' => $r['title'] . ': ' . strtolower($r['label']),
@@ -187,7 +187,7 @@ function dash_svg(array $icons, string $key): string
     return '<svg class="i" viewBox="0 0 24 24" aria-hidden="true">' . ($icons[$key] ?? '') . '</svg>';
 }
 
-/** One tile (engage.css .tile). $href = null renders a disabled tile with a short reason in the pill. */
+/** One tile (engage.css .tile). $href = null renders a disabled tile with a brief reason in the pill. */
 function dash_tile(array $icons, string $tone, string $icon, string $title, string $desc, ?string $href, string $pill = ''): void
 {
     $tag = $href === null ? 'div' : 'a';
@@ -196,20 +196,20 @@ function dash_tile(array $icons, string $tone, string $icon, string $title, stri
         <span class="tick"><svg viewBox="0 0 24 24" aria-hidden="true"><?= $icons[$icon] ?></svg></span>
         <span><h3><?= htmlspecialchars($title) ?></h3><p><?= htmlspecialchars($desc) ?></p></span>
         <?php if ($pill !== ''): ?><span class="pill"><?= htmlspecialchars($pill) ?></span>
-        <?php else: ?><span class="arrow" aria-hidden="true">→</span><?php endif; ?>
+        <?php else: ?><span class="arrow" aria-hidden="true">&rarr;</span><?php endif; ?>
     </<?= $tag ?>>
     <?php
 }
 
-// Why a support tile is locked, if it is.
-$lock = fn(bool $open) => !$memberActive ? 'Renew to unlock' : (!$open ? 'Closed right now' : '');
+// Why a support tile is locked, if applicable.
+$lock = fn(bool $open) => !$memberActive ? 'Renew membership' : (!$open ? 'Currently closed' : '');
 
 // Same page frame as the rest of Engage.
 engage_header([
     'title'   => 'My dashboard',
     'heading' => 'Hello, ' . $firstName,
     'kicker'  => 'Member ID ' . $member['member_id'],
-    'lead'    => 'Your membership, certificates and support, all in one place.',
+    'lead'    => 'Your membership, certificates, and support, all in one place.',
     'member'  => $member,
     'tools'   => '<a class="chip-btn" href="/member/logout">Sign out</a>',
     'wide'    => true,
@@ -250,7 +250,7 @@ engage_header([
     .d-chip b { color: var(--tone); font-size: 16px; font-weight: 800; }
     .d-chip:hover { border-color: var(--tone); background: color-mix(in srgb, var(--tone) 6%, #fff); }
 
-    /* Needs your attention (same amber family as .action-banner) */
+    /* Requires your attention (same amber family as .action-banner) */
     .d-attn { margin: 0 0 30px; background: #fffbeb; border: 1px solid #fcd34d; border-radius: 14px; overflow: hidden; }
     .d-attn-head { display: flex; align-items: center; gap: 10px; padding: 13px 18px; font-weight: 800; color: #78350f; }
     .d-attn-head .num { min-width: 24px; padding: 1px 8px; border-radius: 999px; background: #92400e; color: #fff; font-size: 13px; text-align: center; }
@@ -327,12 +327,12 @@ engage_header([
         <a class="d-chip" style="--tone: var(--accent);" href="#conversations"><?= dash_svg($icons, 'chat') ?><b><?= count($tickets) ?></b> conversation<?= count($tickets) === 1 ? '' : 's' ?></a>
     </nav>
 
-    <!-- Needs your attention -->
+    <!-- Requires your attention -->
     <?php if (!empty($alerts)): ?>
-        <section class="d-attn" role="status" aria-label="Needs your attention">
+        <section class="d-attn" role="status" aria-label="Requires your attention">
             <div class="d-attn-head">
                 <?= dash_svg($icons, 'bell') ?>
-                <span>Needs your attention</span>
+                <span>Requires your attention</span>
                 <span class="num"><?= count($alerts) ?></span>
             </div>
             <?php foreach ($alerts as $a): ?>
@@ -348,13 +348,13 @@ engage_header([
     <section class="panel" id="certificates">
         <div class="panel-head">
             <h2>My certificates</h2>
-            <p>Issued to you for DCW events. Download the PDF, or copy a link anyone can use to verify it.</p>
+            <p>Issued to you for DCW events. Download the PDF or copy a public verification link.</p>
         </div>
         <?php if (empty($certs)): ?>
             <div class="d-empty">
-                <strong>No certificates yet</strong>
-                <p>Certificates appear here after an event team issues them. We look for <?= htmlspecialchars($email) ?>. If you attended an event and don’t see yours, tell DCW Support which email you used.</p>
-                <a class="d-btn line" href="/member/talk">Ask DCW Support</a>
+                <strong>No certificates issued yet</strong>
+                <p>Certificates appear here after an event team issues them against <?= htmlspecialchars($email) ?>. If you attended an event and cannot find your certificate, please inform DCW Support regarding the email address used.</p>
+                <a class="d-btn line" href="/member/talk">Contact DCW Support</a>
             </div>
         <?php else: ?>
             <div class="d-certs">
@@ -372,7 +372,7 @@ engage_header([
                                 <h3><?= htmlspecialchars((string) $c['event_name']) ?></h3>
                                 <p class="sub">
                                     <?php if (!empty($c['org_name'])): ?><?= htmlspecialchars((string) $c['org_name']) ?>, <?php endif; ?>
-                                    <?= htmlspecialchars((string) ($c['role_name'] ?: 'Participant')) ?>, issued <?= htmlspecialchars(dash_date($c['issued_at'])) ?>
+                                    <?= htmlspecialchars((string) ($c['role_name'] ?: 'Participant')) ?>, issued on <?= htmlspecialchars(dash_date($c['issued_at'])) ?>
                                 </p>
                             </div>
                         </div>
@@ -396,22 +396,22 @@ engage_header([
     <section class="panel" id="support">
         <div class="panel-head">
             <h2>Get support</h2>
-            <p>Help with a data pack, claim back event expenses, talk to <?= htmlspecialchars(MemberTicketModel::SUPPORT_LABEL) ?>, or report a technical problem.</p>
+            <p>Request data pack assistance, claim event expenses, reach out to <?= htmlspecialchars(MemberTicketModel::SUPPORT_LABEL) ?>, or report a technical issue.</p>
         </div>
         <div class="tiles">
             <?php
             $l = $lock($internetOpen);
-            dash_tile($icons, '#0f766e', 'wifi', 'Internet support', 'Help paying for a data pack so you can keep contributing.',
+            dash_tile($icons, '#0f766e', 'wifi', 'Internet support', 'Financial assistance for a data pack to facilitate your continued contributions.',
                 $l === '' ? '/member/support?type=internet' : null, $l);
             $l = $lock($reimbursementOpen);
-            dash_tile($icons, '#0f766e', 'card', 'Reimbursement', 'Claim back expenses for a DCW-aligned event.',
+            dash_tile($icons, '#0f766e', 'card', 'Reimbursement', 'Claim reimbursement for expenses incurred toward a DCW-aligned event.',
                 $l === '' ? '/member/support?type=reimbursement' : null, $l);
-            // Open to every signed-in member, including expired ones: someone may need to say why.
+            // Open to every signed-in member, including expired ones: someone may need to state the reason.
             dash_tile($icons, '#106b9a', 'chat', 'Talk to ' . MemberTicketModel::SUPPORT_LABEL,
-                'Ask a question, make a complaint, or share a suggestion.', '/member/talk');
+                'Raise a query, lodge a grievance, or share a suggestion.', '/member/talk');
             // Also open to every signed-in member, including expired ones.
             dash_tile($icons, '#0e7490', 'alert', 'Report a problem',
-                'Something not working on this site? Tell the technical team.', '/member/report-problem');
+                'Encountered an issue on this portal? Notify the technical team.', '/member/report-problem');
             ?>
         </div>
     </section>
@@ -425,9 +425,9 @@ engage_header([
             </div>
             <?php if (empty($requests)): ?>
                 <div class="d-empty">
-                    <strong>No requests yet</strong>
-                    <p>Internet support and reimbursement requests you make are tracked here, with every status update.</p>
-                    <a class="d-btn line" href="#support">See support options</a>
+                    <strong>No requests submitted yet</strong>
+                    <p>Internet support and reimbursement requests submitted by you will be tracked here alongside their status updates.</p>
+                    <a class="d-btn line" href="#support">View support options</a>
                 </div>
             <?php else: ?>
                 <div class="reqs">
@@ -450,13 +450,13 @@ engage_header([
                             </div>
                             <div class="side">
                                 <span class="pill"><?= htmlspecialchars($r['label']) ?></span>
-                                <a href="<?= htmlspecialchars(member_request_url($r['tracking'])) ?>"><?= $r['act'] ? 'Act now' : 'View' ?> &rarr;</a>
+                                <a href="<?= htmlspecialchars(member_request_url($r['tracking'])) ?>"><?= $r['act'] ? 'Take action' : 'View' ?> &rarr;</a>
                             </div>
                         </div>
                     <?php endforeach; ?>
                 </div>
                 <?php if ($totalRequests > count($requests)): ?>
-                    <p class="d-more">Showing your latest <?= count($requests) ?> of <?= $totalRequests ?> requests.</p>
+                    <p class="d-more">Showing the latest <?= count($requests) ?> of <?= $totalRequests ?> requests.</p>
                 <?php endif; ?>
             <?php endif; ?>
         </section>
@@ -464,12 +464,12 @@ engage_header([
         <section class="panel" id="conversations">
             <div class="panel-head">
                 <h2>My conversations</h2>
-                <p>Questions, complaints and suggestions you have sent to <?= htmlspecialchars(MemberTicketModel::SUPPORT_LABEL) ?>.</p>
+                <p>Queries, grievances, and suggestions submitted to <?= htmlspecialchars(MemberTicketModel::SUPPORT_LABEL) ?>.</p>
             </div>
             <?php if (empty($tickets)): ?>
                 <div class="d-empty">
-                    <strong>No conversations yet</strong>
-                    <p>Have a question or an idea? Start a conversation and replies will show up here.</p>
+                    <strong>No conversations initiated</strong>
+                    <p>Have a query or a proposal? Start a conversation, and responses will appear here.</p>
                     <a class="d-btn line" href="/member/talk">Start a conversation</a>
                 </div>
             <?php else: ?>
@@ -489,7 +489,7 @@ engage_header([
                     <?php endforeach; ?>
                 </div>
                 <?php if (count($tickets) > 8): ?>
-                    <p class="d-more">Showing your latest 8 of <?= count($tickets) ?> conversations.</p>
+                    <p class="d-more">Showing the latest 8 of <?= count($tickets) ?> conversations.</p>
                 <?php endif; ?>
             <?php endif; ?>
         </section>
@@ -499,15 +499,15 @@ engage_header([
     <section class="panel">
         <div class="panel-head">
             <h2>More from DCW</h2>
-            <p>Open programs and shortcuts.</p>
+            <p>Active programmes and quick links.</p>
         </div>
         <div class="tiles">
             <?php
-            dash_tile($icons, '#106b9a', 'search', 'Track an application', 'Check the status of a public application (ID starts with DCW-).', '/track');
-            dash_tile($icons, '#97161b', 'people', $memberActive ? 'Membership' : 'Renew membership', 'Join a club, or renew your membership.', '/membership');
+            dash_tile($icons, '#106b9a', 'search', 'Track an application', 'Check the status of a public application (ID begins with DCW-).', '/track');
+            dash_tile($icons, '#97161b', 'people', $memberActive ? 'Membership' : 'Renew membership', 'Join a club or renew your membership.', '/membership');
             foreach ($programs as $p) {
                 $title = $p['title'] ?: ucwords(str_replace(['-', '_'], ' ', $p['form_type']));
-                $desc = !empty($p['description']) ? MiniWikiText::stripToPlainText($p['description']) : 'Open for applications now.';
+                $desc = !empty($p['description']) ? MiniWikiText::stripToPlainText($p['description']) : 'Currently open for applications.';
                 dash_tile($icons, '#106b9a', 'doc', $title, mb_strimwidth($desc, 0, 90, '…'), '/' . $p['form_type'], 'Open');
             }
             ?>
