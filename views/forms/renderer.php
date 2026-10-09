@@ -122,6 +122,8 @@ if ($loggedMember !== null && $isMembershipForm && !$isRenewalForm) {
 // "expired or already used." So GET only *stages* the token; only an
 // explicit POST (which scanners never send) actually redeems it.
 $verifiedEmail = '';
+$verifiedName = '';   // name typed on the gate, carried through the emailed link
+$verifyName = '';     // name as typed in the current gate request (to refill the field)
 $verifySent = false;
 $pendingVerifyToken = null;
 
@@ -140,10 +142,11 @@ if (empty($previewSchema)) {
         }
 
         require_once __DIR__ . '/../../models/EmailVerificationModel.php';
-        $verifiedFor = (new EmailVerificationModel())->consume($form['id'], (string) ($_POST['verify_token'] ?? ''));
+        $verified = (new EmailVerificationModel())->consume($form['id'], (string) ($_POST['verify_token'] ?? ''));
 
-        if ($verifiedFor) {
-            $_SESSION['verified_emails'][$form['id']] = $verifiedFor;
+        if ($verified) {
+            $_SESSION['verified_emails'][$form['id']] = $verified['email'];
+            $_SESSION['verified_names'][$form['id']] = $verified['name'];
             // Drop the token from the URL so it can't be bookmarked or shared.
             header('Location: ' . parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH));
             exit;
@@ -160,6 +163,11 @@ if (empty($previewSchema)) {
     $verifiedEmail = $memberAutoVerified
         ? (string) $loggedMember['email']
         : ($_SESSION['verified_emails'][$form['id']] ?? '');
+
+    // A signed-in member's name comes from their member record elsewhere; only guests carry a gate name.
+    $verifiedName = $memberAutoVerified
+        ? ''
+        : (string) ($_SESSION['verified_names'][$form['id']] ?? '');
 }
 
 if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') !== 'confirm_verification') {
@@ -175,7 +183,13 @@ if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['a
         // A signed-in member has no email gate and cannot swap in another address.
         $email = $verifiedEmail;
     } elseif ($postAction === 'request_verification') {
-        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        // Name typed on the gate: strip control characters, trim, require, cap the length.
+        // Named verify_name so it can never collide with a schema field called "name".
+        $verifyName = trim(preg_replace('/[\x00-\x1F\x7F]+/u', ' ', (string) ($_POST['verify_name'] ?? '')));
+
+        if ($verifyName === '' || mb_strlen($verifyName) > 100) {
+            $errors['email'] = "Please enter your name (up to 100 characters).";
+        } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
             $errors['email'] = "Please enter a valid email address.";
         } else {
             try {
@@ -205,7 +219,7 @@ if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['a
                     // verification link goes out. They are pointed to sign in or renew.
                     MembershipMailer::sendExistingAccount($email, $held, $joinChapter, $formTitle);
                 } else {
-                    $issued = (new EmailVerificationModel())->request($form['id'], $email);
+                    $issued = (new EmailVerificationModel())->request($form['id'], $email, $verifyName);
 
                     if ($issued) {
                         $verifyUrl = rtrim($config['app']['url'], '/') . '/' . rawurlencode($formType)
@@ -215,7 +229,7 @@ if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['a
                             // explains that their existing Member ID is kept.
                             MembershipMailer::sendExistingAccount($email, $held, $joinChapter, $formTitle, $verifyUrl, $issued['expires_at']);
                         } else {
-                            Mailer::sendEmailVerification($email, $formTitle, $verifyUrl, $issued['expires_at']);
+                            Mailer::sendEmailVerification($email, $formTitle, $verifyUrl, $issued['expires_at'], $verifyName);
                         }
                     }
                 }
@@ -228,8 +242,9 @@ if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['a
             }
         }
     } elseif ($postAction === 'change_email') {
-        unset($_SESSION['verified_emails'][$form['id']]);
+        unset($_SESSION['verified_emails'][$form['id']], $_SESSION['verified_names'][$form['id']]);
         $verifiedEmail = '';
+        $verifiedName = '';
     } elseif ($verifiedEmail === '') {
         $errors['system'] = "Please verify your email address first.";
     } else {
@@ -302,6 +317,12 @@ if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['a
         // not a hardcoded full_name assumption, so both full_name and
         // applicant_name labels keep working across builder-generated schemas.
         $applicantName = resolveApplicantName($postData, $schema);
+
+        // If the form has no name field (or it was left empty, e.g. a draft), use the
+        // name the applicant gave when verifying their email, so emails never say "Applicant".
+        if ($verifiedName !== '' && (trim((string) $applicantName) === '' || $applicantName === 'Applicant')) {
+            $applicantName = $verifiedName;
+        }
 
         // Membership forms: check the Member ID now (renewal form: the one typed on the form;
         // other forms: the one set above), so a typo or someone else's ID is shown here instead
@@ -397,7 +418,7 @@ if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['a
                 // a real submission, not every incomplete draft save.
                 // The address is spent once it has been saved against an
                 // application; a second one needs a fresh verification.
-                unset($_SESSION['verified_emails'][$form['id']]);
+                unset($_SESSION['verified_emails'][$form['id']], $_SESSION['verified_names'][$form['id']]);
 
                 if (!$isDraft) {
                     // $form comes straight from FormModel::getFormByType(),
@@ -516,23 +537,26 @@ engage_header([
 </style>
 
 <div class="fcard">
-    <?php if (!empty($schema['banner_image'])): ?>
-        <figure class="banner-fig">
-            <img class="banner-img" src="<?= htmlspecialchars(engage_resolve_image($schema['banner_image'], 1280)) ?>" alt="">
-            <?= engage_commons_caption($schema['banner_image']) ?>
-        </figure>
-    <?php endif; ?>
+    <?php /* The "Click to continue" step shows only the confirmation: no banner, deadline or program description. */ ?>
+    <?php if (!$showConfirm): ?>
+        <?php if (!empty($schema['banner_image'])): ?>
+            <figure class="banner-fig">
+                <img class="banner-img" src="<?= htmlspecialchars(engage_resolve_image($schema['banner_image'], 1280)) ?>" alt="">
+                <?= engage_commons_caption($schema['banner_image']) ?>
+            </figure>
+        <?php endif; ?>
 
-    <?php if (!empty($previewSchema)): ?>
-        <div class="action-banner" role="status">🔍 Preview — this is how the form will look. Submissions are disabled here.</div>
-    <?php endif; ?>
+        <?php if (!empty($previewSchema)): ?>
+            <div class="action-banner" role="status">🔍 Preview — this is how the form will look. Submissions are disabled here.</div>
+        <?php endif; ?>
 
-    <?php if (!empty($form['deadline_at'])): ?>
-        <p class="verified-line">Applications close on <strong><?= htmlspecialchars(date('j M Y, g:i A', strtotime($form['deadline_at']))) ?></strong>.</p>
-    <?php endif; ?>
+        <?php if (!empty($form['deadline_at'])): ?>
+            <p class="verified-line">Applications close on <strong><?= htmlspecialchars(date('j M Y, g:i A', strtotime($form['deadline_at']))) ?></strong>.</p>
+        <?php endif; ?>
 
-    <?php if (!empty($schema['description'])): ?>
-        <div class="form-desc"><?= MiniWikiText::render($schema['description']) ?></div>
+        <?php if (!empty($schema['description'])): ?>
+            <div class="form-desc"><?= MiniWikiText::render($schema['description']) ?></div>
+        <?php endif; ?>
     <?php endif; ?>
 
     <?php if ($success): ?>
@@ -586,6 +610,11 @@ engage_header([
                 <?= CSRF::getInputField() ?>
                 <input type="hidden" name="action" value="request_verification">
                 <div class="field">
+                    <label for="verify_name">Your name <span class="req-star">*</span></label>
+                    <input type="text" name="verify_name" id="verify_name" maxlength="100"
+                        value="<?= htmlspecialchars($verifyName) ?>" autocomplete="name" required>
+                </div>
+                <div class="field">
                     <label for="verify_email">Verify your email to begin <span class="req-star">*</span></label>
                     <input type="email" name="email" id="verify_email" value="<?= htmlspecialchars($email ?? '') ?>" required>
                     <span class="hint">We will email you a one-time link. Once you open it, the application form unlocks,
@@ -603,7 +632,7 @@ engage_header([
                 <form method="POST" class="verified-line">
                     <?= CSRF::getInputField() ?>
                     <input type="hidden" name="action" value="change_email">
-                    Verified as <strong><?= htmlspecialchars($verifiedEmail) ?></strong> ✓
+                    Verified as <strong><?= htmlspecialchars($verifiedName !== '' ? "$verifiedName ($verifiedEmail)" : $verifiedEmail) ?></strong> ✓
                     <button type="submit" formnovalidate class="linkbtn">Use a different email</button>
                 </form>
             <?php endif; ?>
