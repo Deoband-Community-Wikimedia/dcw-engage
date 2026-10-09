@@ -39,6 +39,8 @@ if (!empty($previewSchema)) {
     $form = ['id' => null, 'schema' => $previewSchema];
 } else {
     $formModel = new FormModel();
+    // getFormByType() returns false for a form that is switched off OR past its
+    // deadline, so both land in the closed branch below.
     $form = $formModel->getFormByType($formType);
 
     if (!$form) {
@@ -54,6 +56,9 @@ if (!empty($previewSchema)) {
             // search results.
             http_response_code(200);
             $closedTitle = $inactiveForm['schema']['title'] ?? 'This form';
+            // Set only when the form closed because its deadline passed, so closed.php
+            // can say when. A form an organizer switched off gets the generic message.
+            $closedDeadline = FormModel::closedByDeadline($inactiveForm) ? $inactiveForm['deadline_at'] : null;
             require __DIR__ . '/closed.php';
         } else {
             http_response_code(404);
@@ -406,17 +411,22 @@ if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['a
                 }
             } catch (Exception $e) {
                 // The save failed (including the UNIQUE(form_id, email) guard
-                // catching a duplicate that slipped past the check above).
+                // catching a duplicate that slipped past the check above, or
+                // the deadline guard in saveApplication() if the form closed
+                // while the applicant was filling it in).
                 // Delete any files we moved so they are not left orphaned.
                 //
                 // This used to be swallowed silently — the applicant saw a
                 // generic message and the real reason was never written
                 // anywhere, so a live incident (2026-09-16) had no trail to
                 // diagnose from. Log the real exception; the applicant still
-                // only ever sees the generic message.
+                // only ever sees the generic message, except for the
+                // "form closed" refusal, whose message is written to be shown.
                 app_log("Application save failed for form '$formType' <$email>: " . $e->getMessage());
                 cleanupUploads($uploadedPaths);
-                $errors['system'] = "An error occurred saving your application.";
+                $errors['system'] = ($e instanceof InvalidArgumentException)
+                    ? $e->getMessage()
+                    : "An error occurred saving your application.";
             }
         }
     }
@@ -515,6 +525,10 @@ engage_header([
 
     <?php if (!empty($previewSchema)): ?>
         <div class="action-banner" role="status">🔍 Preview — this is how the form will look. Submissions are disabled here.</div>
+    <?php endif; ?>
+
+    <?php if (!empty($form['deadline_at'])): ?>
+        <p class="verified-line">Applications close on <strong><?= htmlspecialchars(date('j M Y, g:i A', strtotime($form['deadline_at']))) ?></strong>.</p>
     <?php endif; ?>
 
     <?php if (!empty($schema['description'])): ?>
