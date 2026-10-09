@@ -10,6 +10,7 @@ require_once __DIR__ . '/../../models/ReimbursementSettingsModel.php';
 require_once __DIR__ . '/../../models/ReimbursementModel.php';
 require_once __DIR__ . '/../../models/MemberTicketModel.php';
 require_once __DIR__ . '/../../models/TechIssueModel.php';
+require_once __DIR__ . '/../../models/MemberCertificateModel.php'; // NEW
 require_once __DIR__ . '/../../includes/member_session.php';
 require_once __DIR__ . '/../../includes/member_requests.php';
 
@@ -130,6 +131,13 @@ $ticketsWaiting = array_values(array_filter($tickets,
 // ---- Technical reports where the technical team answered last ----------------------------------
 $techWaiting = [];
 try { $techWaiting = (new TechIssueModel())->awaitingReporter('member', (string) $member['member_id']); } catch (Throwable $e) { /* table not created yet */ }
+
+// ---- NEW: certificates issued on certificates.dcwwiki.org, matched by the member's verified email
+// Read from the view member_certificates_v. If the certificates database is unreachable or
+// includes/certs_db.php is missing, the panel just shows the empty note; the dashboard never breaks.
+$certs = [];
+try { $certs = (new MemberCertificateModel())->listForMember($email); } catch (Throwable $e) { error_log('Engage certificates lookup failed: ' . $e->getMessage()); }
+$certBase = 'https://certificates.dcwwiki.org';
 
 $icons = [
     'doc'    => '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>',
@@ -275,32 +283,40 @@ engage_header([
             <?php endif; ?>
         </section>
 
+        <?php /* NEW: My certificates (from certificates.dcwwiki.org via the member_certificates_v view) */ ?>
         <section class="panel">
             <div class="panel-head">
-                <h2>My conversations</h2>
-                <p>Questions, complaints and suggestions you have sent to <?= htmlspecialchars(MemberTicketModel::SUPPORT_LABEL) ?>.</p>
+                <h2>My certificates</h2>
+                <p>Certificates issued to you for DCW events. Download them or share the verification link.</p>
             </div>
-            <?php if (empty($tickets)): ?>
-                <div class="empty-note">You have not started a conversation yet.</div>
+            <?php if (empty($certs)): ?>
+                <div class="empty-note">No certificates have been issued to <?= htmlspecialchars($email) ?> yet.</div>
             <?php else: ?>
                 <div class="reqs">
-                    <?php foreach (array_slice($tickets, 0, 8) as $t): ?>
-                        <div class="req<?= ($t['last_sender'] === 'staff' && !MemberTicketModel::isClosed((string) $t['status'])) ? ' act' : '' ?>" style="--tone: #106b9a;">
-                            <span class="tick"><svg viewBox="0 0 24 24" aria-hidden="true"><?= $icons['chat'] ?></svg></span>
+                    <?php foreach ($certs as $c): ?>
+                        <?php
+                        // Per-row base URL if the view provides one (multi-organisation), else the DCW portal.
+                        $base = rtrim((string) (!empty($c['base_url']) ? $c['base_url'] : $certBase), '/');
+                        $cid  = rawurlencode((string) $c['certificate_id']);
+                        ?>
+                        <div class="req" style="--tone: #0f766e;">
+                            <span class="tick"><svg viewBox="0 0 24 24" aria-hidden="true"><?= $icons['doc'] ?></svg></span>
                             <div>
-                                <h3><?= htmlspecialchars($t['subject']) ?></h3>
-                                <p class="meta"><?= htmlspecialchars(MemberTicketModel::LABELS[$t['type']] ?? '') ?> &middot; <?= htmlspecialchars(dash_date($t['updated_at'])) ?> &middot; <code><?= htmlspecialchars($t['tracking_id']) ?></code></p>
+                                <h3><?= htmlspecialchars((string) $c['event_name']) ?></h3>
+                                <p class="meta">
+                                    <?php if (!empty($c['org_name'])): ?><?= htmlspecialchars((string) $c['org_name']) ?> &middot; <?php endif; ?>
+                                    <?= htmlspecialchars((string) ($c['role_name'] ?: 'Participant')) ?>
+                                    &middot; <?= htmlspecialchars(dash_date($c['issued_at'])) ?>
+                                    &middot; <code><?= htmlspecialchars((string) $c['certificate_id']) ?></code><button type="button" class="copy" data-copy="<?= htmlspecialchars((string) $c['certificate_id']) ?>">Copy</button>
+                                </p>
                             </div>
                             <div class="side">
-                                <span class="pill"><?= htmlspecialchars($t['status']) ?></span>
-                                <a href="/member/talk/ticket?id=<?= htmlspecialchars(rawurlencode($t['tracking_id'])) ?>">Open &rarr;</a>
+                                <a href="<?= htmlspecialchars($base) ?>/download.php?id=<?= $cid ?>">Download &darr;</a>
+                                <a href="<?= htmlspecialchars($base) ?>/verify/<?= $cid ?>" target="_blank" rel="noopener">Verify &rarr;</a>
                             </div>
                         </div>
                     <?php endforeach; ?>
                 </div>
-                <?php if (count($tickets) > 8): ?>
-                    <p class="meta" style="text-align:center; color:var(--muted); font-size:13px;">Showing your latest 8 of <?= count($tickets) ?> conversations.</p>
-                <?php endif; ?>
             <?php endif; ?>
         </section>
 

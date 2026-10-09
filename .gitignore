@@ -8,11 +8,22 @@ config.php
 .env.*
 !.env.example
 
+# Security: Certificates database credentials (real file lives only on the server)
+# The committed template is includes/certs_db.example.php
+includes/certs_db.php
+
 # Security: Ignore all log files (prevents leaking sensitive errors/PII)
 *.log
 logs/
 error_log
 php_errors.log
+
+# Security: Database dumps and backups can contain applicant/member PII
+*.sql.gz
+*.sql.zip
+*.dump
+*.bak
+backups/
 
 # Dependencies
 vendor/
