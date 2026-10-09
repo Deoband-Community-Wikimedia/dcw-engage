@@ -44,20 +44,20 @@ if (!empty($previewSchema)) {
     $form = $formModel->getFormByType($formType);
 
     if (!$form) {
-        // Tell "closed" apart from "never existed" so a form that was live and is
-        // now closed shows a proper message instead of a bare 404.
+        // Kindly note whether the form is closed rather than non-existent, ensuring that a form
+        // which was live and is now closed displays an appropriate message instead of a plain 404.
         $inactiveForm = $formModel->getAnyFormByType($formType);
 
         if ($inactiveForm) {
-            // Do NOT send 403 here. Hosts, CDNs and browsers treat a 403 as a block
-            // and replace the body with their own error page (Chrome's "Access to
-            // ... was denied"), so closed.php never reaches the visitor. Send 200;
-            // closed.php already adds "X-Robots-Tag: noindex" so it stays out of
+            // Do NOT send a 403 status here. Hosts, CDNs, and browsers treat a 403 as a block
+            // and replace the response body with their own error page (such as Chrome's "Access to
+            // ... was denied"), preventing closed.php from reaching the visitor. Send a 200 instead;
+            // closed.php already includes an "X-Robots-Tag: noindex" header to keep it out of
             // search results.
             http_response_code(200);
             $closedTitle = $inactiveForm['schema']['title'] ?? 'This form';
-            // Set only when the form closed because its deadline passed, so closed.php
-            // can say when. A form an organizer switched off gets the generic message.
+            // Set only when the form closed because its deadline passed, allowing closed.php
+            // to display when it closed. A form manually disabled by an organizer displays the generic message.
             $closedDeadline = FormModel::closedByDeadline($inactiveForm) ? $inactiveForm['deadline_at'] : null;
             require __DIR__ . '/closed.php';
         } else {
@@ -72,10 +72,10 @@ $schema = $form['schema'];
 $errors = [];
 $success = '';
 
-// A signed-in member (Member ID + password) is already verified: their email was proved when
-// they were approved, and the session proves it is them. So on EVERY form they skip the
-// email gate and use the email on their member record. Never skipped for a Member ID that was
-// merely typed in: only a real member session counts.
+// A signed-in member (Member ID + password) is already verified: their email was validated when
+// their account was approved, and the session confirms their identity. Therefore, on EVERY form, they bypass
+// the email gate and use the email address recorded in their member profile. This bypass is never applied for a Member ID
+// that was simply keyed in: only an active member session is considered valid.
 $loggedMember = null;
 if (empty($previewSchema)) {
     try {
@@ -89,10 +89,10 @@ $isMembershipForm = str_starts_with((string) $formType, 'membership-');
 $isRenewalForm = str_starts_with((string) $formType, 'membership-renewal');
 $memberAutoVerified = $loggedMember !== null;
 
-// A signed-in member never gets an application form for a membership they already hold
-// (any status except rejected). Send them to /membership, which explains and links to renewal.
-// Join forms only: the renewal form stays reachable. Guests are handled by the email check
-// further down, since only a real member session proves who someone is.
+// A signed-in member should not be presented with an application form for a membership category they already hold
+// (with any status except rejected). Redirect them to /membership, which provides details and renewal links.
+// Applicable to join forms only: the renewal form remains accessible. Guest users are handled by the email check
+// further below, since only an active member session reliably establishes identity.
 if ($loggedMember !== null && $isMembershipForm && !$isRenewalForm) {
     try {
         require_once __DIR__ . '/../../models/MemberModel.php';
@@ -102,40 +102,39 @@ if ($loggedMember !== null && $isMembershipForm && !$isRenewalForm) {
             exit;
         }
     } catch (Throwable $ex) {
-        // If the lookup fails, fall through: the submit-time checks below still apply.
+        // If the lookup fails, proceed normally: the submission-time checks below will still apply.
     }
 }
 
-// Email verification comes first (#67). Nobody — whether they mean to submit
-// or only save a draft — reaches the form until they have proved they control
-// the address, so junk entries can't create rows or trigger magic links to
-// addresses that aren't theirs. The proof lives in the session, per form,
-// and is redeemed from the emailed link (?verify=<token>).
+// Email verification takes precedence (#67). No user — whether intending to submit
+// or simply save a draft — can access the form until they have proven ownership of
+// the email address, preventing junk entries from creating database records or triggering magic links to
+// unverified addresses. Proof of verification is maintained in the session on a per-form basis
+// and redeemed via the emailed verification link (?verify=<token>).
 //
-// IMPORTANT: redeeming the token must never happen on a plain GET. Mail
-// security scanners (Outlook Safe Links, Proofpoint URL Defense, Mimecast,
-// Gmail's link proxy) automatically issue a GET to every link in an email
-// before a human opens the message, to check it isn't malicious. If GET
-// consumed the one-time token, that automated prefetch would burn it first
-// and the real applicant — who is only ever a GET request behind, arriving
-// seconds to minutes later — would always land back on this gate with
-// "expired or already used." So GET only *stages* the token; only an
-// explicit POST (which scanners never send) actually redeems it.
+// IMPORTANT: token redemption must never occur via a plain GET request. Mail
+// security scanners (such as Outlook Safe Links, Proofpoint URL Defense, Mimecast,
+// and Gmail's link proxy) automatically issue GET requests to every link in an incoming email
+// prior to human review to check for malicious content. If a GET request consumed the one-time token,
+// that automated prefetch would exhaust it first, causing the genuine applicant — arriving
+// seconds or minutes later — to be redirected back to this gate with an error stating
+// "expired or already used." Consequently, GET requests only *stage* the token; only an
+// explicit POST request (which scanners do not issue) actually redeems it.
 $verifiedEmail = '';
-$verifiedName = '';   // name typed on the gate, carried through the emailed link
-$verifyName = '';     // name as typed in the current gate request (to refill the field)
+$verifiedName = '';   // name entered at the gate, carried forward via the emailed link
+$verifyName = '';     // name entered in the current gate request (to repopulate the field)
 $verifySent = false;
 $pendingVerifyToken = null;
 
 if (empty($previewSchema)) {
-    // Checked in this order deliberately: the confirm-step form below posts
-    // back to this same URL without stripping the query string, so
-    // $_GET['verify'] is still set on that POST too. If the isset($_GET[...])
-    // check ran first, it would win on every request — GET or POST — and the
-    // branch that actually calls consume() would never run, leaving the
-    // "Continue to application" button stuck re-rendering the same
-    // confirmation screen forever. Checking for the confirm POST first
-    // avoids that regardless of what's left in the query string.
+    // Evaluated in this specific order: the confirmation-step form below submits
+    // back to this exact URL without stripping the query string, meaning
+    // $_GET['verify'] remains set on that POST request as well. If the isset($_GET[...])
+    // check were evaluated first, it would take precedence on every request — whether GET or POST — and the
+    // branch responsible for calling consume() would never execute, leaving the
+    // "Continue to application" button trapped in a loop re-rendering the same
+    // confirmation screen indefinitely. Checking for the confirmation POST first
+    // avoids this issue regardless of any leftover query parameters.
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confirm_verification') {
         if (!CSRF::validate($_POST['csrf_token'] ?? '')) {
             die("Invalid CSRF token.");
@@ -147,16 +146,16 @@ if (empty($previewSchema)) {
         if ($verified) {
             $_SESSION['verified_emails'][$form['id']] = $verified['email'];
             $_SESSION['verified_names'][$form['id']] = $verified['name'];
-            // Drop the token from the URL so it can't be bookmarked or shared.
+            // Remove the token from the URL to prevent bookmarking or sharing.
             header('Location: ' . parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH));
             exit;
         }
 
-        // One message for every failure — unknown, expired, used, wrong form.
-        $errors['verify'] = "That verification link has expired or was already used. Enter your email below to get a new one.";
+        // Provide a unified message for all failure scenarios — whether unknown, expired, used, or for a different form.
+        $errors['verify'] = "That verification link has expired or has already been used. Please enter your email below to receive a new one.";
     } elseif (isset($_GET['verify'])) {
-        // Side-effect-free: just carry the token forward to a confirmation
-        // step. Nothing is written to the database here.
+        // Side-effect-free: simply pass the token forward to the confirmation
+        // step. No database modifications occur here.
         $pendingVerifyToken = (string) $_GET['verify'];
     }
 
@@ -164,7 +163,7 @@ if (empty($previewSchema)) {
         ? (string) $loggedMember['email']
         : ($_SESSION['verified_emails'][$form['id']] ?? '');
 
-    // A signed-in member's name comes from their member record elsewhere; only guests carry a gate name.
+    // A signed-in member's name is retrieved from their member record; only guest users provide a gate name.
     $verifiedName = $memberAutoVerified
         ? ''
         : (string) ($_SESSION['verified_names'][$form['id']] ?? '');
@@ -180,17 +179,17 @@ if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['a
     $gatePassed = false;
 
     if ($memberAutoVerified && in_array($postAction, ['request_verification', 'change_email'], true)) {
-        // A signed-in member has no email gate and cannot swap in another address.
+        // A signed-in member does not use an email gate and cannot switch to an alternate address.
         $email = $verifiedEmail;
     } elseif ($postAction === 'request_verification') {
-        // Name typed on the gate: strip control characters, trim, require, cap the length.
-        // Named verify_name so it can never collide with a schema field called "name".
+        // Name entered at the gate: strip control characters, trim whitespace, enforce requirements, and cap the length.
+        // Named verify_name to prevent naming collisions with schema fields named "name".
         $verifyName = trim(preg_replace('/[\x00-\x1F\x7F]+/u', ' ', (string) ($_POST['verify_name'] ?? '')));
 
         if ($verifyName === '' || mb_strlen($verifyName) > 100) {
-            $errors['email'] = "Please enter your name (up to 100 characters).";
+            $errors['email'] = "Kindly enter your name (maximum 100 characters).";
         } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-            $errors['email'] = "Please enter a valid email address.";
+            $errors['email'] = "Kindly enter a valid email address.";
         } else {
             try {
                 require_once __DIR__ . '/../../models/EmailVerificationModel.php';
@@ -199,10 +198,10 @@ if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['a
                 $email = strtolower($email);
                 $formTitle = $schema['title'] ?? $formType;
 
-                // Membership JOIN forms only (the renewal form is meant for people who already
-                // hold a membership). If this address already belongs to a member, say so by
-                // email instead of sending a plain verification link. The screen below is the
-                // same either way, so the page never reveals whether an account exists.
+                // Applicable only to membership JOIN forms (the renewal form is intended for individuals who already
+                // hold an active membership). If this email address is already associated with a member, notify them via
+                // email rather than sending a standard verification link. The displayed screen remains identical
+                // in both cases, ensuring the page does not disclose whether an account exists.
                 $held = [];
                 $joinChapter = null;
                 if ($isMembershipForm && !$isRenewalForm) {
@@ -215,8 +214,8 @@ if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['a
                     && in_array($joinChapter, array_column($held, 'chapter'), true);
 
                 if ($holdsThis) {
-                    // Already a member of this chapter: no application is needed, so no
-                    // verification link goes out. They are pointed to sign in or renew.
+                    // Already a member of this chapter: no application is required, so no
+                    // verification link is dispatched. They are directed to sign in or renew.
                     MembershipMailer::sendExistingAccount($email, $held, $joinChapter, $formTitle);
                 } else {
                     $issued = (new EmailVerificationModel())->request($form['id'], $email, $verifyName);
@@ -225,20 +224,20 @@ if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['a
                         $verifyUrl = rtrim($config['app']['url'], '/') . '/' . rawurlencode($formType)
                             . '?verify=' . urlencode($issued['token']);
                         if (!empty($held)) {
-                            // Member of ANOTHER chapter: same verification link, but the email
-                            // explains that their existing Member ID is kept.
+                            // Member of another chapter: shares the same verification link flow, but the email
+                            // clarifies that their existing Member ID will be retained.
                             MembershipMailer::sendExistingAccount($email, $held, $joinChapter, $formTitle, $verifyUrl, $issued['expires_at']);
                         } else {
                             Mailer::sendEmailVerification($email, $formTitle, $verifyUrl, $issued['expires_at'], $verifyName);
                         }
                     }
                 }
-                // Same screen whether or not a link went out (rate limited,
-                // mail failure): the page must not reveal which happened.
+                // Maintain the same screen appearance regardless of whether a link was successfully dispatched (handling rate limits
+                // or mail delivery failures): the interface must not reveal the underlying outcome.
                 $verifySent = true;
             } catch (Exception $e) {
                 app_log("Email verification request failed for form '$formType' <$email>: " . $e->getMessage());
-                $errors['system'] = "Something went wrong sending your verification email. Please try again.";
+                $errors['system'] = "An error occurred while dispatching your verification email. Kindly try again.";
             }
         }
     } elseif ($postAction === 'change_email') {
@@ -246,20 +245,20 @@ if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['a
         $verifiedEmail = '';
         $verifiedName = '';
     } elseif ($verifiedEmail === '') {
-        $errors['system'] = "Please verify your email address first.";
+        $errors['system'] = "Kindly verify your email address first.";
     } else {
-        // Past this point the address the applicant typed is irrelevant. The
-        // verified one is what gets saved and mailed, so editing the request
-        // cannot swap in an address that was never proved.
+        // Beyond this point, the email address originally typed by the applicant is disregarded. The
+        // verified email address is what gets saved and processed, preventing request tampering from
+        // substituting an unverified address.
         $email = $verifiedEmail;
         $gatePassed = true;
     }
 
     if (!$gatePassed) {
-        // Handled above; nothing further to do for this request.
+        // Handled above; no further action is required for this request.
     } elseif ($postAction === 'resend_magic_link') {
         if (empty($email)) {
-            $errors['email'] = "Email Address is required to resend the link.";
+            $errors['email'] = "An email address is required to resend the link.";
         } else {
             require_once __DIR__ . '/../../models/ApplicationModel.php';
             $appModel = new ApplicationModel();
@@ -268,28 +267,28 @@ if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['a
                 $token = $appModel->generateMagicLink($existing['id'], false);
                 require_once __DIR__ . '/../../includes/mailer.php';
                 Mailer::sendMagicLink($email, $existing['applicant_name'] ?? 'Applicant', $token);
-                $success = "We have resent the magic link to $email. Please check your inbox.";
+                $success = "We have resent the magic link to $email. Kindly check your inbox.";
             } else {
-                $errors['email'] = "No existing application found with that email address.";
+                $errors['email'] = "No existing application was found associated with that email address.";
             }
         }
     } else {
-        // Two distinct actions live behind the same "Submit Application"
-        // form: saving an incomplete draft (gets a magic link to come back
-        // to) vs a final submission (gets a plain received confirmation).
-        // Default to 'submit' so a stray/legacy POST without the field never
-        // silently becomes a draft.
+        // Two distinct actions share the same "Submit Application"
+        // interface: saving an incomplete draft (which generates a resume magic link)
+        // versus a final submission (which yields a confirmation receipt).
+        // Default to 'submit' so that stray or legacy POST requests lacking this field never
+        // silently default to a draft.
         $intent = ($_POST['intent'] ?? 'submit') === 'draft' ? 'draft' : 'submit';
         $isDraft = $intent === 'draft';
 
-        // A draft is allowed to be incomplete by definition, so required
-        // fields aren't enforced for it.
+        // By definition, drafts are permitted to be incomplete; therefore, required
+        // fields are not enforced for them.
         $errors = $formModel->validateSubmission($schema, $_POST, $isDraft);
 
         if (empty($email)) {
-            $errors['email'] = "Email Address is required.";
+            $errors['email'] = "An email address is required.";
         } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-            $errors['email'] = "Please enter a valid email address.";
+            $errors['email'] = "Kindly enter a valid email address.";
         }
 
         require_once __DIR__ . '/../../models/ApplicationModel.php';
@@ -298,10 +297,10 @@ if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['a
         $postData = $_POST;
         unset($postData['csrf_token']);
 
-        // Membership forms (not the renewal form, which asks for the ID itself): someone who
-        // already holds a membership in another chapter keeps ONE Member ID. The ID is set here,
-        // on the server, never taken from the posted form: from the signed-in member's session,
-        // or from what a guest typed on /membership (checked against their verified email below).
+        // Membership forms (excluding renewals, which collect the ID directly): applicants who
+        // already hold a membership in another chapter retain a single Member ID. This ID is assigned here,
+        // on the server side, and is never accepted from submitted form inputs: it is sourced from the signed-in member session,
+        // or from the value entered by a guest on /membership (subsequently validated against their verified email below).
         require_once __DIR__ . '/../../models/MemberModel.php';
         if ($isMembershipForm && !$isRenewalForm) {
             unset($postData[MemberModel::JOIN_ID_FIELD]);
@@ -313,23 +312,23 @@ if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['a
             }
         }
 
-        // Resolve the applicant name from the actual submitted field name,
-        // not a hardcoded full_name assumption, so both full_name and
-        // applicant_name labels keep working across builder-generated schemas.
+        // Determine the applicant's name from the submitted field name rather than
+        // relying on a hardcoded full_name assumption, ensuring compatibility with both full_name and
+        // applicant_name labels across builder-generated schemas.
         $applicantName = resolveApplicantName($postData, $schema);
 
-        // If the form has no name field (or it was left empty, e.g. a draft), use the
-        // name the applicant gave when verifying their email, so emails never say "Applicant".
+        // If the form lacks a name field (or it was left blank, such as in a draft), default to the
+        // name provided by the applicant during email verification to prevent emails from displaying "Applicant".
         if ($verifiedName !== '' && (trim((string) $applicantName) === '' || $applicantName === 'Applicant')) {
             $applicantName = $verifiedName;
         }
 
-        // Membership forms: check the Member ID now (renewal form: the one typed on the form;
-        // other forms: the one set above), so a typo or someone else's ID is shown here instead
-        // of surfacing only after a reviewer opens the application. A final submission only;
-        // a draft may be incomplete. No ID is allowed (the person is then a new applicant),
-        // a wrong one is not. The error is the same whether the ID does not exist or belongs
-        // to someone else. The email checked is the verified one.
+        // Membership forms: validate the Member ID immediately (renewal form: the ID entered on the form;
+        // other forms: the ID assigned above), ensuring typos or unauthorized IDs are identified here
+        // rather than only after a reviewer accesses the application. Applies to final submissions only;
+        // drafts may remain incomplete. No ID is permitted (making the individual a new applicant),
+        // but invalid IDs are rejected. The error message remains consistent whether the ID does not exist or belongs
+        // to another user. The email address evaluated is the verified address.
         if (empty($errors) && !$isDraft && $isMembershipForm) {
             try {
                 (new MemberModel())->verifyRenewalMember([
@@ -343,25 +342,24 @@ if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['a
                 if ($idFieldShown) {
                     $errors[MemberModel::RENEWAL_ID_FIELD] = $e->getMessage();
                 } else {
-                    $errors['system'] = $e->getMessage();   // no ID field on this form (or it was renamed): still say why
+                    $errors['system'] = $e->getMessage();   // no ID field present on this form (or renamed); indicate the reason
                 }
             }
         }
 
-        // Reject duplicates BEFORE touching any files. Uploading first and
-        // checking second leaves an orphaned file on disk with no application
-        // row pointing at it, which the PII scrubber can never reach.
+        // Reject duplicates BEFORE processing any files. Uploading files first and
+        // checking for duplicates second leaves orphaned files on disk without an associated application
+        // record, which the PII scrubber would be unable to purge.
         if (empty($errors)) {
             $existing = $appModel->getApplicationByEmail($form['id'], $email);
             if ($existing) {
-                $errors['email'] = "You have already applied for this program. Check your email for a magic link to edit your application.";
+                $errors['email'] = "You have already submitted an application for this program. Kindly check your email for the magic link to edit your application.";
                 $errors['show_resend'] = true;
             }
         }
 
-        // Only now, on an otherwise valid and non-duplicate submission, move
-        // the uploaded files into place. Track what we wrote so we can undo it
-        // if the save below fails for any reason.
+        // Only proceed to store uploaded files when the submission is otherwise valid and non-duplicate.
+        // Track successfully saved files so changes can be reverted if the subsequent database save fails.
         $uploadedPaths = [];
         if (empty($errors)) {
             require_once __DIR__ . '/../../models/FileUploader.php';
@@ -382,8 +380,8 @@ if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['a
                 }
             }
 
-            // A file failed validation after others already landed — remove
-            // the ones that succeeded so nothing is left orphaned.
+            // If a file fails validation after others have already uploaded successfully, remove
+            // the successful uploads to prevent orphaned files.
             if (!empty($errors)) {
                 cleanupUploads($uploadedPaths);
             }
@@ -398,69 +396,66 @@ if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['a
                 require_once __DIR__ . '/../../includes/mailer.php';
 
                 if ($isDraft) {
-                    // Drafts get the resume-by-email magic link, with the
-                    // longer draft expiry window.
+                    // Draft submissions receive a resume-by-email magic link, utilizing the
+                    // extended draft expiration window.
                     $token = $appModel->generateMagicLink($appId, true);
                     Mailer::sendMagicLink($email, $applicantName, $token);
-                    $success = "Draft saved! Your tracking ID is: $trackingId";
+                    $success = "Draft saved successfully! Your tracking ID is: $trackingId";
                 } else {
-                    // A real submission gets a plain confirmation instead —
-                    // no edit token. Returning applicants who need to make a
-                    // correction can still use "Resend Magic Link" above.
+                    // Final submissions receive a standard confirmation receipt instead —
+                    // without an edit token. Returning applicants requiring modifications
+                    // can utilize the "Resend Magic Link" option above.
                     $formTitle = $schema['title'] ?? $formType;
                     Mailer::sendApplicationReceived($email, $applicantName, $trackingId, $formTitle);
                     $success = "Application submitted successfully! Your tracking ID is: $trackingId";
-                    // The ID typed on /membership has done its job (it travels with the saved application now).
+                    // The Member ID entered on /membership has served its purpose (it is now stored with the application).
                     unset($_SESSION['join_member_id'][$formType]);
                 }
 
-                // Notify the organizer(s) in charge of this form — only for
-                // a real submission, not every incomplete draft save.
-                // The address is spent once it has been saved against an
-                // application; a second one needs a fresh verification.
+                // Notify the designated organizer(s) responsible for this form — strictly for
+                // final submissions rather than every incomplete draft save.
+                // The verification address is consumed once recorded against an
+                // application; subsequent submissions require fresh verification.
                 unset($_SESSION['verified_emails'][$form['id']], $_SESSION['verified_names'][$form['id']]);
 
                 if (!$isDraft) {
-                    // $form comes straight from FormModel::getFormByType(),
-                    // which never sets a 'title' key (only 'schema'), so
-                    // Mailer::sendOrganizerAlert()'s own fallback would land
-                    // on $form['form_type'] — the URL slug — instead of the
-                    // real title. Sync it with what the applicant email
-                    // above already resolved.
+                    // $form is retrieved directly from FormModel::getFormByType(),
+                    // which does not include a 'title' key (only 'schema'), meaning
+                    // Mailer::sendOrganizerAlert()'s fallback would otherwise default
+                    // to $form['form_type'] — the URL slug — instead of the
+                    // actual title. Synchronize it with the title resolved above for the applicant email.
                     $form['title'] = $formTitle;
                     Mailer::sendOrganizerAlert($form, $email, $applicantName, $trackingId);
                 }
             } catch (Exception $e) {
-                // The save failed (including the UNIQUE(form_id, email) guard
-                // catching a duplicate that slipped past the check above, or
-                // the deadline guard in saveApplication() if the form closed
-                // while the applicant was filling it in).
-                // Delete any files we moved so they are not left orphaned.
+                // The save operation failed (including the UNIQUE(form_id, email) constraint
+                // capturing duplicates that bypassed prior checks, or
+                // the deadline constraint in saveApplication() if the form closed
+                // while the applicant was completing it).
+                // Delete any transferred files to prevent leaving them orphaned.
                 //
-                // This used to be swallowed silently — the applicant saw a
-                // generic message and the real reason was never written
-                // anywhere, so a live incident (2026-09-16) had no trail to
-                // diagnose from. Log the real exception; the applicant still
-                // only ever sees the generic message, except for the
-                // "form closed" refusal, whose message is written to be shown.
+                // Previously, exceptions were swallowed silently — applicants saw a
+                // generic error message while the root cause was never logged, leaving live incidents (such as 2026-09-16) without a diagnostic trail.
+                // Log the underlying exception while presenting the applicant with a generic message,
+                // excepting "form closed" rejections where the specific message is intended for display.
                 app_log("Application save failed for form '$formType' <$email>: " . $e->getMessage());
                 cleanupUploads($uploadedPaths);
                 $errors['system'] = ($e instanceof InvalidArgumentException)
                     ? $e->getMessage()
-                    : "An error occurred saving your application.";
+                    : "An error occurred while saving your application.";
             }
         }
     }
 }
 
-// Until the address is verified, only the verification step (or,
-// if a token just arrived via GET, the confirmation step) is
-// shown. A preview has no session/DB, so it always shows the form.
+// Until the email address is verified, only the verification step (or,
+// if a token was provided via GET, the confirmation step) is
+// displayed. Previews lack session/database connectivity and therefore always display the form.
 $showConfirm = empty($success) && $pendingVerifyToken !== null && $verifiedEmail === '';
 $showGate = empty($success) && empty($previewSchema) && $verifiedEmail === '' && !$showConfirm;
 $isDraftPost = ($_POST['intent'] ?? '') === 'draft';
 
-// A signed-in member just gets their name in the top bar (same as /membership).
+// Signed-in members have their name displayed in the top bar (consistent with /membership).
 $member = $loggedMember;
 
 engage_header([
@@ -470,26 +465,26 @@ engage_header([
     'lead'        => '',
     'member'      => $member,
     'crumbs'      => [['Home', '/'], [$schema['title']]],
-    // Social preview: the banner is the thumbnail, the description is the preview text.
+    // Social preview: banner image serves as the thumbnail, description serves as preview text.
     'description' => MiniWikiText::stripToPlainText($schema['description'] ?? ''),
     'image'       => $schema['banner_image'] ?? null,
     'image_alt'   => $schema['title'],
 ]);
 ?>
 <style>
-    /* Application form only. Everything else comes from /assets/css/engage.css */
+    /* Application form only. All other styles are sourced from /assets/css/engage.css */
 
-    /* Long titles wrap evenly instead of running as one very wide line */
+    /* Long titles wrap evenly instead of running as a single wide line */
     .hero h1 { max-width: 880px; margin-left: auto; margin-right: auto; text-wrap: balance; }
 
-    /* Banner is the card's header image: flush with the card edges (card padding is 30px).
-       The credit line (for Commons images) sits right under it. */
+    /* Banner serves as the card header image: flush with the card edges (card padding is 30px).
+       The attribution line (for Commons images) is positioned directly below it. */
     .banner-fig { margin: -30px -30px 26px; }
     .banner-img { display: block; width: 100%; height: auto; max-height: 260px; object-fit: cover; border-radius: 16px 16px 0 0; }
     .banner-credit { padding: 6px 30px 0; font-size: 12px; color: var(--muted); text-align: right; }
     .banner-credit a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
 
-    /* Program description: readable body text, divided from the form below */
+    /* Program description: readable body text, separated from the form below */
     .form-desc { margin: 0 0 26px; padding-bottom: 24px; border-bottom: 1px solid var(--border); color: var(--ink); font-size: 15.5px; line-height: 1.7; }
     .form-desc p { margin: 0 0 12px; }
     .form-desc > :last-child { margin-bottom: 0; }
@@ -511,7 +506,7 @@ engage_header([
     .alert h3 { margin: 0 0 6px; padding: 0; border: 0; font-size: 17px; }
     .alert p { margin: 8px 0 0; font-size: 14px; }
 
-    /* Input types engage.css does not style yet */
+    /* Input types not yet styled by engage.css */
     .field input[type=url], .field input[type=time] { width: 100%; padding: 12px 14px; background: #fff; color: var(--ink); border: 1px solid var(--border); border-radius: 10px; font: inherit; font-size: 15px; }
     .field input[type=url]:focus, .field input[type=time]:focus { outline: 2px solid var(--primary); outline-offset: -1px; border-color: transparent; }
 
@@ -537,7 +532,7 @@ engage_header([
 </style>
 
 <div class="fcard">
-    <?php /* The "Click to continue" step shows only the confirmation: no banner, deadline or program description. */ ?>
+    <?php /* The "Click to continue" step renders exclusively the confirmation content: omitting the banner, deadline, and program description. */ ?>
     <?php if (!$showConfirm): ?>
         <?php if (!empty($schema['banner_image'])): ?>
             <figure class="banner-fig">
@@ -547,7 +542,7 @@ engage_header([
         <?php endif; ?>
 
         <?php if (!empty($previewSchema)): ?>
-            <div class="action-banner" role="status">🔍 Preview — this is how the form will look. Submissions are disabled here.</div>
+            <div class="action-banner" role="status">🔍 Preview — this is how the form will appear. Submissions are disabled in this mode.</div>
         <?php endif; ?>
 
         <?php if (!empty($form['deadline_at'])): ?>
@@ -561,11 +556,11 @@ engage_header([
 
     <?php if ($success): ?>
         <div class="alert ok">
-            <h3><?= $isDraftPost ? 'Draft saved!' : 'Application received!' ?></h3>
+            <h3><?= $isDraftPost ? 'Draft saved successfully!' : 'Application received!' ?></h3>
             <?= htmlspecialchars($success) ?>
             <p><?= $isDraftPost
-                ? 'We have emailed you a secure link to come back and finish this application anytime.'
-                : 'We have emailed you a confirmation. No further action is needed right now.' ?></p>
+                ? 'We have emailed you a secure link enabling you to return and complete this application at your convenience.'
+                : 'We have emailed you a confirmation receipt. No further action is required at this time.' ?></p>
         </div>
     <?php else: ?>
 
@@ -585,24 +580,24 @@ engage_header([
 
         <?php if ($showConfirm): ?>
             <div class="alert ok">
-                <h3>Confirm your email</h3>
-                Click below to finish verifying and open the application. This extra click keeps automated
-                email-safety scanners from using up your link before you get to it.
+                <h3>Confirm your email address</h3>
+                Kindly click below to complete verification and open the application. This additional step prevents automated
+                email-safety scanners from consuming your verification link before you access it.
             </div>
             <form method="POST" action="<?= htmlspecialchars(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH)) ?>">
                 <?= CSRF::getInputField() ?>
                 <input type="hidden" name="action" value="confirm_verification">
                 <input type="hidden" name="verify_token" value="<?= htmlspecialchars($pendingVerifyToken) ?>">
-                <button type="submit">Continue to application</button>
+                <button type="submit">Proceed to application</button>
             </form>
 
         <?php elseif ($showGate): ?>
             <?php if ($verifySent): ?>
                 <div class="alert ok">
-                    <h3>Check your inbox</h3>
-                    If <strong><?= htmlspecialchars($email) ?></strong> can receive email, a verification link is on its
-                    way. Open it in this browser to start your application. The link works once and expires soon.
-                    <p>Nothing yet? Check your spam folder, or request a new link below (up to 3 per hour).</p>
+                    <h3>Kindly check your inbox</h3>
+                    If <strong><?= htmlspecialchars($email) ?></strong> can receive incoming mail, a verification link is on its
+                    way. Open it within this browser session to commence your application. The link is single-use and will expire shortly.
+                    <p>Not received yet? Kindly check your spam folder, or request a new link below (limited to 3 requests per hour).</p>
                 </div>
             <?php endif; ?>
 
@@ -615,25 +610,24 @@ engage_header([
                         value="<?= htmlspecialchars($verifyName) ?>" autocomplete="name" required>
                 </div>
                 <div class="field">
-                    <label for="verify_email">Verify your email to begin <span class="req-star">*</span></label>
+                    <label for="verify_email">Email address <span class="req-star">*</span></label>
                     <input type="email" name="email" id="verify_email" value="<?= htmlspecialchars($email ?? '') ?>" required>
-                    <span class="hint">We will email you a one-time link. Once you open it, the application form unlocks,
-                        whether you want to submit now or save a draft and finish later.</span>
+                    <span class="hint">Expect a one-time verification link in your inbox shortly. Opening this link gives you access to the application form, where you can either finalise your submission or pause to save a draft for later.</span>
                 </div>
-                <button type="submit"><?= $verifySent ? 'Send a new link' : 'Send verification link' ?></button>
+                <button type="submit"><?= $verifySent ? 'Request a new link' : 'Send verification link' ?></button>
             </form>
 
         <?php else: ?>
 
             <?php if ($memberAutoVerified): ?>
                 <p class="verified-line">Signed in as <strong><?= htmlspecialchars($verifiedEmail) ?></strong> ✓
-                    No email verification needed.</p>
+                    Email verification is not required.</p>
             <?php elseif ($verifiedEmail !== ''): ?>
                 <form method="POST" class="verified-line">
                     <?= CSRF::getInputField() ?>
                     <input type="hidden" name="action" value="change_email">
                     Verified as <strong><?= htmlspecialchars($verifiedName !== '' ? "$verifiedName ($verifiedEmail)" : $verifiedEmail) ?></strong> ✓
-                    <button type="submit" formnovalidate class="linkbtn">Use a different email</button>
+                    <button type="submit" formnovalidate class="linkbtn">Use a different email address</button>
                 </form>
             <?php endif; ?>
 
@@ -645,7 +639,7 @@ engage_header([
                         <label for="applicant_email">Email Address <span class="req-star">*</span></label>
                         <input type="email" name="email" id="applicant_email" value="<?= htmlspecialchars($verifiedEmail) ?>"
                             <?= $verifiedEmail !== '' ? 'readonly' : '' ?> required>
-                        <span class="hint">We will send your secure Magic Link here to save your progress.</span>
+                        <span class="hint">We will dispatch your secure Magic Link to this address to enable progress saving.</span>
                     </div>
                 </div>
 
@@ -654,7 +648,7 @@ engage_header([
                     $label = $field['label'] ?? $name;
                     $type = $field['type'] ?? 'text';
                     $required = !empty($field['required']) ? 'required' : '';
-                    // Raw posted value (for comparisons) and its escaped twin (for printing).
+                    // Raw posted value (for comparison purposes) and its escaped counterpart (for display).
                     $rawValue = is_array($_POST[$name] ?? null) ? '' : (string) ($_POST[$name] ?? '');
                     $value = htmlspecialchars($rawValue);
                     $fieldError = $errors[$name] ?? null;
@@ -690,7 +684,7 @@ engage_header([
 
                             <?php if ($type === 'select'): ?>
                                 <select name="<?= $safeName ?>" id="<?= $safeName ?>" <?= $required ?>>
-                                    <option value="">-- Select --</option>
+                                    <option value="">-- Kindly Select --</option>
                                     <?php foreach ($field['options'] ?? [] as $opt): ?>
                                         <option value="<?= htmlspecialchars($opt) ?>" <?= $rawValue === $opt ? 'selected' : '' ?>>
                                             <?= htmlspecialchars($opt) ?></option>
@@ -744,9 +738,9 @@ engage_header([
 
                 <div class="btnrow">
                     <button type="submit" name="intent" value="draft" formnovalidate class="btn-outline"
-                        <?= !empty($previewSchema) ? 'disabled title="Disabled in preview"' : '' ?>>Save as Draft</button>
+                        <?= !empty($previewSchema) ? 'disabled title="Disabled in preview mode"' : '' ?>>Save as Draft</button>
                     <button type="submit" name="intent" value="submit"
-                        <?= !empty($previewSchema) ? 'disabled title="Disabled in preview"' : '' ?>>Submit Application</button>
+                        <?= !empty($previewSchema) ? 'disabled title="Disabled in preview mode"' : '' ?>>Submit Application</button>
                 </div>
             </form>
         <?php endif; ?>
