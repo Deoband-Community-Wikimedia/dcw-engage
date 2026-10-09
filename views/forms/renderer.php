@@ -455,6 +455,11 @@ $showConfirm = empty($success) && $pendingVerifyToken !== null && $verifiedEmail
 $showGate = empty($success) && empty($previewSchema) && $verifiedEmail === '' && !$showConfirm;
 $isDraftPost = ($_POST['intent'] ?? '') === 'draft';
 
+// The banner, deadline line and program description appear on the first screen only.
+// Both short follow-up screens omit them: "Check your inbox" (a link has just been sent)
+// and "Confirm your email" (the applicant opened the link).
+$hideIntro = $showConfirm || (!empty($verifySent) && $showGate);
+
 // Signed-in members have their name displayed in the top bar (consistent with /membership).
 $member = $loggedMember;
 
@@ -532,8 +537,8 @@ engage_header([
 </style>
 
 <div class="fcard">
-    <?php /* The "Click to continue" step renders exclusively the confirmation content: omitting the banner, deadline, and program description. */ ?>
-    <?php if (!$showConfirm): ?>
+    <?php /* "Check your inbox" and "Confirm your email" render only their own message: omitting the banner, deadline, and program description. */ ?>
+    <?php if (!$hideIntro): ?>
         <?php if (!empty($schema['banner_image'])): ?>
             <figure class="banner-fig">
                 <img class="banner-img" src="<?= htmlspecialchars(engage_resolve_image($schema['banner_image'], 1280)) ?>" alt="">
