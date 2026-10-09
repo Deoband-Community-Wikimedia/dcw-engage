@@ -32,10 +32,10 @@ class ApplicationMail {
             <p>Please verify your email address to initiate your application for <strong>$safeTitle</strong>.</p>
             <div class='btn-wrapper'><a href='$url' class='btn'>Verify Email Address</a></div>
             <p>If the button above does not work, please copy and paste the following link into your browser:<br><br><a href='$url' style='color: #106b9a; word-break: break-all;'>$url</a></p>
-            <p><strong>Note: This link is valid until $expiresTime IST</strong> and can only be used once.</p>
+            <p><strong>Note: This link is valid until $expiresTime</strong> and can only be used once.</p>
             <p style='margin-bottom:0;'>If you did not initiate this request, please ignore this email. No further action will be taken and no application will be created.</p>";
 
-        $alt = "Dear $greetName,\n\nPlease verify your email address to initiate your application for $formTitle.\n\nVerify your email here:\n$verifyUrl\n\nNote: This link is valid until $expiresTime IST and can only be used once.\n\nIf you did not initiate this request, please ignore this email. No further action will be taken.\n\nDeoband Community Wikimedia";
+        $alt = "Dear $greetName,\n\nPlease verify your email address to initiate your application for $formTitle.\n\nVerify your email here:\n$verifyUrl\n\nNote: This link is valid until $expiresTime and can only be used once.\n\nIf you did not initiate this request, please ignore this email. No further action will be taken.\n\nDeoband Community Wikimedia";
 
         $mail = [
             'to' => $email, 'subject' => 'Verify your email address to begin application',
