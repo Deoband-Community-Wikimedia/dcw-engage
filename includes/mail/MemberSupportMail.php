@@ -12,6 +12,8 @@ class MemberSupportMail {
      *        'status' = the status changed (suggestion progress, or a conversation was resolved)
      */
     public static function update($email, $memberName, $trackingId, $kind = 'reply') {
+        // Drop any age typed after the name ("Name (20)"); empty falls back to "member".
+        $memberName = CoreMail::cleanName($memberName);
         $name = CoreMail::e($memberName !== '' ? $memberName : 'member');
         $tid  = CoreMail::e($trackingId);
         $url  = CoreMail::appUrl() . '/member/dashboard';
@@ -37,7 +39,7 @@ class MemberSupportMail {
             'to' => $email, 'to_name' => $memberName,
             'subject' => $subject,
             'html' => $inner,
-            'alt' => "Hello $memberName,\n\n$alt\n\nFor your privacy we do not put the message in this email. "
+            'alt' => "Hello " . ($memberName !== '' ? $memberName : 'member') . ",\n\n$alt\n\nFor your privacy we do not put the message in this email. "
                    . "Sign in with your Member ID to read it:\n$url",
             'dev_result' => false, 'dev_log' => "Member support email to $email: $subject ($trackingId)",
         ]);
