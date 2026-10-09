@@ -44,7 +44,7 @@ class ApplicationModel {
         if (!FormModel::isOpen($form)) {
             throw new InvalidArgumentException(
                 !empty($form['deadline_at']) && (int) $form['is_active']
-                    ? 'Applications for this form closed on ' . date('j M Y, g:i A', strtotime($form['deadline_at'])) . '.'
+                    ? 'Applications for this form closed on ' . FormModel::formatIst($form['deadline_at']) . '.'
                     : 'This form is no longer accepting applications.'
             );
         }
