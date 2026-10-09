@@ -10,17 +10,21 @@ require_once __DIR__ . '/../../models/ReimbursementSettingsModel.php';
 require_once __DIR__ . '/../../models/ReimbursementModel.php';
 require_once __DIR__ . '/../../models/MemberTicketModel.php';
 require_once __DIR__ . '/../../models/TechIssueModel.php';
-require_once __DIR__ . '/../../models/MemberCertificateModel.php'; // NEW
+require_once __DIR__ . '/../../models/MemberCertificateModel.php';
 require_once __DIR__ . '/../../includes/member_session.php';
 require_once __DIR__ . '/../../includes/member_requests.php';
 
 /**
  * DCW Engage - member dashboard (/member/dashboard).
- * Signed-in members only. Shows membership status, what they can request, and their own requests.
- * Everything is read with the member's own email, so nobody sees anyone else's requests.
+ * Signed-in members only. Shows membership status, certificates, what they can request,
+ * and their own requests. Everything is read with the member's own email or Member ID,
+ * so nobody sees anyone else's data.
  *
  * One Member ID can cover several memberships (the DCW Generic Community plus any clubs).
  * They are all listed under the ID the member signed in with.
+ *
+ * Shared look comes from /assets/css/engage.css. The small <style> block below only adds
+ * what the dashboard needs on top of it, scoped under .dash.
  */
 MemberSession::requireLogin();
 $member = MemberSession::current();
@@ -28,6 +32,13 @@ $member = MemberSession::current();
 $email        = strtolower((string) ($member['email'] ?? ''));
 $fullName     = trim((string) ($member['full_name'] ?? ''));
 $firstName    = $fullName !== '' ? explode(' ', $fullName)[0] : (string) $member['member_id'];
+
+// Initials for the membership card avatar.
+$initials = '';
+foreach (array_slice(preg_split('/\s+/', $fullName) ?: [], 0, 2) as $w) {
+    if ($w !== '') $initials .= mb_strtoupper(mb_substr($w, 0, 1));
+}
+if ($initials === '') $initials = 'M';
 
 // ---- Membership status (stored UTC, shown in IST) ----------------------------------------------
 $utc = new DateTimeZone('UTC');
@@ -50,9 +61,9 @@ function dash_member_state(array $m, DateTimeZone $utc, DateTimeZone $ist): arra
                 'renew' => true, 'active' => true];
     }
     if (($m['status'] ?? '') === 'active') {
-        return ['tone' => '#97161b', 'label' => 'Expired', 'line' => 'Your membership ended on ' . $text, 'renew' => true, 'active' => false];
+        return ['tone' => '#97161b', 'label' => 'Expired', 'line' => 'Ended on ' . $text, 'renew' => true, 'active' => false];
     }
-    return ['tone' => '#97161b', 'label' => 'Not active', 'line' => 'Your membership is not active right now.', 'renew' => true, 'active' => false];
+    return ['tone' => '#97161b', 'label' => 'Not active', 'line' => 'Not active right now', 'renew' => true, 'active' => false];
 }
 
 // Every membership under this Member ID. Falls back to the signed-in row if the lookup fails.
@@ -132,24 +143,51 @@ $ticketsWaiting = array_values(array_filter($tickets,
 $techWaiting = [];
 try { $techWaiting = (new TechIssueModel())->awaitingReporter('member', (string) $member['member_id']); } catch (Throwable $e) { /* table not created yet */ }
 
-// ---- NEW: certificates issued on certificates.dcwwiki.org, matched by the member's verified email
+// ---- Certificates issued on certificates.dcwwiki.org, matched by the member's verified email -----
 // Read from the view member_certificates_v. If the certificates database is unreachable or
-// includes/certs_db.php is missing, the panel just shows the empty note; the dashboard never breaks.
+// includes/certs_db.php is missing, the panel just shows the empty state; the dashboard never breaks.
 $certs = [];
 try { $certs = (new MemberCertificateModel())->listForMember($email); } catch (Throwable $e) { error_log('Engage certificates lookup failed: ' . $e->getMessage()); }
 $certBase = 'https://certificates.dcwwiki.org';
 
+// ---- One combined "needs your attention" list ---------------------------------------------------
+$alerts = [];
+foreach ($needsAction as $r) {
+    $alerts[] = ['who' => $r['type'], 'text' => $r['title'] . ': ' . strtolower($r['label']),
+                 'href' => member_request_url($r['tracking']), 'cta' => 'Open request'];
+}
+foreach ($ticketsWaiting as $t) {
+    $alerts[] = ['who' => MemberTicketModel::SUPPORT_LABEL, 'text' => 'New reply on “' . $t['subject'] . '”',
+                 'href' => '/member/talk/ticket?id=' . rawurlencode($t['tracking_id']), 'cta' => 'Read reply'];
+}
+foreach ($techWaiting as $t) {
+    $alerts[] = ['who' => 'Technical team', 'text' => 'New reply on “' . $t['title'] . '”',
+                 'href' => '/member/report-problem?id=' . rawurlencode($t['tracking_id']), 'cta' => 'Read reply'];
+}
+
 $icons = [
-    'doc'    => '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>',
-    'wifi'   => '<path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/>',
-    'card'   => '<rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/>',
-    'search' => '<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>',
-    'people' => '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
-    'chat'   => '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
-    'alert'  => '<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>',
+    'doc'      => '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>',
+    'wifi'     => '<path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/>',
+    'card'     => '<rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/>',
+    'search'   => '<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>',
+    'people'   => '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+    'chat'     => '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+    'alert'    => '<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>',
+    // New, used by the certificates and attention blocks
+    'award'    => '<circle cx="12" cy="8" r="7"/><polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88"/>',
+    'download' => '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',
+    'link'     => '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+    'verified' => '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>',
+    'bell'     => '<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>',
 ];
 
-/** One tile. $href = null renders a disabled tile with a short reason in the pill. */
+/** Small inline icon for the new dashboard blocks. */
+function dash_svg(array $icons, string $key): string
+{
+    return '<svg class="i" viewBox="0 0 24 24" aria-hidden="true">' . ($icons[$key] ?? '') . '</svg>';
+}
+
+/** One tile (engage.css .tile). $href = null renders a disabled tile with a short reason in the pill. */
 function dash_tile(array $icons, string $tone, string $icon, string $title, string $desc, ?string $href, string $pill = ''): void
 {
     $tag = $href === null ? 'div' : 'a';
@@ -171,7 +209,7 @@ engage_header([
     'title'   => 'My dashboard',
     'heading' => 'Hello, ' . $firstName,
     'kicker'  => 'Member ID ' . $member['member_id'],
-    'lead'    => 'Your membership, your requests, and everything open to you right now.',
+    'lead'    => 'Your membership, certificates and support, all in one place.',
     'member'  => $member,
     'tools'   => '<a class="chip-btn" href="/member/logout">Sign out</a>',
     'wide'    => true,
@@ -179,78 +217,218 @@ engage_header([
 ]);
 ?>
 <style>
-    /* Member dashboard only. Everything else comes from /assets/css/engage.css */
-    .mstrip + .mstrip { margin-top: 14px; }
-    .mstrip .which { margin: 0 0 4px; font-size: 13px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+    /* Member dashboard only. Colors, radii and fonts come from the tokens in /assets/css/engage.css. */
+    .dash svg.i { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+    /* Buttons (pills, same family as .btn-primary / .btn-ghost) */
+    .d-btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 9px 18px; border-radius: 999px; border: 1px solid transparent; font: inherit; font-size: 14px; font-weight: 700; line-height: 1.2; text-decoration: none; cursor: pointer; transition: transform .15s, box-shadow .15s, background .15s; }
+    .d-btn.fill { color: #fff; background: linear-gradient(135deg, var(--primary-dark), var(--primary)); box-shadow: 0 5px 14px rgba(46,101,153,.3); }
+    .d-btn.fill:hover { transform: translateY(-2px); box-shadow: 0 9px 20px rgba(46,101,153,.38); }
+    .d-btn.line { color: var(--primary); background: #fff; border-color: var(--primary); }
+    .d-btn.line:hover { background: var(--primary-tint); }
+    .d-btn.amber { color: #fff; background: #92400e; padding: 8px 16px; }
+    .d-btn.amber:hover { background: #78350f; }
+
+    /* ---- Membership ID card: the logo's three-color stripe on top, like the site footer ---- */
+    .d-cards { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); margin: 0 0 16px; }
+    .d-id { --tone: var(--leaf-dark); position: relative; overflow: hidden; padding: 28px 24px 20px; background: var(--card); border: 1px solid var(--border); border-radius: 18px; box-shadow: 0 16px 34px rgba(15,23,42,.12); }
+    .d-id::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 6px; background: linear-gradient(90deg, var(--primary) 0 40%, var(--accent) 40% 70%, var(--leaf) 70% 100%); }
+    .d-id-top { display: flex; align-items: center; gap: 16px; }
+    .d-avatar { width: 58px; height: 58px; flex: none; border-radius: 50%; display: grid; place-items: center; font-size: 20px; font-weight: 800; color: #fff; background: linear-gradient(135deg, var(--primary-dark), var(--primary)); box-shadow: 0 0 0 3px #fff, 0 0 0 5px var(--tone); }
+    .d-id-who { flex: 1; min-width: 0; }
+    .d-id-who h2 { margin: 0; font-size: 20px; font-weight: 800; letter-spacing: -.02em; line-height: 1.25; overflow-wrap: anywhere; }
+    .d-id-who p { margin: 2px 0 0; color: var(--muted); font-size: 14px; font-weight: 600; }
+    .d-id-foot { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px 30px; margin-top: 20px; padding-top: 16px; border-top: 1px dashed var(--border); }
+    .d-id-foot .l { margin: 0; font-size: 12.5px; color: var(--muted); }
+    .d-id-foot .v { margin: 2px 0 0; font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: .02em; }
+    .d-id-foot .btn-pill { margin-left: auto; }
+
+    /* Quick links under the card */
+    .d-glance { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 28px; }
+    .d-chip { --tone: var(--primary); display: inline-flex; align-items: center; gap: 8px; padding: 8px 16px; border-radius: 999px; background: var(--card); border: 1px solid var(--border); color: var(--ink); font-size: 14px; font-weight: 600; text-decoration: none; transition: border-color .15s, background .15s; }
+    .d-chip svg.i { color: var(--tone); }
+    .d-chip b { color: var(--tone); font-size: 16px; font-weight: 800; }
+    .d-chip:hover { border-color: var(--tone); background: color-mix(in srgb, var(--tone) 6%, #fff); }
+
+    /* Needs your attention (same amber family as .action-banner) */
+    .d-attn { margin: 0 0 30px; background: #fffbeb; border: 1px solid #fcd34d; border-radius: 14px; overflow: hidden; }
+    .d-attn-head { display: flex; align-items: center; gap: 10px; padding: 13px 18px; font-weight: 800; color: #78350f; }
+    .d-attn-head .num { min-width: 24px; padding: 1px 8px; border-radius: 999px; background: #92400e; color: #fff; font-size: 13px; text-align: center; }
+    .d-attn-item { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; padding: 12px 18px; border-top: 1px solid #fcd34d; color: #78350f; font-size: 14.5px; }
+    .d-attn-item p { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+    .d-attn-item strong { margin-right: 6px; }
+
+    /* ---- Certificates ---- */
+    .d-certs { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); }
+    .d-cert { position: relative; display: flex; flex-direction: column; gap: 14px; overflow: hidden; padding: 22px 20px 18px; background: var(--card); border: 1px solid var(--border); border-radius: 16px; box-shadow: 0 6px 18px rgba(15,23,42,.06); }
+    .d-cert::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 5px; background: var(--leaf); }
+    .d-cert-top { display: flex; gap: 14px; align-items: flex-start; }
+    .d-seal { width: 44px; height: 44px; flex: none; border-radius: 50%; display: grid; place-items: center; color: var(--leaf-dark); background: var(--leaf-tint); }
+    .d-seal svg.i { width: 22px; height: 22px; }
+    .d-cert h3 { margin: 0; font-size: 17px; font-weight: 800; line-height: 1.3; overflow-wrap: anywhere; }
+    .d-cert .sub { margin: 3px 0 0; font-size: 13.5px; color: var(--muted); }
+    .d-idrow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+    .d-code { font-size: 12.5px; background: #eef3f8; padding: 2px 8px; border-radius: 6px; color: var(--ink); overflow-wrap: anywhere; }
+    .d-copy { padding: 0 9px; font: inherit; font-size: 12px; font-weight: 600; color: var(--primary); background: none; border: 1px solid var(--border); border-radius: 999px; cursor: pointer; }
+    .d-copy:hover { background: var(--primary-tint); }
+    .d-acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; }
+
+    /* Requests and conversations side by side on wide screens */
+    .d-two { display: grid; gap: 0 30px; }
+    @media (min-width: 1000px) { .d-two { grid-template-columns: 1.25fr 1fr; align-items: start; } }
+    .d-more { margin: 10px 0 0; text-align: center; color: var(--muted); font-size: 13px; }
+    .d-empty { padding: 24px 22px; text-align: center; color: var(--muted); background: var(--card); border: 1px dashed #c3d0dc; border-radius: 14px; font-size: 14.5px; }
+    .d-empty strong { display: block; margin-bottom: 4px; color: var(--ink); font-size: 16px; }
+    .d-empty p { margin: 0 auto; max-width: 52ch; }
+    .d-empty .d-btn { margin-top: 14px; }
+
+    @media (max-width: 520px) {
+        .d-id-top { flex-wrap: wrap; }
+        .d-id-foot .btn-pill { margin-left: 0; width: 100%; text-align: center; }
+        .d-acts .d-btn { flex: 1 1 auto; }
+    }
 </style>
+
+<div class="dash">
+
+    <!-- Membership card(s) -->
+    <div class="d-cards">
         <?php foreach ($strips as $s): ?>
-            <section class="mstrip" style="--tone: <?= $s['tone'] ?>;">
-                <div>
-                    <?php if ($s['name'] !== ''): ?><p class="which"><?= htmlspecialchars($s['name']) ?></p><?php endif; ?>
-                    <span class="pill" style="--tone: <?= $s['tone'] ?>;"><?= htmlspecialchars($s['label']) ?></span>
-                    <h2><?= htmlspecialchars($s['line']) ?></h2>
-                    <p><?= htmlspecialchars((string) $member['member_id']) ?></p>
+            <article class="d-id" style="--tone: <?= htmlspecialchars($s['tone']) ?>;">
+                <div class="d-id-top">
+                    <span class="d-avatar" aria-hidden="true"><?= htmlspecialchars($initials) ?></span>
+                    <div class="d-id-who">
+                        <h2><?= htmlspecialchars($fullName !== '' ? $fullName : (string) $member['member_id']) ?></h2>
+                        <p><?= htmlspecialchars($s['name'] !== '' ? $s['name'] : 'DCW membership') ?></p>
+                    </div>
+                    <span class="pill" style="--tone: <?= htmlspecialchars($s['tone']) ?>;"><?= htmlspecialchars($s['label']) ?></span>
                 </div>
-                <?php if ($s['renew']): ?>
-                    <a class="btn-pill" href="/membership">Renew membership</a>
-                <?php endif; ?>
-            </section>
+                <div class="d-id-foot">
+                    <div>
+                        <p class="l">Member ID</p>
+                        <p class="v"><?= htmlspecialchars((string) $member['member_id']) ?></p>
+                    </div>
+                    <div>
+                        <p class="l">Validity</p>
+                        <p class="v"><?= htmlspecialchars($s['line']) ?></p>
+                    </div>
+                    <?php if ($s['renew']): ?>
+                        <a class="btn-pill" href="/membership">Renew membership</a>
+                    <?php endif; ?>
+                </div>
+            </article>
         <?php endforeach; ?>
+    </div>
 
-        <?php foreach ($needsAction as $r): ?>
-            <div class="action-banner" role="status">
-                <strong><?= htmlspecialchars($r['type']) ?>:</strong>
-                <span><?= htmlspecialchars($r['title']) ?> &ndash; <?= htmlspecialchars(strtolower($r['label'])) ?>.</span>
-                <a href="<?= htmlspecialchars(member_request_url($r['tracking'])) ?>">Open request</a>
-            </div>
-        <?php endforeach; ?>
+    <!-- Quick links -->
+    <nav class="d-glance" aria-label="Jump to a section">
+        <a class="d-chip" style="--tone: var(--leaf-dark);" href="#certificates"><?= dash_svg($icons, 'award') ?><b><?= count($certs) ?></b> certificate<?= count($certs) === 1 ? '' : 's' ?></a>
+        <a class="d-chip" style="--tone: var(--primary);" href="#requests"><?= dash_svg($icons, 'doc') ?><b><?= (int) $totalRequests ?></b> request<?= $totalRequests === 1 ? '' : 's' ?></a>
+        <a class="d-chip" style="--tone: var(--accent);" href="#conversations"><?= dash_svg($icons, 'chat') ?><b><?= count($tickets) ?></b> conversation<?= count($tickets) === 1 ? '' : 's' ?></a>
+    </nav>
 
-        <?php foreach ($ticketsWaiting as $t): ?>
-            <div class="action-banner" role="status">
-                <strong><?= htmlspecialchars(MemberTicketModel::SUPPORT_LABEL) ?>:</strong>
-                <span>New reply on &ldquo;<?= htmlspecialchars($t['subject']) ?>&rdquo;.</span>
-                <a href="/member/talk/ticket?id=<?= htmlspecialchars(rawurlencode($t['tracking_id'])) ?>">Read it</a>
+    <!-- Needs your attention -->
+    <?php if (!empty($alerts)): ?>
+        <section class="d-attn" role="status" aria-label="Needs your attention">
+            <div class="d-attn-head">
+                <?= dash_svg($icons, 'bell') ?>
+                <span>Needs your attention</span>
+                <span class="num"><?= count($alerts) ?></span>
             </div>
-        <?php endforeach; ?>
-
-        <?php foreach ($techWaiting as $t): ?>
-            <div class="action-banner" role="status">
-                <strong>Technical team:</strong>
-                <span>New reply on &ldquo;<?= htmlspecialchars($t['title']) ?>&rdquo;.</span>
-                <a href="/member/report-problem?id=<?= htmlspecialchars(rawurlencode($t['tracking_id'])) ?>">Read it</a>
-            </div>
-        <?php endforeach; ?>
-
-        <section class="panel">
-            <div class="panel-head">
-                <h2>Get support</h2>
-                <p>Help with a data pack, claim back event expenses, talk to <?= htmlspecialchars(MemberTicketModel::SUPPORT_LABEL) ?>, or report a technical problem.</p>
-            </div>
-            <div class="tiles">
-                <?php
-                $l = $lock($internetOpen);
-                dash_tile($icons, '#0f766e', 'wifi', 'Internet support', 'Help paying for a data pack so you can keep contributing.',
-                    $l === '' ? '/member/support?type=internet' : null, $l);
-                $l = $lock($reimbursementOpen);
-                dash_tile($icons, '#0f766e', 'card', 'Reimbursement', 'Claim back expenses for a DCW-aligned event.',
-                    $l === '' ? '/member/support?type=reimbursement' : null, $l);
-                // Open to every signed-in member, including expired ones: someone may need to say why.
-                dash_tile($icons, '#106b9a', 'chat', 'Talk to ' . MemberTicketModel::SUPPORT_LABEL,
-                    'Ask a question, make a complaint, or share a suggestion.', '/member/talk');
-                // Also open to every signed-in member, including expired ones.
-                dash_tile($icons, '#0e7490', 'alert', 'Report a problem',
-                    'Something not working on this site? Tell the technical team.', '/member/report-problem');
-                ?>
-            </div>
+            <?php foreach ($alerts as $a): ?>
+                <div class="d-attn-item">
+                    <p><strong><?= htmlspecialchars((string) $a['who']) ?>:</strong><?= htmlspecialchars((string) $a['text']) ?></p>
+                    <a class="d-btn amber" href="<?= htmlspecialchars((string) $a['href']) ?>"><?= htmlspecialchars((string) $a['cta']) ?></a>
+                </div>
+            <?php endforeach; ?>
         </section>
+    <?php endif; ?>
 
-        <section class="panel">
+    <!-- My certificates -->
+    <section class="panel" id="certificates">
+        <div class="panel-head">
+            <h2>My certificates</h2>
+            <p>Issued to you for DCW events. Download the PDF, or copy a link anyone can use to verify it.</p>
+        </div>
+        <?php if (empty($certs)): ?>
+            <div class="d-empty">
+                <strong>No certificates yet</strong>
+                <p>Certificates appear here after an event team issues them. We look for <?= htmlspecialchars($email) ?>. If you attended an event and don’t see yours, tell DCW Support which email you used.</p>
+                <a class="d-btn line" href="/member/talk">Ask DCW Support</a>
+            </div>
+        <?php else: ?>
+            <div class="d-certs">
+                <?php foreach ($certs as $c): ?>
+                    <?php
+                    // Per-row base URL if the view provides one (multi-organisation), else the DCW portal.
+                    $base      = rtrim((string) (!empty($c['base_url']) ? $c['base_url'] : $certBase), '/');
+                    $cid       = rawurlencode((string) $c['certificate_id']);
+                    $verifyUrl = $base . '/verify/' . $cid;
+                    ?>
+                    <article class="d-cert">
+                        <div class="d-cert-top">
+                            <span class="d-seal"><?= dash_svg($icons, 'award') ?></span>
+                            <div>
+                                <h3><?= htmlspecialchars((string) $c['event_name']) ?></h3>
+                                <p class="sub">
+                                    <?php if (!empty($c['org_name'])): ?><?= htmlspecialchars((string) $c['org_name']) ?>, <?php endif; ?>
+                                    <?= htmlspecialchars((string) ($c['role_name'] ?: 'Participant')) ?>, issued <?= htmlspecialchars(dash_date($c['issued_at'])) ?>
+                                </p>
+                            </div>
+                        </div>
+                        <div class="d-idrow">
+                            <span>Certificate ID</span>
+                            <code class="d-code"><?= htmlspecialchars((string) $c['certificate_id']) ?></code>
+                            <button type="button" class="d-copy" data-copy="<?= htmlspecialchars((string) $c['certificate_id']) ?>"><span>Copy</span></button>
+                        </div>
+                        <div class="d-acts">
+                            <a class="d-btn fill" href="<?= htmlspecialchars($base) ?>/download.php?id=<?= $cid ?>"><?= dash_svg($icons, 'download') ?>Download</a>
+                            <a class="d-btn line" href="<?= htmlspecialchars($verifyUrl) ?>" target="_blank" rel="noopener"><?= dash_svg($icons, 'verified') ?>Verify</a>
+                            <button type="button" class="d-btn line" data-copy="<?= htmlspecialchars($verifyUrl) ?>"><?= dash_svg($icons, 'link') ?><span>Copy link</span></button>
+                        </div>
+                    </article>
+                <?php endforeach; ?>
+            </div>
+        <?php endif; ?>
+    </section>
+
+    <!-- Get support -->
+    <section class="panel" id="support">
+        <div class="panel-head">
+            <h2>Get support</h2>
+            <p>Help with a data pack, claim back event expenses, talk to <?= htmlspecialchars(MemberTicketModel::SUPPORT_LABEL) ?>, or report a technical problem.</p>
+        </div>
+        <div class="tiles">
+            <?php
+            $l = $lock($internetOpen);
+            dash_tile($icons, '#0f766e', 'wifi', 'Internet support', 'Help paying for a data pack so you can keep contributing.',
+                $l === '' ? '/member/support?type=internet' : null, $l);
+            $l = $lock($reimbursementOpen);
+            dash_tile($icons, '#0f766e', 'card', 'Reimbursement', 'Claim back expenses for a DCW-aligned event.',
+                $l === '' ? '/member/support?type=reimbursement' : null, $l);
+            // Open to every signed-in member, including expired ones: someone may need to say why.
+            dash_tile($icons, '#106b9a', 'chat', 'Talk to ' . MemberTicketModel::SUPPORT_LABEL,
+                'Ask a question, make a complaint, or share a suggestion.', '/member/talk');
+            // Also open to every signed-in member, including expired ones.
+            dash_tile($icons, '#0e7490', 'alert', 'Report a problem',
+                'Something not working on this site? Tell the technical team.', '/member/report-problem');
+            ?>
+        </div>
+    </section>
+
+    <!-- Requests and conversations -->
+    <div class="d-two">
+        <section class="panel" id="requests">
             <div class="panel-head">
                 <h2>My requests</h2>
-                <p>Your internet support and reimbursement requests. Open one to reply to a reviewer or upload a receipt.</p>
+                <p>Open a request to reply to a reviewer or upload a receipt.</p>
             </div>
             <?php if (empty($requests)): ?>
-                <div class="empty-note">You have not made any requests yet. Pick one above to get started.</div>
+                <div class="d-empty">
+                    <strong>No requests yet</strong>
+                    <p>Internet support and reimbursement requests you make are tracked here, with every status update.</p>
+                    <a class="d-btn line" href="#support">See support options</a>
+                </div>
             <?php else: ?>
                 <div class="reqs">
                     <?php foreach ($requests as $r): ?>
@@ -278,75 +456,78 @@ engage_header([
                     <?php endforeach; ?>
                 </div>
                 <?php if ($totalRequests > count($requests)): ?>
-                    <p class="meta" style="text-align:center; color:var(--muted); font-size:13px;">Showing your latest <?= count($requests) ?> of <?= $totalRequests ?> requests.</p>
+                    <p class="d-more">Showing your latest <?= count($requests) ?> of <?= $totalRequests ?> requests.</p>
                 <?php endif; ?>
             <?php endif; ?>
         </section>
 
-        <?php /* NEW: My certificates (from certificates.dcwwiki.org via the member_certificates_v view) */ ?>
-        <section class="panel">
+        <section class="panel" id="conversations">
             <div class="panel-head">
-                <h2>My certificates</h2>
-                <p>Certificates issued to you for DCW events. Download them or share the verification link.</p>
+                <h2>My conversations</h2>
+                <p>Questions, complaints and suggestions you have sent to <?= htmlspecialchars(MemberTicketModel::SUPPORT_LABEL) ?>.</p>
             </div>
-            <?php if (empty($certs)): ?>
-                <div class="empty-note">No certificates have been issued to <?= htmlspecialchars($email) ?> yet.</div>
+            <?php if (empty($tickets)): ?>
+                <div class="d-empty">
+                    <strong>No conversations yet</strong>
+                    <p>Have a question or an idea? Start a conversation and replies will show up here.</p>
+                    <a class="d-btn line" href="/member/talk">Start a conversation</a>
+                </div>
             <?php else: ?>
                 <div class="reqs">
-                    <?php foreach ($certs as $c): ?>
-                        <?php
-                        // Per-row base URL if the view provides one (multi-organisation), else the DCW portal.
-                        $base = rtrim((string) (!empty($c['base_url']) ? $c['base_url'] : $certBase), '/');
-                        $cid  = rawurlencode((string) $c['certificate_id']);
-                        ?>
-                        <div class="req" style="--tone: #0f766e;">
-                            <span class="tick"><svg viewBox="0 0 24 24" aria-hidden="true"><?= $icons['doc'] ?></svg></span>
+                    <?php foreach (array_slice($tickets, 0, 8) as $t): ?>
+                        <div class="req<?= ($t['last_sender'] === 'staff' && !MemberTicketModel::isClosed((string) $t['status'])) ? ' act' : '' ?>" style="--tone: #106b9a;">
+                            <span class="tick"><svg viewBox="0 0 24 24" aria-hidden="true"><?= $icons['chat'] ?></svg></span>
                             <div>
-                                <h3><?= htmlspecialchars((string) $c['event_name']) ?></h3>
-                                <p class="meta">
-                                    <?php if (!empty($c['org_name'])): ?><?= htmlspecialchars((string) $c['org_name']) ?> &middot; <?php endif; ?>
-                                    <?= htmlspecialchars((string) ($c['role_name'] ?: 'Participant')) ?>
-                                    &middot; <?= htmlspecialchars(dash_date($c['issued_at'])) ?>
-                                    &middot; <code><?= htmlspecialchars((string) $c['certificate_id']) ?></code><button type="button" class="copy" data-copy="<?= htmlspecialchars((string) $c['certificate_id']) ?>">Copy</button>
-                                </p>
+                                <h3><?= htmlspecialchars($t['subject']) ?></h3>
+                                <p class="meta"><?= htmlspecialchars(MemberTicketModel::LABELS[$t['type']] ?? '') ?> &middot; <?= htmlspecialchars(dash_date($t['updated_at'])) ?> &middot; <code><?= htmlspecialchars($t['tracking_id']) ?></code></p>
                             </div>
                             <div class="side">
-                                <a href="<?= htmlspecialchars($base) ?>/download.php?id=<?= $cid ?>">Download &darr;</a>
-                                <a href="<?= htmlspecialchars($base) ?>/verify/<?= $cid ?>" target="_blank" rel="noopener">Verify &rarr;</a>
+                                <span class="pill"><?= htmlspecialchars($t['status']) ?></span>
+                                <a href="/member/talk/ticket?id=<?= htmlspecialchars(rawurlencode($t['tracking_id'])) ?>">Open &rarr;</a>
                             </div>
                         </div>
                     <?php endforeach; ?>
                 </div>
+                <?php if (count($tickets) > 8): ?>
+                    <p class="d-more">Showing your latest 8 of <?= count($tickets) ?> conversations.</p>
+                <?php endif; ?>
             <?php endif; ?>
         </section>
+    </div>
 
-        <section class="panel">
-            <div class="panel-head">
-                <h2>More from DCW</h2>
-                <p>Open programs and shortcuts.</p>
-            </div>
-            <div class="tiles">
-                <?php
-                dash_tile($icons, '#106b9a', 'search', 'Track an application', 'Check the status of a public application (ID starts with DCW-).', '/track');
-                dash_tile($icons, '#97161b', 'people', $memberActive ? 'Membership' : 'Renew membership', 'Join a club, or renew your membership.', '/membership');
-                foreach ($programs as $p) {
-                    $title = $p['title'] ?: ucwords(str_replace(['-', '_'], ' ', $p['form_type']));
-                    $desc = !empty($p['description']) ? MiniWikiText::stripToPlainText($p['description']) : 'Open for applications now.';
-                    dash_tile($icons, '#106b9a', 'doc', $title, mb_strimwidth($desc, 0, 90, '…'), '/' . $p['form_type'], 'Open');
-                }
-                ?>
-            </div>
-        </section>
+    <!-- More from DCW -->
+    <section class="panel">
+        <div class="panel-head">
+            <h2>More from DCW</h2>
+            <p>Open programs and shortcuts.</p>
+        </div>
+        <div class="tiles">
+            <?php
+            dash_tile($icons, '#106b9a', 'search', 'Track an application', 'Check the status of a public application (ID starts with DCW-).', '/track');
+            dash_tile($icons, '#97161b', 'people', $memberActive ? 'Membership' : 'Renew membership', 'Join a club, or renew your membership.', '/membership');
+            foreach ($programs as $p) {
+                $title = $p['title'] ?: ucwords(str_replace(['-', '_'], ' ', $p['form_type']));
+                $desc = !empty($p['description']) ? MiniWikiText::stripToPlainText($p['description']) : 'Open for applications now.';
+                dash_tile($icons, '#106b9a', 'doc', $title, mb_strimwidth($desc, 0, 90, '…'), '/' . $p['form_type'], 'Open');
+            }
+            ?>
+        </div>
+    </section>
 
-    <script>
-        document.querySelectorAll('.copy').forEach(function (b) {
-            b.addEventListener('click', function () {
-                if (!navigator.clipboard) return;
-                navigator.clipboard.writeText(b.dataset.copy).then(function () {
-                    b.textContent = 'Copied';
-                    setTimeout(function () { b.textContent = 'Copy'; }, 1500);
-                });
+</div>
+
+<script>
+    // One handler for every copy button (tracking IDs, certificate IDs, verification links).
+    document.querySelectorAll('[data-copy]').forEach(function (b) {
+        b.addEventListener('click', function () {
+            if (!navigator.clipboard) return;
+            var label = b.querySelector('span') || b;
+            var original = label.textContent;
+            navigator.clipboard.writeText(b.dataset.copy).then(function () {
+                label.textContent = 'Copied';
+                setTimeout(function () { label.textContent = original; }, 1500);
             });
         });
-    </script>
+    });
+</script>
 <?php engage_footer(); ?>
