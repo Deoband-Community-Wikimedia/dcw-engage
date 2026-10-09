@@ -7,6 +7,7 @@
  */
 
 require_once __DIR__ . '/MemberModel.php';
+require_once __DIR__ . '/FormModel.php';   // FormModel::isOpen(): the one open/closed rule (active + deadline)
 
 class ApplicationModel {
     private $db;
@@ -25,6 +26,28 @@ class ApplicationModel {
             'email' => $email
         ]);
         return $stmt->fetch();
+    }
+
+    /**
+     * Server-side guard: refuse the save when the form is closed (switched off
+     * or past its deadline). Throws InvalidArgumentException with a message
+     * that is safe to show to the applicant.
+     */
+    private function assertFormOpen($formId) {
+        $stmt = $this->db->prepare("SELECT is_active, deadline_at FROM forms WHERE id = :id");
+        $stmt->execute(['id' => $formId]);
+        $form = $stmt->fetch();
+
+        if (!$form) {
+            throw new InvalidArgumentException('This form could not be found.');
+        }
+        if (!FormModel::isOpen($form)) {
+            throw new InvalidArgumentException(
+                !empty($form['deadline_at']) && (int) $form['is_active']
+                    ? 'Applications for this form closed on ' . date('j M Y, g:i A', strtotime($form['deadline_at'])) . '.'
+                    : 'This form is no longer accepting applications.'
+            );
+        }
     }
 
     /**
@@ -54,6 +77,17 @@ class ApplicationModel {
      * Save or update an application
      */
     public function saveApplication($formId, $email, $applicantName, $status, $formDataJson, $appId = null) {
+        // Deadline / closed-form guard. A closed form takes no NEW applications
+        // and no final submissions (a new application, or any save that is not
+        // a Draft, is refused). Saving an existing draft as a draft still works.
+        //
+        // Looser option: apply this only to brand-new applications, so existing
+        // ones stay fully editable after the deadline:  if (!$appId) { ... }
+        // Strictest option: call it unconditionally.
+        if (!$appId || $status !== 'Draft') {
+            $this->assertFormOpen($formId);
+        }
+
         // Renewals must carry a valid Membership ID before they can be submitted.
         $this->assertValidRenewal($formId, $email, $status, $formDataJson);
 
@@ -183,10 +217,12 @@ class ApplicationModel {
 
     /**
      * Get Application by Magic Link Token
+     * (f.deadline_at is included so the resume page can show a "closed" notice
+     * with FormModel::isOpen($row) instead of an editable form.)
      */
     public function getApplicationByToken($token) {
         $stmt = $this->db->prepare("
-            SELECT a.*, f.schema_json, f.form_type, f.is_active, f.notify_emails, m.expires_at
+            SELECT a.*, f.schema_json, f.form_type, f.is_active, f.deadline_at, f.notify_emails, m.expires_at
             FROM magic_links m
             JOIN applications a ON m.application_id = a.id
             JOIN forms f ON a.form_id = f.id

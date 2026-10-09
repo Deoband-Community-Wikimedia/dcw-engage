@@ -39,9 +39,11 @@ if (!FormModel::userCanOpen($form)) {
     die("Form not found.");
 }
 
-// Anyone who can open this form may close and re-open it. Deleting stays with
-// organizers and owners (owners only for membership forms); editing the schema
-// also goes to the chapter's coordinator for membership forms.
+// Anyone who can open this form may close and re-open it, and set, extend or
+// remove its deadline (extending a deadline re-opens a form that closed by
+// deadline, so it carries the same permission as re-opening). Deleting stays
+// with organizers and owners (owners only for membership forms); editing the
+// schema also goes to the chapter's coordinator for membership forms.
 $canManageForm = FormModel::userCanDelete($form);
 $canEditSchema = FormModel::userCanEdit($form);
 
@@ -86,6 +88,14 @@ function buildFilterQueryString()
 }
 
 $success = '';
+$deadlineError = '';
+
+// Confirmation shown after a deadline change (set by the redirect below).
+if (($_GET['deadline'] ?? '') === 'saved') {
+    $success = 'Deadline updated.';
+} elseif (($_GET['deadline'] ?? '') === 'removed') {
+    $success = 'Deadline removed.';
+}
 
 // Handle POST actions
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -113,6 +123,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $formModel->toggleFormStatus($formId, $newStatus);
             header("Location: /admin/form_manager?id=" . $formId);
             exit;
+        } elseif ($_POST['action'] === 'extend_deadline' || $_POST['action'] === 'remove_deadline') {
+            // The model re-checks permission and that the new deadline is in the future
+            // and later than the current one. Its messages are written to be shown.
+            $removing = $_POST['action'] === 'remove_deadline';
+            try {
+                $formModel->extendDeadline($formId, $removing ? null : trim((string) ($_POST['new_deadline'] ?? '')));
+                header("Location: /admin/form_manager?id=" . $formId . "&deadline=" . ($removing ? 'removed' : 'saved'));
+                exit;
+            } catch (InvalidArgumentException $e) {
+                $deadlineError = $e->getMessage();
+            } catch (Exception $e) {
+                http_response_code(403);
+                die("Not allowed.");
+            }
         } elseif ($_POST['action'] === 'delete_form') {
             $formModel->deleteForm($formId);
             header("Location: /admin/dashboard");
@@ -267,6 +291,18 @@ if (!empty($activeFieldFilters)) {
 // Safe copy of the id for use inside HTML attributes.
 $fid = htmlspecialchars((string) $formId, ENT_QUOTES, 'UTF-8');
 
+// Deadline state for the header and the deadline section.
+// $form was loaded before any POST; after a successful change the page redirects,
+// so this always reflects the database on a normal render.
+$deadlineAt = $form['deadline_at'] ?? null;
+$hasDeadline = !empty($deadlineAt);
+$deadlinePassed = FormModel::closedByDeadline($form);                 // switched on, but past its deadline
+$switchedOff = !(int) $form['is_active'];                              // closed by hand
+$deadlineLabel = $hasDeadline ? date('j M Y, g:i A', strtotime($deadlineAt)) : '';
+// Pre-fill the extend box with the current deadline (or nothing) in datetime-local format.
+$deadlineInputValue = ($hasDeadline && !$deadlinePassed) ? date('Y-m-d\TH:i', strtotime($deadlineAt)) : '';
+$deadlineMin = date('Y-m-d\TH:i');
+
 // Public link to the form: the configured site address when there is one (so it is https on a live site),
 // otherwise the address this page was opened on.
 $appConfig = require __DIR__ . '/../../includes/config.php';
@@ -290,11 +326,11 @@ engage_header([
 <style>
     /* Form manager only. Everything else comes from /assets/css/engage.css */
     .sect { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 22px 24px; margin: 0 0 22px; box-shadow: 0 16px 34px rgba(15,23,42,.12); }
-    .sect select, .sect input[type=text] {
+    .sect select, .sect input[type=text], .sect input[type=datetime-local] {
         padding: 8px 12px; background: #fff; color: var(--ink);
         border: 1px solid var(--border); border-radius: 10px; font: inherit; font-size: 14px;
     }
-    .sect select:focus, .sect input[type=text]:focus, .modal textarea:focus { outline: 2px solid var(--primary); outline-offset: -1px; border-color: transparent; }
+    .sect select:focus, .sect input[type=text]:focus, .sect input[type=datetime-local]:focus, .modal textarea:focus { outline: 2px solid var(--primary); outline-offset: -1px; border-color: transparent; }
     .btn-ghost.sm, .btn-solid.sm { width: auto; padding: 7px 16px; font-size: 13.5px; }
     a.btn-ghost { display: inline-block; text-decoration: none; }
 
@@ -307,6 +343,16 @@ engage_header([
         font: inherit; font-size: 12.5px; font-weight: 700; color: var(--primary); background: transparent; border: 1px solid var(--primary);
     }
     .copy-btn svg { width: 13px; height: 13px; }
+
+    /* Deadline */
+    .deadline-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px 24px; }
+    .deadline-row .state { margin: 0; font-size: 14.5px; color: var(--muted); }
+    .deadline-row .state strong { color: var(--ink); }
+    .deadline-row .state .closed-tag { display: inline-block; margin-right: 8px; padding: 2px 10px; border-radius: 999px; font-size: 12.5px; font-weight: 700; color: #991b1b; background: #fef2f2; border: 1px solid #f87171; }
+    .deadline-row .state .open-tag { display: inline-block; margin-right: 8px; padding: 2px 10px; border-radius: 999px; font-size: 12.5px; font-weight: 700; color: var(--leaf-dark); background: var(--leaf-tint); border: 1px solid var(--leaf); }
+    .deadline-row .dl-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+    .deadline-row .dl-controls form { margin: 0; display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .deadline-note { margin: 10px 0 0; font-size: 13px; color: var(--muted); }
 
     .filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 0 0 16px; }
     .bulkbar { display: none; flex-wrap: wrap; gap: 10px; align-items: center; margin: 0 0 14px; padding: 12px 14px; background: #fff; border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 4px 12px rgba(15,23,42,.08); }
@@ -343,6 +389,7 @@ engage_header([
 </style>
 
 <?php if ($success): ?><div class="alert ok"><?= htmlspecialchars($success) ?></div><?php endif; ?>
+<?php if ($deadlineError): ?><div class="alert error"><?= htmlspecialchars($deadlineError) ?></div><?php endif; ?>
 
 <section class="sect head-row">
     <p class="meta">
@@ -366,18 +413,59 @@ engage_header([
             <a href="/admin/builder?edit=<?= $fid ?>" class="btn-ghost">Edit schema</a>
         <?php endif; ?>
 
-        <form method="POST">
-            <?= CSRF::getInputField() ?>
-            <input type="hidden" name="action" value="toggle_form">
-            <?php if ($form['is_active']): ?>
-                <input type="hidden" name="is_active" value="0">
-                <button type="submit" class="btn-danger-ghost">Close form</button>
-            <?php else: ?>
-                <input type="hidden" name="is_active" value="1">
-                <button type="submit" class="btn-ok">Re-open form</button>
-            <?php endif; ?>
-        </form>
+        <?php if ($deadlinePassed): ?>
+            <?php /* Switched on but past its deadline: re-opening is done by extending the deadline below. */ ?>
+            <span class="draft-note" style="margin:0;">Closed by deadline. Extend it below to re-open.</span>
+        <?php else: ?>
+            <form method="POST">
+                <?= CSRF::getInputField() ?>
+                <input type="hidden" name="action" value="toggle_form">
+                <?php if ($form['is_active']): ?>
+                    <input type="hidden" name="is_active" value="0">
+                    <button type="submit" class="btn-danger-ghost">Close form</button>
+                <?php else: ?>
+                    <input type="hidden" name="is_active" value="1">
+                    <button type="submit" class="btn-ok">Re-open form</button>
+                <?php endif; ?>
+            </form>
+        <?php endif; ?>
     </div>
+</section>
+
+<section class="sect">
+    <div class="deadline-row">
+        <p class="state">
+            <?php if ($deadlinePassed): ?>
+                <span class="closed-tag">Closed</span>Deadline passed on <strong><?= htmlspecialchars($deadlineLabel) ?></strong>.
+            <?php elseif ($hasDeadline): ?>
+                <span class="<?= $switchedOff ? 'closed-tag' : 'open-tag' ?>"><?= $switchedOff ? 'Closed' : 'Open' ?></span>Closes automatically on <strong><?= htmlspecialchars($deadlineLabel) ?></strong>.
+            <?php else: ?>
+                <span class="<?= $switchedOff ? 'closed-tag' : 'open-tag' ?>"><?= $switchedOff ? 'Closed' : 'Open' ?></span>No deadline. The form stays open until you close it.
+            <?php endif; ?>
+        </p>
+
+        <div class="dl-controls">
+            <form method="POST">
+                <?= CSRF::getInputField() ?>
+                <input type="hidden" name="action" value="extend_deadline">
+                <input type="datetime-local" name="new_deadline" value="<?= htmlspecialchars($deadlineInputValue) ?>"
+                    min="<?= htmlspecialchars($deadlineMin) ?>" required aria-label="New deadline">
+                <button type="submit" class="btn-solid sm"><?= $hasDeadline ? 'Extend deadline' : 'Set deadline' ?></button>
+            </form>
+            <?php if ($hasDeadline): ?>
+                <form method="POST" onsubmit="return confirm('Remove the deadline? The form will stay open until someone closes it.');">
+                    <?= CSRF::getInputField() ?>
+                    <input type="hidden" name="action" value="remove_deadline">
+                    <button type="submit" class="btn-ghost sm">Remove deadline</button>
+                </form>
+            <?php endif; ?>
+        </div>
+    </div>
+    <?php if ($switchedOff && $hasDeadline): ?>
+        <p class="deadline-note">This form was closed by hand, so extending the deadline will not re-open it. Use "Re-open form" above.</p>
+    <?php elseif ($deadlinePassed): ?>
+        <p class="deadline-note">Picking a new date in the future re-opens the form straight away.</p>
+    <?php endif; ?>
 </section>
 
 <?php if ($isMembershipForm): ?>
@@ -628,7 +716,7 @@ engage_header([
 
     window.onclick = function (event) {
         const modal = document.getElementById('dataModal');
-        if (event.target == modal) {
+        if (modal && event.target == modal) {
             modal.style.display = "none";
         }
     }

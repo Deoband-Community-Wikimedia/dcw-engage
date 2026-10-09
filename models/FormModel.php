@@ -34,6 +34,24 @@ class FormModel {
         return false;
     }
 
+    /**
+     * Is this form accepting submissions right now?
+     * Open = active AND (no deadline OR deadline still in the future).
+     * Compared in PHP (not NOW()) so it uses the same clock/timezone as the
+     * rest of the app (magic-link expiry etc.).
+     */
+    public static function isOpen(array $form): bool {
+        if (isset($form['is_active']) && !(int) $form['is_active']) return false;
+        if (empty($form['deadline_at'])) return true;
+        return strtotime($form['deadline_at']) > time();
+    }
+
+    /** True when the form is switched on but has been closed automatically by its deadline. */
+    public static function closedByDeadline(array $form): bool {
+        return !empty($form['is_active']) && !empty($form['deadline_at'])
+            && strtotime($form['deadline_at']) <= time();
+    }
+
     private static $coordChapters = null;
 
     /**
@@ -115,22 +133,25 @@ class FormModel {
     }
 
     /**
-     * Fetch a form by its type (e.g., 'scholarship')
+     * Fetch an OPEN form by its type (e.g., 'scholarship').
+     * A form that is switched off, or whose deadline has passed, comes back as
+     * false, so the renderer falls through to getAnyFormByType() -> closed.php.
      */
     public function getFormByType($formType) {
         $stmt = $this->db->prepare("SELECT * FROM forms WHERE form_type = :type AND is_active = 1");
         $stmt->execute(['type' => $formType]);
         $form = $stmt->fetch();
-        
-        if ($form) {
-            $form['schema'] = json_decode($form['schema_json'], true);
+
+        if (!$form || !self::isOpen($form)) {
+            return false;
         }
-        
+
+        $form['schema'] = json_decode($form['schema_json'], true);
         return $form;
     }
 
     /**
-     * Fetch a form by type regardless of its active state.
+     * Fetch a form by type regardless of its active state or deadline.
      * Used to tell a closed form apart from one that never existed, so the
      * public renderer can show the right message instead of a blanket 404.
      */
@@ -174,7 +195,7 @@ class FormModel {
     }
 
     /**
-     * Fetch all forms for the admin grid
+     * Fetch all forms for the admin grid (includes deadline_at via f.*)
      */
     public function getAllForms() {
         $stmt = $this->db->query("
@@ -188,19 +209,21 @@ class FormModel {
     }
 
     /**
-     * Active forms only, with title and description pulled from the schema.
-     * Powers the public homepage listing at engage.dcwwiki.org.
+     * Open forms only (active and not past their deadline), with title and
+     * description pulled from the schema. Powers the public homepage listing
+     * at engage.dcwwiki.org. Filtered in PHP so the deadline uses the same
+     * clock/timezone as everything else.
      */
     public function getActiveForms() {
         $stmt = $this->db->query("
-            SELECT form_type,
+            SELECT form_type, is_active, deadline_at,
                    JSON_UNQUOTE(JSON_EXTRACT(schema_json, '$.title')) as title,
                    JSON_UNQUOTE(JSON_EXTRACT(schema_json, '$.description')) as description
             FROM forms
             WHERE is_active = 1
             ORDER BY created_at DESC
         ");
-        return $stmt->fetchAll();
+        return array_values(array_filter($stmt->fetchAll(), [self::class, 'isOpen']));
     }
 
     /**
@@ -225,6 +248,56 @@ class FormModel {
     public function toggleFormStatus($id, $isActive) {
         $stmt = $this->db->prepare("UPDATE forms SET is_active = :status WHERE id = :id");
         return $stmt->execute(['status' => $isActive ? 1 : 0, 'id' => $id]);
+    }
+
+    /**
+     * Set (or clear, with null / empty string) the deadline. Used by the
+     * builder when creating or editing a form. No "must be later" rule here;
+     * that rule belongs to extendDeadline().
+     */
+    public function setDeadline($id, $deadline) {
+        if ($deadline === null || trim((string) $deadline) === '') {
+            $value = null;
+        } else {
+            $ts = strtotime((string) $deadline);
+            if ($ts === false) {
+                throw new InvalidArgumentException('That is not a valid deadline date.');
+            }
+            $value = date('Y-m-d H:i:s', $ts);
+        }
+        $stmt = $this->db->prepare("UPDATE forms SET deadline_at = :d WHERE id = :id");
+        return $stmt->execute(['d' => $value, 'id' => $id]);
+    }
+
+    /**
+     * Extend a form's deadline. The new deadline must be in the future and
+     * later than the current one (so "extend" can't shorten it). Pass null or
+     * an empty string to remove the deadline entirely.
+     * Works on a form that has already closed by deadline: is_active is never
+     * touched, so extending re-opens it (unless an admin switched it off).
+     * Same permission as closing/re-opening: anyone who can open the form.
+     */
+    public function extendDeadline($id, $newDeadline) {
+        $form = $this->getFormById($id);
+        if (!$form) {
+            throw new InvalidArgumentException('Form not found.');
+        }
+        if (!self::userCanOpen($form)) {
+            throw new Exception('You are not allowed to change this form.');
+        }
+
+        if ($newDeadline === null || trim((string) $newDeadline) === '') {
+            return $this->setDeadline($id, null);
+        }
+
+        $ts = strtotime((string) $newDeadline);
+        if ($ts === false || $ts <= time()) {
+            throw new InvalidArgumentException('The new deadline must be a valid date in the future.');
+        }
+        if (!empty($form['deadline_at']) && $ts <= strtotime($form['deadline_at'])) {
+            throw new InvalidArgumentException('The new deadline must be later than the current one.');
+        }
+        return $this->setDeadline($id, date('Y-m-d H:i:s', $ts));
     }
 
     /**

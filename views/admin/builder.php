@@ -19,6 +19,7 @@ $error = '';
 $existingSchema = null;
 $existingFormType = '';
 $existingNotifyEmails = '';
+$existingDeadlineInput = '';   // the saved deadline, in IST, in datetime-local format
 if (isset($_GET['edit'])) {
     $form = $formModel->getFormById($_GET['edit']);
     // Same response for "missing" and "not yours to open", so nobody can tell
@@ -31,7 +32,11 @@ if (isset($_GET['edit'])) {
     $existingSchema = $form['schema'];
     $existingFormType = $form['form_type'];
     $existingNotifyEmails = $form['notify_emails'] ?? '';
+    $existingDeadlineInput = FormModel::utcToIstInput($form['deadline_at'] ?? null);
 }
+
+// What the deadline box shows: what was just posted (so a failed save does not lose it), else the saved value.
+$deadlineValue = $existingDeadlineInput;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!CSRF::validate($_POST['csrf_token'])) {
@@ -41,6 +46,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $formType = trim($_POST['form_type']);
     $schemaJson = $_POST['schema_json'];
     $notifyEmailsRaw = trim($_POST['notify_emails'] ?? '');
+    $deadlineRaw = trim($_POST['deadline_at'] ?? '');
+    $deadlineValue = $deadlineRaw;
 
     // Editing an existing form is identified by its stable form_id,
     // not by matching form_type — matching on form_type meant that
@@ -52,12 +59,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // The form being edited must be one this user may edit. This is checked
     // on the POST itself, not just on page load, since a crafted POST skips
     // the page.
+    $savedDeadlineInput = '';
     if ($formId) {
         $target = $formModel->getFormById($formId);
         if (!$target || !FormModel::userCanEdit($target)) {
             http_response_code(404);
             die("Form not found.");
         }
+        $savedDeadlineInput = FormModel::utcToIstInput($target['deadline_at'] ?? null);
     }
 
     // Normalise the comma-separated recipients and validate each one.
@@ -75,6 +84,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $notifyEmails = implode(', ', $parts);
     }
 
+    // Deadline: optional. Typed in IST, stored in UTC. A new deadline must be in the future;
+    // an unchanged one is left alone even if it has already passed (the form is just closed).
+    $deadlineUtc = null;
+    $deadlineError = null;
+    if ($deadlineRaw !== '') {
+        $deadlineTs = FormModel::istInputToTs($deadlineRaw);
+        if ($deadlineTs === null) {
+            $deadlineError = "The deadline is not a valid date and time.";
+        } elseif ($deadlineRaw !== $savedDeadlineInput && $deadlineTs <= time()) {
+            $deadlineError = "The deadline must be in the future.";
+        } else {
+            $deadlineUtc = gmdate('Y-m-d H:i:s', $deadlineTs);
+        }
+    }
+
     if (empty($formType) || empty($schemaJson)) {
         $error = "Form type and schema are required.";
     } elseif (!preg_match('/^[a-z0-9_-]+$/', $formType)) {
@@ -86,6 +110,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $error = htmlspecialchars(FormModel::editDeniedMessage($formType));
     } elseif ($badEmail !== null) {
         $error = "Notification email '" . htmlspecialchars($badEmail) . "' is not a valid address.";
+    } elseif ($deadlineError !== null) {
+        $error = htmlspecialchars($deadlineError);
     } else {
         // Validate JSON
         json_decode($schemaJson);
@@ -96,11 +122,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             try {
                 if ($formId) {
-                    $stmt = $db->prepare("UPDATE forms SET form_type = ?, schema_json = ?, notify_emails = ? WHERE id = ?");
-                    $stmt->execute([$formType, $schemaJson, $notifyEmails !== '' ? $notifyEmails : null, $formId]);
+                    $stmt = $db->prepare("UPDATE forms SET form_type = ?, schema_json = ?, notify_emails = ?, deadline_at = ? WHERE id = ?");
+                    $stmt->execute([$formType, $schemaJson, $notifyEmails !== '' ? $notifyEmails : null, $deadlineUtc, $formId]);
                 } else {
-                    $stmt = $db->prepare("INSERT INTO forms (form_type, schema_json, notify_emails, is_active) VALUES (?, ?, ?, 1)");
-                    $stmt->execute([$formType, $schemaJson, $notifyEmails !== '' ? $notifyEmails : null]);
+                    $stmt = $db->prepare("INSERT INTO forms (form_type, schema_json, notify_emails, deadline_at, is_active) VALUES (?, ?, ?, ?, 1)");
+                    $stmt->execute([$formType, $schemaJson, $notifyEmails !== '' ? $notifyEmails : null, $deadlineUtc]);
                 }
                 // Back to the workspace dashboard on success (see #47) — a
                 // standard Post/Redirect/Get, same pattern already used by every
@@ -119,6 +145,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 }
+
+// Earliest time the date picker allows (now, in IST).
+$deadlineMin = (new DateTimeImmutable('now', new DateTimeZone(FormModel::DISPLAY_TZ)))->format('Y-m-d\TH:i');
 
 // Slug examples for a membership coordinator, built from the chapters they are assigned to.
 $slugHint = '';
@@ -177,6 +206,11 @@ if ($coordChapters) {
                 <label style="margin-top: 20px; display:block;">Alert Emails (Optional)</label>
                 <input type="text" name="notify_emails" id="notify_emails" placeholder="e.g. clublead@dcwwiki.org, coordinator@dcwwiki.org" value="<?= htmlspecialchars($existingNotifyEmails, ENT_QUOTES) ?>" style="margin-bottom: 0;">
                 <span style="font-size: 13px; color: #64748b; margin-top: 5px; display:block;">Organizers notified when someone submits this form. Comma-separate multiple addresses. Leave blank for none.</span>
+
+                <label style="margin-top: 20px; display:block;">Deadline (Optional)</label>
+                <?php /* No min when the saved deadline has already passed: the browser would refuse to save any other edit to a closed form. The server checks a CHANGED deadline is in the future. */ ?>
+                <input type="datetime-local" name="deadline_at" id="deadline_at" value="<?= htmlspecialchars($deadlineValue, ENT_QUOTES) ?>"<?= ($deadlineValue === '' || $deadlineValue >= $deadlineMin) ? ' min="' . htmlspecialchars($deadlineMin, ENT_QUOTES) . '"' : '' ?> style="margin-bottom: 0;">
+                <span style="font-size: 13px; color: #64748b; margin-top: 5px; display:block;">The form closes automatically at this time (IST, India Standard Time). Leave blank for no deadline. You can extend it later from the form's manager page.</span>
             </div>
 
             <div style="background: #e0f2fe; color: #0369a1; padding: 15px; border-radius: 6px; margin-bottom: 20px; border: 1px solid #bae6fd; font-size: 14px;">
