@@ -21,6 +21,13 @@ class FormModel {
     // ApplicationModel, which already treats 'membership-renewal*' as renewals.
     const MEMBERSHIP_PREFIXES = ['membership-', 'membership_'];
 
+    /**
+     * Timezone deadlines are typed and shown in. Deadlines are STORED in UTC
+     * (forms.deadline_at) and PHP runs in UTC (see includes/init.php); this is
+     * only for input and display.
+     */
+    const DISPLAY_TZ = 'Asia/Kolkata';
+
     public static function isMembershipType($formType) {
         $formType = (string) $formType;
         if (in_array($formType, self::MEMBERSHIP_TYPES, true)) {
@@ -34,22 +41,71 @@ class FormModel {
         return false;
     }
 
+    // ---------------------------------------------------------------------
+    // Deadline time helpers: stored in UTC, typed and shown in IST.
+    // ---------------------------------------------------------------------
+
+    /** Stored UTC 'Y-m-d H:i:s' string -> Unix timestamp, or null when empty/unparseable. */
+    public static function utcToTs($utc): ?int {
+        if ($utc === null || trim((string) $utc) === '') return null;
+        try {
+            return (new DateTimeImmutable((string) $utc, new DateTimeZone('UTC')))->getTimestamp();
+        } catch (Throwable $e) {
+            return null;
+        }
+    }
+
+    /** Stored UTC deadline -> value for <input type="datetime-local">, in IST ('' when none). */
+    public static function utcToIstInput($utc): string {
+        $ts = self::utcToTs($utc);
+        if ($ts === null) return '';
+        return (new DateTimeImmutable('@' . $ts))
+            ->setTimezone(new DateTimeZone(self::DISPLAY_TZ))
+            ->format('Y-m-d\TH:i');
+    }
+
+    /** A datetime-local value typed in IST -> Unix timestamp, or null if it is not a valid date and time. */
+    public static function istInputToTs($input): ?int {
+        $input = str_replace(' ', 'T', trim((string) $input));
+        if ($input === '') return null;
+        $tz = new DateTimeZone(self::DISPLAY_TZ);
+        foreach (['Y-m-d\TH:i', 'Y-m-d\TH:i:s'] as $format) {
+            $dt = DateTimeImmutable::createFromFormat('!' . $format, $input, $tz);
+            $err = DateTimeImmutable::getLastErrors();
+            if ($dt && (!$err || ($err['warning_count'] === 0 && $err['error_count'] === 0))) {
+                return $dt->getTimestamp();
+            }
+        }
+        return null;
+    }
+
+    /** Stored UTC deadline -> text in IST, e.g. "9 Oct 2026, 5:30 PM IST" ('' when none). */
+    public static function formatIst($utc): string {
+        $ts = self::utcToTs($utc);
+        if ($ts === null) return '';
+        return (new DateTimeImmutable('@' . $ts))
+            ->setTimezone(new DateTimeZone(self::DISPLAY_TZ))
+            ->format('j M Y, g:i A') . ' IST';
+    }
+
     /**
      * Is this form accepting submissions right now?
      * Open = active AND (no deadline OR deadline still in the future).
-     * Compared in PHP (not NOW()) so it uses the same clock/timezone as the
-     * rest of the app (magic-link expiry etc.).
+     * The stored deadline is UTC and is compared as UTC against time().
      */
     public static function isOpen(array $form): bool {
         if (isset($form['is_active']) && !(int) $form['is_active']) return false;
         if (empty($form['deadline_at'])) return true;
-        return strtotime($form['deadline_at']) > time();
+        $ts = self::utcToTs($form['deadline_at']);
+        if ($ts === null) return true;   // unreadable deadline: treat as no deadline
+        return $ts > time();
     }
 
     /** True when the form is switched on but has been closed automatically by its deadline. */
     public static function closedByDeadline(array $form): bool {
-        return !empty($form['is_active']) && !empty($form['deadline_at'])
-            && strtotime($form['deadline_at']) <= time();
+        if (empty($form['is_active']) || empty($form['deadline_at'])) return false;
+        $ts = self::utcToTs($form['deadline_at']);
+        return $ts !== null && $ts <= time();
     }
 
     private static $coordChapters = null;
@@ -212,7 +268,7 @@ class FormModel {
      * Open forms only (active and not past their deadline), with title and
      * description pulled from the schema. Powers the public homepage listing
      * at engage.dcwwiki.org. Filtered in PHP so the deadline uses the same
-     * clock/timezone as everything else.
+     * clock as everything else.
      */
     public function getActiveForms() {
         $stmt = $this->db->query("
@@ -251,28 +307,30 @@ class FormModel {
     }
 
     /**
-     * Set (or clear, with null / empty string) the deadline. Used by the
-     * builder when creating or editing a form. No "must be later" rule here;
-     * that rule belongs to extendDeadline().
+     * Set (or clear) the deadline. $deadline is null or '' to clear, a Unix
+     * timestamp (int) to set, or a stored-format UTC 'Y-m-d H:i:s' string.
+     * Always written as UTC. No "must be later" rule here; that rule belongs
+     * to extendDeadline().
      */
     public function setDeadline($id, $deadline) {
-        if ($deadline === null || trim((string) $deadline) === '') {
+        if ($deadline === null || (is_string($deadline) && trim($deadline) === '')) {
             $value = null;
         } else {
-            $ts = strtotime((string) $deadline);
-            if ($ts === false) {
+            $ts = is_int($deadline) ? $deadline : self::utcToTs($deadline);
+            if ($ts === null) {
                 throw new InvalidArgumentException('That is not a valid deadline date.');
             }
-            $value = date('Y-m-d H:i:s', $ts);
+            $value = gmdate('Y-m-d H:i:s', $ts);
         }
         $stmt = $this->db->prepare("UPDATE forms SET deadline_at = :d WHERE id = :id");
         return $stmt->execute(['d' => $value, 'id' => $id]);
     }
 
     /**
-     * Extend a form's deadline. The new deadline must be in the future and
-     * later than the current one (so "extend" can't shorten it). Pass null or
-     * an empty string to remove the deadline entirely.
+     * Extend a form's deadline. $newDeadline is what the organizer typed in the
+     * datetime-local box, in IST. It must be in the future and later than the
+     * current one (so "extend" can't shorten it). Pass null or an empty string
+     * to remove the deadline entirely.
      * Works on a form that has already closed by deadline: is_active is never
      * touched, so extending re-opens it (unless an admin switched it off).
      * Same permission as closing/re-opening: anyone who can open the form.
@@ -290,14 +348,15 @@ class FormModel {
             return $this->setDeadline($id, null);
         }
 
-        $ts = strtotime((string) $newDeadline);
-        if ($ts === false || $ts <= time()) {
+        $ts = self::istInputToTs($newDeadline);
+        if ($ts === null || $ts <= time()) {
             throw new InvalidArgumentException('The new deadline must be a valid date in the future.');
         }
-        if (!empty($form['deadline_at']) && $ts <= strtotime($form['deadline_at'])) {
+        $currentTs = self::utcToTs($form['deadline_at'] ?? null);
+        if ($currentTs !== null && $ts <= $currentTs) {
             throw new InvalidArgumentException('The new deadline must be later than the current one.');
         }
-        return $this->setDeadline($id, date('Y-m-d H:i:s', $ts));
+        return $this->setDeadline($id, $ts);
     }
 
     /**
