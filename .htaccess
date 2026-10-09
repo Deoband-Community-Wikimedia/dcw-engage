@@ -5,12 +5,17 @@ Options -Indexes
 ServerSignature Off
 
 # 3. Protect Configuration & Hidden Files
-<FilesMatch "^(config\.php|\.env|\.git|database\.sql)">
+<FilesMatch "^(config\.php|certs_db\.php|\.env|\.git|database\.sql|composer\.(json|lock))">
     Require all denied
 </FilesMatch>
 
 # 3b. Never serve our own application log files over HTTP
 <FilesMatch "\.log$">
+    Require all denied
+</FilesMatch>
+
+# 3c. Never serve SQL files (schema dumps, the certificates view, backups)
+<FilesMatch "\.sql$">
     Require all denied
 </FilesMatch>
 
@@ -22,8 +27,13 @@ ServerSignature Off
     Header set Referrer-Policy "strict-origin-when-cross-origin"
 </IfModule>
 
-# 5. Route everything through index.php (except real files/folders)
 RewriteEngine On
+
+# 5. Internal code folders are for PHP to require(), never for browsers.
+#    (PHP includes read from disk, so this does not affect the site.)
+RewriteRule ^(includes|models|bin|cron|docs|\.github)(/|$) - [F,L]
+
+# 6. Route everything through index.php (except real files/folders)
 RewriteCond %{REQUEST_FILENAME} !-f
 RewriteCond %{REQUEST_FILENAME} !-d
 RewriteRule ^ index.php [QSA,L]
