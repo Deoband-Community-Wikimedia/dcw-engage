@@ -32,7 +32,7 @@ engage_header([
     </svg>
     <?php if (!empty($closedDeadline)): ?>
         <p style="margin:0 0 8px; font-size:16px;"><strong><?= htmlspecialchars($closedTitle) ?></strong> stopped accepting applications on
-            <strong><?= htmlspecialchars(date('j M Y, g:i A', strtotime($closedDeadline))) ?></strong>.</p>
+            <strong><?= htmlspecialchars(FormModel::formatIst($closedDeadline)) ?></strong>.</p>
     <?php else: ?>
         <p style="margin:0 0 8px; font-size:16px;"><strong><?= htmlspecialchars($closedTitle) ?></strong> is no longer accepting submissions.</p>
     <?php endif; ?>
