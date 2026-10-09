@@ -10,6 +10,10 @@
  * Same shape as InviteModel / PasswordResetModel: a random token goes out by
  * email, only its SHA-256 is stored, and it works once.
  *
+ * The applicant's name (typed on the gate form) travels with the token so the
+ * verification email, and later the application emails, can greet them by name
+ * instead of "Applicant". It is optional (NULL for older rows).
+ *
  * $formId is nullable throughout this class: NULL means "not tied to any
  * specific event's application form" — used by the global reimbursement
  * flow, which verifies an address once regardless of which event the
@@ -49,14 +53,18 @@ class EmailVerificationModel {
     /**
      * Start a verification for this address on this form.
      *
+     * $name is the applicant's name as typed on the gate form (optional).
+     *
      * Returns the raw token and expiry when a link was issued, or null when
      * the address has already asked too many times. The caller must respond
      * identically either way.
      */
-    public function request($formId, $email) {
+    public function request($formId, $email, $name = null) {
         if ($this->recentRequestCount($formId, $email) >= self::MAX_REQUESTS_PER_HOUR) {
             return null;
         }
+
+        $name = ($name === null || trim((string) $name) === '') ? null : trim((string) $name);
 
         $token = bin2hex(random_bytes(32));
 
@@ -85,11 +93,12 @@ class EmailVerificationModel {
             $seconds = max(60, $parsedExpiry - time());
 
             $this->db->prepare(
-                "INSERT INTO email_verifications (form_id, email, token_hash, expires_at)
-                 VALUES (:form, :email, :hash, NOW() + INTERVAL :seconds SECOND)"
+                "INSERT INTO email_verifications (form_id, email, name, token_hash, expires_at)
+                 VALUES (:form, :email, :name, :hash, NOW() + INTERVAL :seconds SECOND)"
             )->execute([
                 'form'    => $formId,
                 'email'   => $email,
+                'name'    => $name,
                 'hash'    => $this->hashToken($token),
                 'seconds' => $seconds,
             ]);
@@ -121,9 +130,9 @@ class EmailVerificationModel {
     }
 
     /**
-     * Redeem a link. Returns the verified email, or null for every kind of
-     * failure (unknown, expired, already used, superseded, wrong form) so the
-     * caller cannot tell them apart.
+     * Redeem a link. Returns ['email' => ..., 'name' => ...] (name is '' when
+     * none was given), or null for every kind of failure (unknown, expired,
+     * already used, superseded, wrong form) so the caller cannot tell them apart.
      *
      * The token is claimed with a conditional UPDATE re-checking every gate
      * the initial SELECT checked (used_at, invalidated_at, expires_at), so
@@ -145,7 +154,7 @@ class EmailVerificationModel {
         }
 
         $stmt = $this->db->prepare(
-            "SELECT id, email FROM email_verifications
+            "SELECT id, email, name FROM email_verifications
              WHERE token_hash = :hash AND form_id <=> :form
                AND used_at IS NULL AND invalidated_at IS NULL
                AND expires_at > NOW()"
@@ -164,6 +173,8 @@ class EmailVerificationModel {
         );
         $claim->execute(['id' => $row['id']]);
 
-        return $claim->rowCount() === 1 ? $row['email'] : null;
+        return $claim->rowCount() === 1
+            ? ['email' => $row['email'], 'name' => (string) ($row['name'] ?? '')]
+            : null;
     }
 }
