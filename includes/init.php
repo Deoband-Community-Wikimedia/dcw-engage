@@ -5,6 +5,11 @@
  * Safely bootstraps the environment before rendering views or processing logic.
  */
 
+// 0. One timezone for the whole app. Deadlines (and everything else PHP writes
+// or compares) are stored in UTC; they are converted to IST only for display
+// and input, via FormModel::formatIst() / utcToIstInput() / istInputToTs().
+date_default_timezone_set('UTC');
+
 // 1. Strict Session Management
 if (session_status() === PHP_SESSION_NONE) {
     session_start([
