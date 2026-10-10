@@ -16,16 +16,20 @@ require_once __DIR__ . '/../../includes/mailer.php';   // Mailer::sendStatusUpda
  *   open       New, Submitted, Under Review   -> can be decided here
  *   waiting    Draft                          -> the applicant is editing (or was sent back); nothing to decide
  *   decided    Accepted, Rejected             -> locked
+ *   discarded  Discarded                      -> spam, hidden from the queue; can be restored
  * Accept / Reject / Under Review email the applicant exactly as the form manager does (Mailer::sendStatusUpdate),
  * with the optional note added to that email.
  * "Needs information" sets the application back to Draft and makes a one-time link
  * (/resume/<token>) the applicant uses to edit and resubmit.
+ * "Discard" sets Discarded and sends NOTHING (that is what $notifyApplicant already does for any status
+ * other than Under Review / Accepted / Rejected). "Restore" puts a discarded application back to New.
  */
 requireRole(['organizer', 'owner']);
 
 const APP_OPEN = ['New', 'Submitted', 'Under Review'];
-// action name -> status it sets ('info' sets Draft and issues a link)
-const APP_ACTIONS = ['review' => 'Under Review', 'approve' => 'Accepted', 'reject' => 'Rejected', 'info' => 'Draft'];
+// action name -> status it sets ('info' sets Draft and issues a link; 'restore' only works on Discarded)
+const APP_ACTIONS = ['review' => 'Under Review', 'approve' => 'Accepted', 'reject' => 'Rejected', 'info' => 'Draft',
+                     'discard' => 'Discarded', 'restore' => 'New'];
 const BULK_MAX = 100;
 
 $model = new ApplicationModel();
@@ -69,6 +73,7 @@ $config = require __DIR__ . '/../../includes/config.php';
 $resumeUrl = fn($token) => rtrim($config['app']['url'], '/') . '/resume/' . $token;
 
 // Same outcome email the form manager sends. A mail failure never undoes a decision that is already saved.
+// Only Under Review / Accepted / Rejected are emailed, so Discard and Restore are always silent.
 $notifyApplicant = function (array $row, string $status, string $note) {
     if (!in_array($status, ['Under Review', 'Accepted', 'Rejected'], true)) return;
     try {
@@ -82,7 +87,7 @@ $notifyApplicant = function (array $row, string $status, string $note) {
 // ---------------------------------------------------------------------------
 // Bulk action from the queue. Every application is re-loaded and re-checked,
 // so editing the request can never reach a form outside the allowed list, and
-// anything no longer open is skipped instead of failing the whole batch.
+// anything not in the right state is skipped instead of failing the whole batch.
 // ---------------------------------------------------------------------------
 if (!$id && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'bulk') {
     if (!CSRF::validate($_POST['csrf_token'] ?? '')) die('Invalid CSRF token.');
@@ -110,8 +115,13 @@ if (!$id && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') ==
                 continue;
             }
             $who = $row['applicant_name'] ?: $row['email'];
-            if (!in_array($row['status'], APP_OPEN, true)) {
-                $result['skipped'][] = "$who: already " . ($row['status'] === 'Draft' ? 'awaiting the applicant' : strtolower($row['status']));
+
+            // Restore only works on discarded applications; everything else only on open ones.
+            $need = $bulkAct === 'restore' ? ['Discarded'] : APP_OPEN;
+            if (!in_array($row['status'], $need, true)) {
+                $result['skipped'][] = $bulkAct === 'restore'
+                    ? "$who: is not discarded"
+                    : "$who: already " . ($row['status'] === 'Draft' ? 'awaiting the applicant' : strtolower($row['status']));
                 continue;
             }
             if ($bulkAct === 'review' && $row['status'] === 'Under Review') {
@@ -149,14 +159,19 @@ if ($app && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $act = (string) ($_POST['action'] ?? '');
     $by = currentAdminIdentifier();
     try {
-        $isOpen = in_array($app['status'], APP_OPEN, true);
         if ($act === 'resend') {
             if ($app['status'] !== 'Draft') throw new Exception('Only an application waiting on the applicant can be sent a new link.');
             $token = $model->generateMagicLink((int) $app['id'], true);
             $_SESSION['application_link'] = ['who' => $app['applicant_name'] ?: $app['email'], 'email' => $app['email'],
                                              'message' => '', 'url' => $resumeUrl($token)];
         } elseif (isset(APP_ACTIONS[$act])) {
-            if (!$isOpen) throw new Exception('This application is no longer open for a decision.');
+            // Restore only works on discarded applications; everything else only on open ones.
+            $need = $act === 'restore' ? ['Discarded'] : APP_OPEN;
+            if (!in_array($app['status'], $need, true)) {
+                throw new Exception($act === 'restore'
+                    ? 'This application is not discarded.'
+                    : 'This application is no longer open for a decision.');
+            }
             if ($act === 'info') {
                 $msg = trim((string) ($_POST['message'] ?? ''));
                 if ($msg === '') throw new Exception('Say what you need from the applicant.');
@@ -179,7 +194,8 @@ if ($app && $_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $doneText = ['approve' => 'Accepted.', 'reject' => 'Rejected.', 'review' => 'Marked under review.',
-             'info' => 'Sent back to the applicant.', 'resend' => 'New link created.'];
+             'info' => 'Sent back to the applicant.', 'resend' => 'New link created.',
+             'discard' => 'Discarded. The applicant was not notified.', 'restore' => 'Restored to the queue.'];
 if (!empty($_GET['done'])) $notice = $doneText[$_GET['done']] ?? 'Saved.';
 
 // One-time link(s) to hand to the applicant (nothing is emailed from this page).
@@ -187,13 +203,16 @@ $manual = $_SESSION['application_link'] ?? null;
 unset($_SESSION['application_link']);
 $bulk = $_SESSION['application_bulk'] ?? null;
 unset($_SESSION['application_bulk']);
-$bulkVerb = ['approve' => 'accepted', 'reject' => 'rejected', 'review' => 'marked under review', 'info' => 'sent back for more information'];
+$bulkVerb = ['approve' => 'accepted', 'reject' => 'rejected', 'review' => 'marked under review',
+             'info' => 'sent back for more information', 'discard' => 'discarded (no one was notified)',
+             'restore' => 'restored to the queue'];
 
 $fForm = (string) ($_GET['form'] ?? ''); $fStatus = (string) ($_GET['status'] ?? '');
 $h = fn($v) => htmlspecialchars((string) $v);
 $label = fn($s) => $s === 'Draft' ? 'Awaiting applicant' : $s;
 $tone = fn($s) => ['New' => 'st-new', 'Submitted' => 'st-new', 'Under Review' => 'st-review',
-                   'Draft' => 'st-wait', 'Accepted' => 'st-ok', 'Rejected' => 'st-bad'][$s] ?? 'st-new';
+                   'Draft' => 'st-wait', 'Accepted' => 'st-ok', 'Rejected' => 'st-bad',
+                   'Discarded' => 'st-off'][$s] ?? 'st-new';
 
 $crumbs = $app
     ? [['Workspace', '/admin/dashboard'], ['Application review', '/admin/application-review'], [$app['applicant_name'] ?: $app['email']]]
@@ -224,6 +243,7 @@ engage_header([
     .pill.st-wait { --tone: #b45309; }
     .pill.st-ok { --tone: var(--leaf-dark); }
     .pill.st-bad { --tone: var(--accent); }
+    .pill.st-off { --tone: #64748b; }
 
     .action-banner ul { flex-basis: 100%; margin: 6px 0 0; padding-left: 18px; }
     .flash-link { display: block; flex-basis: 100%; margin-top: 8px; padding: 10px; background: rgba(0,0,0,.06); border-radius: 6px; font-size: 12px; word-break: break-all; }
@@ -250,8 +270,6 @@ engage_header([
     .tbl td.pick input:disabled { cursor: not-allowed; }
 
     .pill.badge-attn { color: #fff; background: var(--accent); padding: 3px 12px; font-size: 12px; }
-    .pill.st-review { --tone: #6d28d9; }
-    .pill.st-wait { --tone: #b45309; }
 
     /* One collapsible block per program */
     details.prog-group { padding: 0; overflow: hidden; border-left: 5px solid var(--primary); }
@@ -341,6 +359,8 @@ engage_header([
             <?php endif; ?>
             <button name="action" value="reject" class="btn-bad"
                     onclick="return confirm('Reject this application? It will be locked.');">Reject</button>
+            <button name="action" value="discard" class="btn-ghost"
+                    onclick="return confirm('Discard this application? The applicant will NOT be notified. You can restore it later.');">Discard</button>
             </div>
         </form>
         <form method="POST" class="actform"><?= CSRF::getInputField() ?>
@@ -360,6 +380,14 @@ engage_header([
             <button name="action" value="resend" class="btn-ghost">Create a new link</button>
         </form>
     </section>
+    <?php elseif ($app['status'] === 'Discarded'): ?>
+    <section class="sect">
+        <p style="margin:0 0 12px;">Discarded. The applicant was not notified, and this application is hidden from the queue.</p>
+        <form method="POST"><?= CSRF::getInputField() ?>
+            <input type="hidden" name="id" value="<?= (int) $app['id'] ?>">
+            <button name="action" value="restore" class="btn-ghost">Restore to queue</button>
+        </form>
+    </section>
     <?php else: ?>
         <div class="empty-note">This application has been decided and is locked.</div>
     <?php endif; ?>
@@ -371,10 +399,11 @@ engage_header([
     $listed = [];
     foreach ($listedForms as $f) $listed[(int) $f['id']] = true;
 
+    // Discarded applications are hidden unless the Discarded status filter is chosen.
     $rows = array_values(array_filter($model->getAllApplications(), function ($r) use ($listed, $fForm, $fStatus) {
         return isset($listed[(int) $r['form_id']])
             && ($fForm === '' || $r['form_type'] === $fForm)
-            && ($fStatus === '' || $r['status'] === $fStatus);
+            && ($fStatus === '' ? $r['status'] !== 'Discarded' : $r['status'] === $fStatus);
     }));
 
     // One group per program (form): programs with applications waiting come first, then the busiest.
@@ -400,7 +429,7 @@ engage_header([
                     <option value="<?= $h($f['form_type']) ?>" <?= $f['form_type'] === $fForm ? 'selected' : '' ?>><?= $h($f['title'] ?: $f['form_type']) ?></option>
                 <?php endforeach; ?></select>
             <select name="status"><option value="">All statuses</option>
-                <?php foreach (['New','Submitted','Under Review','Draft','Accepted','Rejected'] as $s): ?>
+                <?php foreach (['New','Submitted','Under Review','Draft','Accepted','Rejected','Discarded'] as $s): ?>
                     <option value="<?= $h($s) ?>" <?= $s === $fStatus ? 'selected' : '' ?>><?= $h($label($s)) ?></option>
                 <?php endforeach; ?></select>
             <button class="btn-ghost sm">Filter</button>
@@ -426,6 +455,8 @@ engage_header([
                 <option value="approve">Accepted</option>
                 <option value="info">Needs information</option>
                 <option value="reject">Rejected</option>
+                <option value="discard">Discard (no email)</option>
+                <option value="restore">Restore discarded</option>
             </select>
             <input type="text" name="note" id="bulkNote"
                 placeholder="Note emailed with the decision (optional) / what you need (required for Needs information)">
@@ -448,6 +479,7 @@ engage_header([
                 <?php if ($g['waiting']): ?><span class="pill badge-attn"><?= (int) $g['waiting'] ?> waiting</span><?php endif; ?>
                 <?php if (!empty($c['Under Review'])): ?><span class="pill st-review"><?= (int) $c['Under Review'] ?> under review</span><?php endif; ?>
                 <?php if (!empty($c['Draft'])): ?><span class="pill st-wait"><?= (int) $c['Draft'] ?> awaiting applicant</span><?php endif; ?>
+                <?php if (!empty($c['Discarded'])): ?><span class="pill st-off"><?= (int) $c['Discarded'] ?> discarded</span><?php endif; ?>
                 <span><?= (int) ($c['Accepted'] ?? 0) ?> accepted &middot; <?= (int) ($c['Rejected'] ?? 0) ?> rejected &middot; <?= $n ?> total</span>
             </span>
         </summary>
@@ -457,10 +489,12 @@ engage_header([
             <th class="pick"><input type="checkbox" class="pick-all" aria-label="Select all in <?= $h($f['title'] ?: $f['form_type']) ?>"></th>
             <th>Applicant</th><th>Tracking ID</th><th>Status</th><th>Submitted</th><th>Update</th></tr></thead><tbody>
         <?php foreach ($g['rows'] as $r):
-            $rowOpen = in_array($r['status'], APP_OPEN, true); ?>
+            $rowOpen = in_array($r['status'], APP_OPEN, true);
+            $rowDiscarded = $r['status'] === 'Discarded';
+            $rowPick = $rowOpen || $rowDiscarded; ?>
             <tr>
                 <td class="pick"><input type="checkbox" class="pick-row" value="<?= (int) $r['id'] ?>"
-                    <?= $rowOpen ? '' : 'disabled title="Already decided or waiting on the applicant"' ?>></td>
+                    <?= $rowPick ? '' : 'disabled title="Already decided or waiting on the applicant"' ?>></td>
                 <td><a class="dl" href="?id=<?= (int) $r['id'] ?>"><?= $h($r['applicant_name'] ?: $r['email']) ?></a>
                     <span class="sub"><?= $h($r['email']) ?></span></td>
                 <td><code><?= $h($r['tracking_id']) ?></code></td>
@@ -476,9 +510,17 @@ engage_header([
                             <option value="approve">Accepted</option>
                             <option value="info">Needs information</option>
                             <option value="reject">Rejected</option>
+                            <option value="discard">Discard (no email)</option>
                         </select>
                         <input type="text" name="note" placeholder="Note (optional)">
                         <button type="submit" class="btn-ghost sm">Apply</button>
+                    </form>
+                <?php elseif ($rowDiscarded): ?>
+                    <form method="POST" class="rowform"><?= CSRF::getInputField() ?>
+                        <input type="hidden" name="action" value="bulk">
+                        <input type="hidden" name="bulk_action" value="restore">
+                        <input type="hidden" name="ids[]" value="<?= (int) $r['id'] ?>">
+                        <button type="submit" class="btn-ghost sm">Restore</button>
                     </form>
                 <?php else: ?><span style="color:#94a3b8">&mdash;</span><?php endif; ?>
                 </td></tr>
@@ -547,7 +589,8 @@ engage_header([
             return {
                 approve: 'Accept ' + plural + '? Each applicant is emailed, they are locked and this cannot be undone.',
                 reject: 'Reject ' + plural + '? Each applicant is emailed, they are locked and this cannot be undone.',
-                info: 'Send ' + plural + ' back for more information? You will get a link for each applicant to send them.'
+                info: 'Send ' + plural + ' back for more information? You will get a link for each applicant to send them.',
+                discard: 'Discard ' + plural + '? The applicants are NOT notified. You can restore them later from the Discarded status filter.'
             }[act];
         }
 
@@ -569,10 +612,12 @@ engage_header([
             apply.disabled = true; apply.textContent = 'Working…';
         });
 
-        // Per-row Apply uses the same checks.
+        // Per-row Apply uses the same checks. (Restore rows have no dropdown, so they submit straight away.)
         document.querySelectorAll('.rowform').forEach(function (f) {
             f.addEventListener('submit', function (e) {
-                var act = f.querySelector('select').value;
+                var sel = f.querySelector('select');
+                if (!sel) return;
+                var act = sel.value;
                 var text = f.querySelector('input[type=text]').value;
                 if (!ok(act, text)) { e.preventDefault(); return; }
                 var warn = confirmText(act, 1);
