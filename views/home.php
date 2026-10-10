@@ -162,7 +162,7 @@ if (!empty($reflections)) {
                     $isUser  = stripos($rawName, 'User:') === 0;
                     $label   = $reflectionName($rawName);
                     $initial = mb_strtoupper(mb_substr($label, 0, 1));
-                    $userUrl = 'https://dcwwiki.org/User:' . rawurlencode(str_replace(' ', '_', trim(substr($rawName, 5))));
+                    $userUrl = 'https://meta.wikimedia.org/wiki/User:' . rawurlencode(str_replace(' ', '_', trim(substr($rawName, 5))));
                 ?>
                 <figure class="rq<?= $k === 0 ? ' on' : '' ?>" aria-hidden="<?= $k === 0 ? 'false' : 'true' ?>">
                     <blockquote><?= $r['text'] /* trusted, hand-approved HTML */ ?></blockquote>
@@ -348,47 +348,7 @@ engage_header([
         <link rel="preconnect" href="https://fonts.googleapis.com">
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
         <link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;1,400;1,500&display=swap" rel="stylesheet">
-        <style>
-            /* "Reflection" card: a calm sage-to-sky wash, a serif voice, and a slow fade. */
-            .reflect { position: relative; overflow: hidden; display: flex; flex-direction: column; gap: 1rem; width: 100%; box-sizing: border-box;
-                padding: 1.9rem 2rem 1.5rem; border-radius: 22px; color: #1f3340;
-                background:
-                    radial-gradient(120% 90% at 100% 0%, rgba(46,101,153,.10) 0%, rgba(46,101,153,0) 60%),
-                    radial-gradient(100% 80% at 0% 100%, rgba(63,143,95,.14) 0%, rgba(63,143,95,0) 60%),
-                    linear-gradient(160deg, #f6faf6 0%, #eef5f9 100%);
-                border: 1px solid rgba(46,101,153,.16); box-shadow: 0 14px 40px rgba(31,51,64,.08); }
-            .reflect .rq-mark { position: absolute; top: -.35rem; left: 1.1rem; font-family: 'Lora', Georgia, serif; font-size: 8rem; line-height: 1;
-                color: var(--leaf-dark, #2e7d4f); opacity: .16; pointer-events: none; user-select: none; }
-            .reflect .rq-tag { position: relative; align-self: flex-start; margin-left: 3.2rem; font-size: .72rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase;
-                color: var(--primary, #2E6599); }
-            /* Every reflection sits in the same grid cell, so the card never changes height as they fade. */
-            .rq-stage { position: relative; display: grid; }
-            .rq { grid-area: 1 / 1; margin: 0; display: flex; flex-direction: column; justify-content: space-between; gap: 1.2rem;
-                opacity: 0; visibility: hidden; transform: translateY(8px); transition: opacity 1s ease, transform 1s ease, visibility 1s; }
-            .rq.on { opacity: 1; visibility: visible; transform: none; }
-            .rq blockquote { margin: 0; font-family: 'Lora', Georgia, 'Times New Roman', serif; font-style: italic; font-weight: 400;
-                font-size: clamp(1.12rem, .9rem + .7vw, 1.38rem); line-height: 1.7; letter-spacing: .005em; color: #243b4a; }
-            .rq blockquote a { font-style: normal; font-weight: 500; }
-            .rq figcaption { display: flex; align-items: center; gap: .7rem; }
-            .rq-av { flex: none; width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center;
-                font-weight: 700; font-size: .95rem; color: #fff; background: linear-gradient(135deg, var(--primary, #2E6599), var(--leaf-dark, #2e7d4f)); }
-            .rq-by { font-weight: 700; font-size: .98rem; color: #1f3340; }
-            .rq-by::before { content: ""; display: inline-block; width: 18px; height: 2px; margin: 0 .55rem .28rem 0; border-radius: 2px;
-                background: var(--leaf, #3f8f5f); vertical-align: middle; opacity: .7; }
-            .reflect a { color: var(--primary, #2E6599) !important; text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
-            .reflect a:hover { text-decoration-thickness: 2px; }
-            .rq-bar { display: flex; align-items: center; justify-content: space-between; margin-top: auto; }
-            .rq-dots { display: inline-flex; gap: 8px; }
-            .rq-dot { width: 9px; height: 9px; padding: 0; border: 0; border-radius: 50%; cursor: pointer;
-                background: rgba(46,101,153,.25); transition: background .4s ease, transform .4s ease; }
-            .rq-dot:hover { background: rgba(46,101,153,.45); }
-            .rq-dot.on { background: var(--leaf-dark, #2e7d4f); transform: scale(1.35); }
-            .rq-dot:focus-visible { outline: 2px solid var(--primary, #2E6599); outline-offset: 3px; }
-            .reflect a.more { font-weight: 700; font-size: .92rem; text-decoration: none; }
-            .reflect a.more:hover { text-decoration: underline; }
-            @media (max-width: 520px) { .reflect { padding: 1.6rem 1.3rem 1.3rem; } .reflect .rq-mark { font-size: 6.5rem; } .reflect .rq-tag { margin-left: 2.4rem; } }
-            @media (prefers-reduced-motion: reduce) { .rq { transition: none; transform: none; } }
-        </style>
+        <?php /* Card styles live in assets/css/engage.css (section: Selected reflections). */ ?>
         <script>
             // One reflection at a time, fading gently to the next. Pauses while the visitor hovers or
             // focuses the card, and never auto-advances for visitors who prefer reduced motion.
