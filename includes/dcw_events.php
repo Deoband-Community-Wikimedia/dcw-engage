@@ -2,13 +2,17 @@
 // includes/dcw_events.php
 // Upcoming events for the "What's on" section of the Engage home page.
 //
-// Never throws. If the database can't be reached, dcw_upcoming_events() returns [] (or the last good copy)
+// HOW IT WORKS: Engage asks the wiki's public API (api.php?action=cargoquery) for upcoming events.
+// No database login is involved and nothing on dcwwiki.org is changed: it is a plain read-only HTTP request,
+// the same one a browser could make.
+//
+// Never throws. If the wiki can't be reached, dcw_upcoming_events() returns [] (or the last good copy)
 // and the home page simply omits the section.
 //
-// CONFIGURATION: same pattern as the certificates database.
-//   Copy includes/events_db.example.php to includes/events_db.php and fill in the real values.
-//   events_db.php must be listed in .gitignore. NEVER commit it.
-//   Keys: host, name, user, pass, and optionally port and view (default 'engage_events_v').
+// CONFIGURATION (all optional): includes/events_db.php, copied from includes/events_db.example.php.
+//   Keys: api   (default https://dcwwiki.org/api.php)
+//         table (default 'events', the Cargo table name as listed on Special:CargoTables)
+//   There are no secrets in it any more, but it can stay out of git like the other *_db.php files.
 
 if (!defined('DCW_WIKI_BASE')) define('DCW_WIKI_BASE', 'https://dcwwiki.org');
 
@@ -27,23 +31,6 @@ function dcw_events_setting(string $key, string $default = ''): string {
     return ($v !== '' && $v !== null) ? (string) $v : $default;
 }
 
-/** Read-only connection to the wiki's database. Throws if not configured; callers catch it. */
-function dcw_events_pdo(): PDO {
-    $host = dcw_events_setting('HOST', 'localhost');
-    $port = dcw_events_setting('PORT');
-    $name = dcw_events_setting('NAME');
-    $user = dcw_events_setting('USER');
-    $pass = dcw_events_setting('PASS');
-    if ($name === '' || $user === '') throw new RuntimeException('Wiki database is not configured.');
-    $dsn = 'mysql:host=' . $host . ($port !== '' ? ';port=' . $port : '') . ';dbname=' . $name . ';charset=utf8mb4';
-    return new PDO($dsn, $user, $pass, [
-        PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-        PDO::ATTR_EMULATE_PREPARES   => false,
-        PDO::ATTR_TIMEOUT            => 3,
-    ]);
-}
-
 /** Wiki short descriptions are plain text, but strip any markup that slips in, and keep it short. */
 function dcw_events_clean_text(string $s, int $max = 110): string {
     $s = html_entity_decode($s, ENT_QUOTES | ENT_HTML5, 'UTF-8');
@@ -54,30 +41,73 @@ function dcw_events_clean_text(string $s, int $max = 110): string {
 }
 
 /**
- * Read upcoming events from the wiki database. Returns a list of ['page','start','end','desc']
+ * Read upcoming events from the wiki's Cargo API. Returns a list of ['page','start','end','desc']
  * (dates as Y-m-d, in Indian time), or null on any failure.
  */
 function dcw_events_fetch(int $rows = 10): ?array {
     try {
-        $view = dcw_events_setting('VIEW', 'engage_events_v');
-        if (!preg_match('/^[A-Za-z0-9_]+$/', $view)) return null;
+        $api   = dcw_events_setting('API', DCW_WIKI_BASE . '/api.php');
+        $table = dcw_events_setting('TABLE', 'events');
+        if (!preg_match('/^[A-Za-z0-9_]+$/', $table)) return null;
+        if (!preg_match('#^https://#i', $api)) return null;
 
-        // The view already holds the days in Indian time (IST) and drops subpages. The SQL only needs a loose
-        // lower bound (two days of slack, so an event still running "today" in India is never lost to the
-        // database server's own clock); the exact "has it finished?" test is done in PHP, in India time.
-        $sql = "SELECT pid, page_name AS page, ist_start AS local_start, ist_end AS local_end, descr
-                  FROM `$view`
-                 WHERE sort_end > DATE_SUB(UTC_DATE(), INTERVAL 2 DAY)
-                 ORDER BY sort_start, pid
-                 LIMIT " . (int) ($rows * 3);
+        // Loose lower bound (three days of slack, so an event still running "today" in India is never
+        // lost); the exact "has it finished?" test is done in dcw_upcoming_events(), in India time.
+        $since = gmdate('Y-m-d', time() - 3 * 86400);
 
-        $out = [];
+        // Cargo does not allow field aliases that start with an underscore, so every alias is plain.
+        $qs = http_build_query([
+            'action'   => 'cargoquery',
+            'format'   => 'json',
+            'tables'   => $table,
+            'fields'   => '_pageID=pid,_pageName=page,'
+                        . 'start_date=sdate,start_date__precision=sprec,'
+                        . 'end_date=edate,end_date__precision=eprec,'
+                        . 'short_description=descr',
+            'where'    => "_pageNamespace=0 AND _pageName NOT LIKE '%/%' AND start_date IS NOT NULL "
+                        . "AND (end_date >= '$since' OR (end_date IS NULL AND start_date >= '$since'))",
+            'order_by' => 'start_date',
+            'limit'    => $rows * 3,
+        ]);
+
+        $ch = curl_init($api . '?' . $qs);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_CONNECTTIMEOUT => 2,
+            CURLOPT_TIMEOUT        => 3,
+            CURLOPT_FOLLOWLOCATION => false,
+            CURLOPT_USERAGENT      => 'DCW-Engage/1.0 (events widget)',
+        ]);
+        $body = curl_exec($ch);
+        $code = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+        curl_close($ch);
+        if ($body === false || $code !== 200) return null;
+
+        $json = json_decode((string) $body, true);
+        if (!is_array($json) || !isset($json['cargoquery']) || !is_array($json['cargoquery'])) return null;
+
+        // Times on the wiki are stored in UTC. A value with a time is shifted to India time.
+        // Cargo precision 1 to 3 means year, month or day only: there is no time, so nothing is shifted.
+        // (Precision 0 is reported for full date-and-time values.)
+        $ist = new DateTimeZone('Asia/Kolkata');
+        $utc = new DateTimeZone('UTC');
+        $toDay = function ($v, $prec) use ($ist, $utc): string {
+            $v = trim((string) $v);
+            if ($v === '') return '';
+            $p = (int) $prec;
+            if ($p >= 1 && $p <= 3) return substr($v, 0, 10);
+            $d = date_create_immutable($v, $utc);
+            return $d ? $d->setTimezone($ist)->format('Y-m-d') : substr($v, 0, 10);
+        };
+
+        $out  = [];
         $seen = [];
-        foreach (dcw_events_pdo()->query($sql) as $r) {
+        foreach ($json['cargoquery'] as $row) {
+            $r     = is_array($row['title'] ?? null) ? $row['title'] : [];
             $page  = trim((string) ($r['page'] ?? ''));
-            $start = substr((string) ($r['local_start'] ?? ''), 0, 10);
-            $end   = substr((string) ($r['local_end'] ?? ''), 0, 10);
             $pid   = (string) ($r['pid'] ?? $page);
+            $start = $toDay($r['sdate'] ?? '', $r['sprec'] ?? 0);
+            $end   = (($r['edate'] ?? '') !== '') ? $toDay($r['edate'], $r['eprec'] ?? 0) : $start;
             if ($page === '' || isset($seen[$pid]) || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $start)) continue;
             if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $end) || $end < $start) $end = $start;
             $seen[$pid] = true;
@@ -102,17 +132,19 @@ function dcw_events_page_url(string $page): string {
 }
 
 /**
- * Upcoming events, ready to print. The query is cheap, so the cache is short and only saves repeating it
+ * Upcoming events, ready to print. The request is cheap, so the cache is short and only saves repeating it
  * on every page view:
  *   - a good answer is reused for 5 minutes
- *   - after a failure the database is not tried again for 1 minute (a hiccup never slows the home page)
+ *   - after a failure the wiki is not asked again for 1 minute (a hiccup never slows the home page)
  *   - on failure the last good copy is kept for up to 1 day
  * Events that have already finished (in India time) are filtered out every time, even from the cache.
  */
 function dcw_upcoming_events(int $limit = 3): array {
     try {
         $now   = time();
-        $file  = sys_get_temp_dir() . '/dcw_engage_events_' . md5(dcw_events_setting('NAME') . dcw_events_setting('VIEW')) . '.json';
+        $file  = sys_get_temp_dir() . '/dcw_engage_events_'
+               . md5(dcw_events_setting('API', DCW_WIKI_BASE . '/api.php') . '|' . dcw_events_setting('TABLE', 'events'))
+               . '.json';
         $cache = null;
         if (is_file($file)) {
             $c = json_decode((string) @file_get_contents($file), true);
@@ -161,10 +193,14 @@ function dcw_upcoming_events(int $limit = 3): array {
                     ? $s->format('j M') . ' – ' . $f->format('j M Y')
                     : $s->format('j M Y') . ' – ' . $f->format('j M Y'));
 
+            $title = str_replace('_', ' ', (string) $e['page']);
+            $desc  = (string) ($e['desc'] ?? '');
+            if (strcasecmp(trim($desc), $title) === 0) $desc = '';   // a description that just repeats the title adds nothing
+
             $out[] = [
-                'title' => str_replace('_', ' ', (string) $e['page']),
+                'title' => $title,
                 'url'   => dcw_events_page_url((string) $e['page']),
-                'desc'  => (string) ($e['desc'] ?? ''),
+                'desc'  => $desc,
                 'month' => strtoupper($s->format('M')),
                 'day'   => $s->format('j'),
                 'wday'  => $s->format('D'),
