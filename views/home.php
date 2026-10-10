@@ -193,6 +193,10 @@ if (!empty($reflections)) {
     $reflectionCard = ob_get_clean();
 }
 
+// With only one or two programs the row has spare room, so the reflection card sits beside them
+// instead of dropping to the next row. With three or more programs it keeps its own full-width row.
+$beside = $reflectionCard !== '' && !empty($programs) && count($programs) <= 2;
+
 engage_header([
     'title'       => 'Deoband Community Wikimedia',
     'heading'     => 'DCW Engage',
@@ -231,7 +235,7 @@ engage_header([
 
         <?php if (!empty($programs)): ?>
             <h2 class="section-title<?= empty($cards) ? ' first' : '' ?>">Open programs</h2>
-            <div class="grid">
+            <div class="grid<?= $beside ? ' grid--beside n' . count($programs) : '' ?>">
                 <?php foreach ($programs as $p): ?>
                     <a class="prog" href="<?= htmlspecialchars($p['href']) ?>" style="--tone: <?= htmlspecialchars($p['tone']) ?>;">
                         <span class="tick">
@@ -347,7 +351,7 @@ engage_header([
 <?php if ($reflectionCard !== ''): ?>
         <link rel="preconnect" href="https://fonts.googleapis.com">
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-        <link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;1,400;1,500&display=swap" rel="stylesheet">
+        <link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;0,600;1,400;1,500&display=swap" rel="stylesheet">
         <?php /* Card styles live in assets/css/engage.css (section: Selected reflections). */ ?>
         <script>
             // One reflection at a time, fading gently to the next. Pauses while the visitor hovers or
