@@ -3,6 +3,7 @@ require_once __DIR__ . '/../../includes/init.php';
 require_once __DIR__ . '/../../includes/wikitext.php';
 require_once __DIR__ . '/../../includes/app_log.php';
 require_once __DIR__ . '/../../includes/engage_page.php';
+require_once __DIR__ . '/../../includes/wiki_username.php';
 require_once __DIR__ . '/../../models/FormModel.php';
 
 // $formType should be passed from the router in index.php
@@ -296,6 +297,11 @@ if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['a
 
         $postData = $_POST;
         unset($postData['csrf_token']);
+
+        // Wikimedia usernames: MediaWiki always capitalises the first letter (and treats underscores
+        // as spaces), so store them that way. This sits before the save, so it covers both
+        // drafts and final submissions.
+        $postData = WikiUsername::normalizeAnswers($schema, $postData);
 
         // Membership forms (excluding renewals, which collect the ID directly): applicants who
         // already hold a membership in another chapter retain a single Member ID. This ID is assigned here,
@@ -731,7 +737,8 @@ engage_header([
 
                             <?php else: ?>
                                 <input type="<?= htmlspecialchars($type) ?>" name="<?= $safeName ?>" id="<?= $safeName ?>"
-                                    value="<?= $value ?>" <?= $required ?>>
+                                    value="<?= $value ?>" <?= $required ?>
+                                    <?= WikiUsername::isField($field) ? 'data-wikiuser="1" autocapitalize="sentences" autocomplete="off" spellcheck="false"' : '' ?>>
                             <?php endif; ?>
                         <?php endif; ?>
 
@@ -804,5 +811,14 @@ engage_header([
         document.getElementById(fieldId + '_content').style.display = 'block';
         document.getElementById(fieldId + '_preview').style.display = 'none';
     }
+
+    // Wikimedia username fields: show the corrected form (first letter capitalised, underscores
+    // as spaces) when the person leaves the field. The server applies the same rules on save.
+    document.querySelectorAll('input[data-wikiuser]').forEach(el => {
+        el.addEventListener('blur', () => {
+            const v = el.value.trim().replace(/[\s_]+/g, ' ');
+            if (v) el.value = v.charAt(0).toUpperCase() + v.slice(1);
+        });
+    });
 </script>
 <?php engage_footer(); ?>
