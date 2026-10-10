@@ -64,7 +64,7 @@ $reflections = array_values(array_filter(
 shuffle($reflections);              // a different reflection leads on each visit
 $reflectionsMoreUrl = '';           // optional "Read more" link, e.g. a wiki page that collects them all
 $reflectionsRotate = true;          // true: one reflection at a time, fading to the next; false: one fixed reflection per visit
-$reflectionsSeconds = 12;           // how long each reflection stays before the next fades in
+$reflectionsSeconds = 7;            // how long each reflection stays before the next fades in
 
 // "User:Khaatir" reads better as "Khaatir" on a public card.
 $reflectionName = fn($n) => preg_replace('/^User:/i', '', (string) $n);
@@ -234,8 +234,15 @@ engage_header([
         <?php endif; ?>
 
         <?php if (!empty($programs)): ?>
-            <h2 class="section-title<?= empty($cards) ? ' first' : '' ?>">Open programs</h2>
+            <?php $titleClass = 'section-title' . (empty($cards) ? ' first' : ''); ?>
+            <?php if (!$beside): ?>
+                <h2 class="<?= $titleClass ?>">Open programs</h2>
+            <?php endif; ?>
             <div class="grid<?= $beside ? ' grid--beside n' . count($programs) : '' ?>">
+                <?php if ($beside): ?>
+                    <?php /* Inside the grid, so it centres over the program cards only, not over the reflection. */ ?>
+                    <h2 class="<?= $titleClass ?> beside-title">Open programs</h2>
+                <?php endif; ?>
                 <?php foreach ($programs as $p): ?>
                     <a class="prog" href="<?= htmlspecialchars($p['href']) ?>" style="--tone: <?= htmlspecialchars($p['tone']) ?>;">
                         <span class="tick">
