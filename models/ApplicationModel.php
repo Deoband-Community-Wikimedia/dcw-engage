@@ -4,12 +4,19 @@
  * 
  * Enforces the State Machine (Draft -> Submitted -> Under Review)
  * and handles Magic Link generation.
+ *
+ * "Discarded" is a staff-only status for spam / junk applications: it is set silently (no email),
+ * hides the application from the review queue, and can be undone ("Restore" sets it back to New).
+ * Applicants never see it: the public tracking lookup reports a discarded application as "Under Review".
  */
 
 require_once __DIR__ . '/MemberModel.php';
 require_once __DIR__ . '/FormModel.php';   // FormModel::isOpen(): the one open/closed rule (active + deadline)
 
 class ApplicationModel {
+    /** Every status the applications.status column accepts. Keep in sync with the ENUM. */
+    private const VALID_STATUSES = ['Draft', 'New', 'Submitted', 'Under Review', 'Accepted', 'Rejected', 'Discarded'];
+
     private $db;
 
     public function __construct() {
@@ -97,7 +104,9 @@ class ApplicationModel {
             $stmt->execute(['id' => $appId]);
             $currentStatus = $stmt->fetchColumn();
 
-            if (in_array($currentStatus, ['Under Review', 'Accepted', 'Rejected'])) {
+            // Discarded is locked too: an applicant must not be able to edit a discarded
+            // application and quietly bring it back into the review queue.
+            if (in_array($currentStatus, ['Under Review', 'Accepted', 'Rejected', 'Discarded'])) {
                 throw new Exception("This application is locked and cannot be edited.");
             }
 
@@ -183,6 +192,9 @@ class ApplicationModel {
      * it is otherwise unguessable but an applicant's email is often not a
      * secret, so requiring both keeps a single leaked/guessed value from
      * being enough on its own.
+     *
+     * This is the applicant-facing lookup, so a Discarded application is reported as
+     * "Under Review": the applicant is never told it was discarded as spam.
      */
     public function getApplicationByTrackingIdAndEmail($trackingId, $email) {
         $stmt = $this->db->prepare("
@@ -192,7 +204,11 @@ class ApplicationModel {
             WHERE a.tracking_id = :tracking_id AND a.email = :email
         ");
         $stmt->execute(['tracking_id' => $trackingId, 'email' => $email]);
-        return $stmt->fetch();
+        $row = $stmt->fetch();
+        if ($row && ($row['status'] ?? '') === 'Discarded') {
+            $row['status'] = 'Under Review';
+        }
+        return $row;
     }
 
     /**
@@ -239,6 +255,7 @@ class ApplicationModel {
 
     /**
      * Get all applications with form details
+     * (includes Discarded rows; the review queue hides them unless asked for)
      */
     public function getAllApplications() {
         $stmt = $this->db->query("
@@ -254,7 +271,8 @@ class ApplicationModel {
      * Applications waiting for a first decision (status New or Submitted), counted per form.
      * Returns [form_id => count]. Powers the "N waiting" badge on the workspace dashboard,
      * so it counts rows in the database instead of loading every application.
-     * Drafts (the applicant is still writing, or was sent back) and decided applications are not counted.
+     * Drafts (the applicant is still writing, or was sent back), decided and Discarded
+     * applications are not counted.
      */
     public function countAwaitingByForm() {
         $rows = $this->db->query("
@@ -284,8 +302,7 @@ class ApplicationModel {
      * Update application status
      */
     public function updateStatus($id, $status) {
-        $validStatuses = ['Draft', 'New', 'Submitted', 'Under Review', 'Accepted', 'Rejected'];
-        if (!in_array($status, $validStatuses)) {
+        if (!in_array($status, self::VALID_STATUSES, true)) {
             throw new Exception("Invalid status.");
         }
         $stmt = $this->db->prepare("UPDATE applications SET status = :status WHERE id = :id");
@@ -299,8 +316,7 @@ class ApplicationModel {
      * belong to the form being managed.
      */
     public function updateStatusBulk($applicationIds, $status, $formId) {
-        $validStatuses = ['Draft', 'New', 'Submitted', 'Under Review', 'Accepted', 'Rejected'];
-        if (!in_array($status, $validStatuses)) {
+        if (!in_array($status, self::VALID_STATUSES, true)) {
             throw new Exception("Invalid status.");
         }
         $stmt = $this->db->prepare("UPDATE applications SET status = :status WHERE id = :id AND form_id = :form_id");
