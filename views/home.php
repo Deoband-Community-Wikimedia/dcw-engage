@@ -6,6 +6,7 @@ require_once __DIR__ . '/../models/InternetSupportModel.php';
 require_once __DIR__ . '/../models/ReimbursementSettingsModel.php';
 require_once __DIR__ . '/../includes/member_session.php';
 require_once __DIR__ . '/../includes/member_stats.php';
+require_once __DIR__ . '/../includes/dcw_events.php';
 
 $formModel = new FormModel();
 $activeForms = $formModel->getActiveForms();
@@ -49,6 +50,16 @@ try {
 // person, even when it covers several clubs (see includes/member_stats.php). Never throws; if the
 // numbers can't be read, the panel is simply left out.
 $stats = member_stats();
+
+// Upcoming events from dcwwiki.org, read from the wiki's public Cargo API (api.php?action=cargoquery;
+// see includes/dcw_events.php). No database login is used and nothing on the wiki is changed.
+// Cached, never throws: if the wiki can't be reached, this is just empty and the "What's on"
+// section is left out.
+try {
+    $events = dcw_upcoming_events(3);
+} catch (Throwable $e) {
+    $events = [];
+}
 
 // Selected community reflections (DCW@5). The list is hand-approved, so the text may carry
 // trusted <a> links. If the file is missing or malformed, the card is simply left out.
@@ -210,7 +221,7 @@ engage_header([
     'image_alt'   => 'Group photo from the DCW 5th Anniversary',
 ]);
 ?>
-        <?php if (empty($cards) && empty($programs) && $reflectionCard === ''): ?>
+        <?php if (empty($cards) && empty($programs) && $reflectionCard === '' && empty($events)): ?>
             <div class="empty">
                 <h3>No open programs right now</h3>
                 <p>There are no forms accepting submissions at the moment. Please check back soon — new opportunities are added here as they open.</p>
@@ -257,6 +268,30 @@ engage_header([
             </div>
         <?php elseif ($reflectionCard !== ''): ?>
             <div class="grid"><?= $reflectionCard ?></div>
+        <?php endif; ?>
+
+        <?php if (!empty($events)): ?>
+            <section class="events" aria-label="Upcoming events">
+                <h2 class="section-title<?= (empty($cards) && empty($programs) && $reflectionCard === '') ? ' first' : '' ?>">What's on</h2>
+                <div class="grid">
+                    <?php foreach ($events as $ev): ?>
+                        <a class="evt" href="<?= htmlspecialchars($ev['url']) ?>" target="_blank" rel="noopener" style="--tone: var(--leaf-dark);">
+                            <span class="evt-date" aria-hidden="true">
+                                <span class="m"><?= htmlspecialchars($ev['month']) ?></span>
+                                <span class="d"><?= htmlspecialchars($ev['day']) ?></span>
+                                <span class="w"><?= htmlspecialchars($ev['wday']) ?></span>
+                            </span>
+                            <span class="evt-body">
+                                <h3><?= htmlspecialchars($ev['title']) ?></h3>
+                                <span class="evt-when"><?= htmlspecialchars($ev['when']) ?></span>
+                                <?php if ($ev['desc'] !== ''): ?><p><?= htmlspecialchars($ev['desc']) ?></p><?php endif; ?>
+                                <span class="go">Details <span aria-hidden="true">→</span></span>
+                            </span>
+                        </a>
+                    <?php endforeach; ?>
+                </div>
+                <p class="events-more"><a href="https://dcwwiki.org" target="_blank" rel="noopener">See everything on dcwwiki.org <span aria-hidden="true">→</span></a></p>
+            </section>
         <?php endif; ?>
 
         <?php if (!empty($gallery)): ?>
