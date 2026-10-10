@@ -50,6 +50,25 @@ try {
 // numbers can't be read, the panel is simply left out.
 $stats = member_stats();
 
+// Selected community reflections (DCW@5). The list is hand-approved, so the text may carry
+// trusted <a> links. If the file is missing or malformed, the card is simply left out.
+$selected_reflections = [];
+$reflectionsFile = __DIR__ . '/../includes/reflections.php';
+if (is_file($reflectionsFile)) {
+    require $reflectionsFile;   // defines $selected_reflections
+}
+$reflections = array_values(array_filter(
+    is_array($selected_reflections) ? $selected_reflections : [],
+    fn($r) => is_array($r) && !empty($r['name']) && !empty($r['text'])
+));
+shuffle($reflections);              // a different reflection leads on each visit
+$reflectionsMoreUrl = '';           // optional "Read more" link, e.g. a wiki page that collects them all
+$reflectionsRotate = true;          // true: one reflection at a time, fading to the next; false: one fixed reflection per visit
+$reflectionsSeconds = 12;           // how long each reflection stays before the next fades in
+
+// "User:Khaatir" reads better as "Khaatir" on a public card.
+$reflectionName = fn($n) => preg_replace('/^User:/i', '', (string) $n);
+
 $galleryImages = [
     ['commons' => 'Wikimedians at WTS2024 Hyderabad (11).jpg',       'alt' => 'Wikimedians at WTS2024 in Hyderabad'],
     ['commons' => 'Wikimedia-Futures-Lab-26-Friday-118.jpg',          'alt' => 'Participants at Wikimedia Futures Lab 2026'],
@@ -97,6 +116,7 @@ $icons = [
     'help'   => '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/><line x1="4.93" y1="4.93" x2="9.17" y2="9.17"/><line x1="14.83" y1="14.83" x2="19.07" y2="19.07"/><line x1="14.83" y1="9.17" x2="19.07" y2="4.93"/><line x1="4.93" y1="19.07" x2="9.17" y2="14.83"/>',
     'pulse'  => '<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>',
     'layers' => '<polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>',
+    'quote'  => '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
 ];
 
 $cards = [];
@@ -122,6 +142,57 @@ foreach ($activeForms as $form) {
         'cta'   => 'Apply now', 'href' => '/' . $form['form_type'],
     ];
 }
+
+// Markup for the "Selected reflections" card. Built here so it can sit inside the programs grid.
+// Only ONE reflection is visible at a time; the rest wait quietly and fade in one by one.
+$reflectionCard = '';
+if (!empty($reflections)) {
+    if (!$reflectionsRotate) $reflections = array_slice($reflections, 0, 1);
+    ob_start();
+    ?>
+    <section class="reflect" id="reflect" data-seconds="<?= (int) $reflectionsSeconds ?>"
+             aria-label="A reflection from the DCW community">
+        <span class="rq-mark" aria-hidden="true">&ldquo;</span>
+        <span class="rq-tag">From our community &middot; DCW@5</span>
+
+        <div class="rq-stage">
+            <?php foreach ($reflections as $k => $r): ?>
+                <?php
+                    $rawName = trim((string) $r['name']);
+                    $isUser  = stripos($rawName, 'User:') === 0;
+                    $label   = $reflectionName($rawName);
+                    $initial = mb_strtoupper(mb_substr($label, 0, 1));
+                    $userUrl = 'https://dcwwiki.org/User:' . rawurlencode(str_replace(' ', '_', trim(substr($rawName, 5))));
+                ?>
+                <figure class="rq<?= $k === 0 ? ' on' : '' ?>" aria-hidden="<?= $k === 0 ? 'false' : 'true' ?>">
+                    <blockquote><?= $r['text'] /* trusted, hand-approved HTML */ ?></blockquote>
+                    <figcaption>
+                        <span class="rq-av" aria-hidden="true"><?= htmlspecialchars($initial) ?></span>
+                        <span class="rq-by"><?php if ($isUser): ?><a href="<?= htmlspecialchars($userUrl) ?>" target="_blank" rel="noopener"><?= htmlspecialchars($label) ?></a><?php else: ?><?= htmlspecialchars($label) ?><?php endif; ?></span>
+                    </figcaption>
+                </figure>
+            <?php endforeach; ?>
+        </div>
+
+        <?php if (count($reflections) > 1 || $reflectionsMoreUrl !== ''): ?>
+            <div class="rq-bar">
+                <?php if (count($reflections) > 1): ?>
+                    <span class="rq-dots" role="group" aria-label="Choose a reflection">
+                        <?php foreach ($reflections as $k => $r): ?>
+                            <button type="button" class="rq-dot<?= $k === 0 ? ' on' : '' ?>" aria-label="Reflection <?= $k + 1 ?> of <?= count($reflections) ?>"></button>
+                        <?php endforeach; ?>
+                    </span>
+                <?php else: ?><span></span><?php endif; ?>
+                <?php if ($reflectionsMoreUrl !== ''): ?>
+                    <a class="more" href="<?= htmlspecialchars($reflectionsMoreUrl) ?>" target="_blank" rel="noopener">Read more <span aria-hidden="true">&rarr;</span></a>
+                <?php endif; ?>
+            </div>
+        <?php endif; ?>
+    </section>
+    <?php
+    $reflectionCard = ob_get_clean();
+}
+
 engage_header([
     'title'       => 'Deoband Community Wikimedia',
     'heading'     => 'DCW Engage',
@@ -135,7 +206,7 @@ engage_header([
     'image_alt'   => 'Group photo from the DCW 5th Anniversary',
 ]);
 ?>
-        <?php if (empty($cards) && empty($programs)): ?>
+        <?php if (empty($cards) && empty($programs) && $reflectionCard === ''): ?>
             <div class="empty">
                 <h3>No open programs right now</h3>
                 <p>There are no forms accepting submissions at the moment. Please check back soon — new opportunities are added here as they open.</p>
@@ -171,7 +242,10 @@ engage_header([
                         <span class="go"><?= htmlspecialchars($p['cta']) ?> <span aria-hidden="true">→</span></span>
                     </a>
                 <?php endforeach; ?>
+                <?= $reflectionCard ?>
             </div>
+        <?php elseif ($reflectionCard !== ''): ?>
+            <div class="grid"><?= $reflectionCard ?></div>
         <?php endif; ?>
 
         <?php if (!empty($gallery)): ?>
@@ -269,5 +343,86 @@ engage_header([
                 </div>
             <?php endif; ?>
         </section>
+
+<?php if ($reflectionCard !== ''): ?>
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;1,400;1,500&display=swap" rel="stylesheet">
+        <style>
+            /* "Reflection" card: a calm sage-to-sky wash, a serif voice, and a slow fade. */
+            .reflect { position: relative; overflow: hidden; display: flex; flex-direction: column; gap: 1rem; width: 100%; box-sizing: border-box;
+                padding: 1.9rem 2rem 1.5rem; border-radius: 22px; color: #1f3340;
+                background:
+                    radial-gradient(120% 90% at 100% 0%, rgba(46,101,153,.10) 0%, rgba(46,101,153,0) 60%),
+                    radial-gradient(100% 80% at 0% 100%, rgba(63,143,95,.14) 0%, rgba(63,143,95,0) 60%),
+                    linear-gradient(160deg, #f6faf6 0%, #eef5f9 100%);
+                border: 1px solid rgba(46,101,153,.16); box-shadow: 0 14px 40px rgba(31,51,64,.08); }
+            .reflect .rq-mark { position: absolute; top: -.35rem; left: 1.1rem; font-family: 'Lora', Georgia, serif; font-size: 8rem; line-height: 1;
+                color: var(--leaf-dark, #2e7d4f); opacity: .16; pointer-events: none; user-select: none; }
+            .reflect .rq-tag { position: relative; align-self: flex-start; margin-left: 3.2rem; font-size: .72rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase;
+                color: var(--primary, #2E6599); }
+            /* Every reflection sits in the same grid cell, so the card never changes height as they fade. */
+            .rq-stage { position: relative; display: grid; }
+            .rq { grid-area: 1 / 1; margin: 0; display: flex; flex-direction: column; justify-content: space-between; gap: 1.2rem;
+                opacity: 0; visibility: hidden; transform: translateY(8px); transition: opacity 1s ease, transform 1s ease, visibility 1s; }
+            .rq.on { opacity: 1; visibility: visible; transform: none; }
+            .rq blockquote { margin: 0; font-family: 'Lora', Georgia, 'Times New Roman', serif; font-style: italic; font-weight: 400;
+                font-size: clamp(1.12rem, .9rem + .7vw, 1.38rem); line-height: 1.7; letter-spacing: .005em; color: #243b4a; }
+            .rq blockquote a { font-style: normal; font-weight: 500; }
+            .rq figcaption { display: flex; align-items: center; gap: .7rem; }
+            .rq-av { flex: none; width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center;
+                font-weight: 700; font-size: .95rem; color: #fff; background: linear-gradient(135deg, var(--primary, #2E6599), var(--leaf-dark, #2e7d4f)); }
+            .rq-by { font-weight: 700; font-size: .98rem; color: #1f3340; }
+            .rq-by::before { content: ""; display: inline-block; width: 18px; height: 2px; margin: 0 .55rem .28rem 0; border-radius: 2px;
+                background: var(--leaf, #3f8f5f); vertical-align: middle; opacity: .7; }
+            .reflect a { color: var(--primary, #2E6599) !important; text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
+            .reflect a:hover { text-decoration-thickness: 2px; }
+            .rq-bar { display: flex; align-items: center; justify-content: space-between; margin-top: auto; }
+            .rq-dots { display: inline-flex; gap: 8px; }
+            .rq-dot { width: 9px; height: 9px; padding: 0; border: 0; border-radius: 50%; cursor: pointer;
+                background: rgba(46,101,153,.25); transition: background .4s ease, transform .4s ease; }
+            .rq-dot:hover { background: rgba(46,101,153,.45); }
+            .rq-dot.on { background: var(--leaf-dark, #2e7d4f); transform: scale(1.35); }
+            .rq-dot:focus-visible { outline: 2px solid var(--primary, #2E6599); outline-offset: 3px; }
+            .reflect a.more { font-weight: 700; font-size: .92rem; text-decoration: none; }
+            .reflect a.more:hover { text-decoration: underline; }
+            @media (max-width: 520px) { .reflect { padding: 1.6rem 1.3rem 1.3rem; } .reflect .rq-mark { font-size: 6.5rem; } .reflect .rq-tag { margin-left: 2.4rem; } }
+            @media (prefers-reduced-motion: reduce) { .rq { transition: none; transform: none; } }
+        </style>
+        <script>
+            // One reflection at a time, fading gently to the next. Pauses while the visitor hovers or
+            // focuses the card, and never auto-advances for visitors who prefer reduced motion.
+            (function () {
+                var root = document.getElementById('reflect');
+                if (!root) return;
+                var items = root.querySelectorAll('.rq'), dots = root.querySelectorAll('.rq-dot');
+                var ms = Math.max(5, +root.dataset.seconds || 12) * 1000;
+                var i = 0, timer = null;
+                var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+                function show(n) {
+                    i = (n + items.length) % items.length;
+                    for (var k = 0; k < items.length; k++) {
+                        items[k].classList.toggle('on', k === i);
+                        items[k].setAttribute('aria-hidden', k === i ? 'false' : 'true');
+                        if (dots[k]) dots[k].classList.toggle('on', k === i);
+                    }
+                }
+                function stop() { clearInterval(timer); timer = null; }
+                function play() {
+                    if (reduce || items.length < 2) return;
+                    stop();
+                    timer = setInterval(function () { show(i + 1); }, ms);
+                }
+                for (var d = 0; d < dots.length; d++) {
+                    (function (n) { dots[n].addEventListener('click', function () { show(n); play(); }); })(d);
+                }
+                root.addEventListener('mouseenter', stop);
+                root.addEventListener('mouseleave', play);
+                root.addEventListener('focusin', stop);
+                root.addEventListener('focusout', play);
+                play();
+            })();
+        </script>
+<?php endif; ?>
 
 <?php engage_footer(); ?>

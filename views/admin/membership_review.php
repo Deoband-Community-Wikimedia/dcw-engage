@@ -4,6 +4,7 @@ require_once __DIR__ . '/../../includes/require_role.php';
 require_once __DIR__ . '/../../includes/wikitext.php';
 require_once __DIR__ . '/../../includes/app_log.php';
 require_once __DIR__ . '/../../includes/engage_page.php';
+require_once __DIR__ . '/../../includes/wiki_username.php';
 require_once __DIR__ . '/../../models/MemberModel.php';
 require_once __DIR__ . '/../../includes/mail/membership_mailer.php';
 
@@ -157,6 +158,21 @@ if ($app && $_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif ($act === 'review') {
             $model->markUnderReview($app, $by);
             $mail = null;
+        } elseif ($act === 'fix_username') {
+            // Correct a Wikimedia username answer (capitalisation, underscores, a typo). Allowed for
+            // every role on this page; $app is already scope-checked. Only username fields can be
+            // edited here, and only while the application is open. No email is sent.
+            $schemaFields = (json_decode($app['schema_json'], true) ?: [])['fields'] ?? [];
+            $fieldName = (string) ($_POST['field'] ?? '');
+            $match = null;
+            foreach ($schemaFields as $f) {
+                if (($f['name'] ?? '') === $fieldName && WikiUsername::isField($f)) { $match = $f; break; }
+            }
+            if (!$match) throw new Exception('That field cannot be edited here.');
+            $new = WikiUsername::normalize((string) ($_POST['value'] ?? ''));
+            if ($new === '') throw new Exception('The username cannot be empty.');
+            $model->setAnswer($app, $fieldName, $new, $by);
+            $mail = null;
         } elseif (in_array($act, ['link_id', 'unlink_id', 'relink_id'], true)) {
             // Share one Member ID between the Generic Community and a club. No email is sent.
             if (!$canLinkIds) throw new Exception('Only reviewers can change Member IDs.');
@@ -189,6 +205,7 @@ if ($app && $_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 $doneText = ['approve' => 'Approved.', 'reject' => 'Rejected.', 'review' => 'Marked under review.',
              'info' => 'Sent back to the applicant.', 'resend' => 'Link sent again.',
+             'fix_username' => 'Wikimedia username corrected.',
              'link_id' => 'Linked. On approval this member keeps that ID and no new one is made.',
              'unlink_id' => 'Link removed.',
              'relink_id' => 'Member ID changed. The confirmation email they received shows the old ID, so let them know.'];
@@ -285,6 +302,10 @@ engage_header([
     .idwarn { margin: 12px 0 0; padding: 10px 12px; background: #fffbeb; border: 1px solid #fcd34d; border-radius: 10px; font-size: 14px; color: #92400e; }
     .idbad { margin: 12px 0 0; padding: 10px 12px; background: #fef2f2; border: 1px solid #fca5a5; border-radius: 10px; font-size: 14px; color: #991b1b; }
 
+    /* Inline fix form under a Wikimedia username answer */
+    dl.answers dd .idform.userfix { margin-top: 6px; }
+    dl.answers dd .idform.userfix input[type=text] { width: 240px; }
+
     .filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 0 0 16px; }
     .bulkbar { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 0 0 14px; padding: 12px 14px; background: #fff; border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 4px 12px rgba(15,23,42,.08); }
     .bulkbar .count { min-width: 90px; font-size: 14px; font-weight: 700; color: var(--muted); }
@@ -358,7 +379,23 @@ engage_header([
         <dl class="answers">
         <?php foreach ($schema['fields'] ?? [] as $f): $v = $data[$f['name']] ?? ''; if (is_array($v)) $v = implode(', ', $v); ?>
             <dt><?= MiniWikiText::inline($h($f['label'] ?? $f['name'])) ?></dt>
-            <dd><?= $v === '' ? '&mdash;' : (($f['type'] ?? '') === 'file' ? 'File uploaded: ' . $h($v) : $h($v)) ?></dd>
+            <dd>
+            <?php if ($v !== '' && WikiUsername::isField($f)):
+                $fixed = WikiUsername::normalize((string) $v); ?>
+                <?= $h($v) ?>
+                <?php if ($open): ?>
+                <form method="POST" class="idform userfix"><?= CSRF::getInputField() ?>
+                    <input type="hidden" name="id" value="<?= (int) $app['id'] ?>">
+                    <input type="hidden" name="field" value="<?= $h($f['name']) ?>">
+                    <input type="text" name="value" value="<?= $h($fixed) ?>" maxlength="255" autocomplete="off" required
+                           aria-label="Corrected Wikimedia username">
+                    <button name="action" value="fix_username" class="btn-ghost sm"><?= $fixed !== (string) $v ? 'Fix capitalisation' : 'Save' ?></button>
+                </form>
+                <?php endif; ?>
+            <?php else: ?>
+                <?= $v === '' ? '&mdash;' : (($f['type'] ?? '') === 'file' ? 'File uploaded: ' . $h($v) : $h($v)) ?>
+            <?php endif; ?>
+            </dd>
         <?php endforeach; ?>
         </dl>
     </section>
