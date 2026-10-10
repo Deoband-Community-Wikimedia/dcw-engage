@@ -280,6 +280,48 @@ class MemberModel {
     }
 
     /**
+     * Change one answer in an OPEN application's form_data (used by the reviewer's Wikimedia
+     * username fix). The caller has already checked that the field may be edited and has
+     * cleaned the value; this method only guarantees the application is still open and that
+     * the write cannot clobber a concurrent change: the row is locked and re-read inside a
+     * transaction, so only this one key changes. Logged to the app log (the decisions table
+     * is left alone, since it records status decisions only).
+     */
+    public function setAnswer(array $app, string $field, string $value, string $by): void {
+        $id = (int) $app['id'];
+        $this->db->beginTransaction();
+        try {
+            $st = $this->db->prepare('SELECT status, form_data FROM applications WHERE id = :id FOR UPDATE');
+            $st->execute(['id' => $id]);
+            $row = $st->fetch();
+            if (!$row) throw new Exception('Application not found.');
+            if (!in_array($row['status'], self::OPEN, true)) {
+                throw new Exception('This application is no longer open, so its answers cannot be edited.');
+            }
+
+            $data = json_decode((string) ($row['form_data'] ?? ''), true);
+            $data = is_array($data) ? $data : [];
+            $old = (string) ($data[$field] ?? '');
+            if ($old === $value) {   // nothing to change
+                $this->db->commit();
+                return;
+            }
+            $data[$field] = $value;
+
+            $this->db->prepare('UPDATE applications SET form_data = :d WHERE id = :id')
+                ->execute(['d' => json_encode($data, JSON_UNESCAPED_UNICODE), 'id' => $id]);
+            $this->db->commit();
+
+            if (function_exists('app_log')) {
+                app_log("Answer '$field' changed on application #$id ({$app['tracking_id']}) by $by: '$old' -> '$value'");
+            }
+        } catch (Throwable $e) {
+            if ($this->db->inTransaction()) $this->db->rollBack();
+            throw $e;
+        }
+    }
+
+    /**
      * Approve: create or extend the member, mark Accepted, log the decision.
      * Returns [member_id, expires_at, shared]. $shared is true when a NEW membership was
      * created under an ID the person already had (so no new ID was made); the email says so.
