@@ -11,7 +11,6 @@ config.php
 # Security: Certificates database credentials (real file lives only on the server)
 # The committed template is includes/certs_db.example.php
 includes/certs_db.php
-includes/events_db.php
 
 # Security: Ignore all log files (prevents leaking sensitive errors/PII)
 *.log
