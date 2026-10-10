@@ -151,6 +151,14 @@ a:focus-visible, summary:focus-visible, button:focus-visible { outline: 3px soli
 }
 .prog.featured:hover { border-color: transparent; }
 
+/* Programs and reflection on one row: used when there are only one or two programs (see views/home.php).
+   The program cards keep a natural width and the reflection card takes the rest of the row. */
+.grid--beside { display: grid; gap: 20px; align-items: stretch; justify-content: stretch; }
+.grid--beside.n1 { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); }
+.grid--beside.n2 { grid-template-columns: repeat(2, minmax(0, 1fr)) minmax(0, 1.5fr); }
+.grid--beside .prog { max-width: none; flex: none; }
+.grid--beside .reflect { width: auto; max-width: none; flex: none; margin: 0; }
+
 /* ---------- Section headings ---------- */
 .section { margin: 0 0 36px; }
 .section-head { text-align: center; margin: 0 auto 22px; max-width: 620px; }
@@ -525,11 +533,13 @@ a.help-item:hover { transform: translateY(-3px); box-shadow: 0 12px 26px rgba(15
    One reflection is visible at a time; the others fade in, one by one.
    Uses the tokens at the top of this file, so it follows any palette change.
    The Lora font is loaded by views/home.php.
+   On its own row it is a centred 820px column; beside one or two programs it
+   fills the rest of the row (see .grid--beside above).
    ---------------------------------------------------------------------- */
 .reflect {
     position: relative; overflow: hidden; display: flex; flex-direction: column; gap: 1rem;
     flex: 0 1 820px; width: min(100%, 820px); margin: 0 auto;   /* one centred column, like the program cards */
-    padding: 30px 32px 22px; border-radius: 22px; color: var(--ink);
+    padding: 30px 34px 22px; border-radius: 22px; color: var(--ink);
     background:
         radial-gradient(120% 90% at 100% 0%, color-mix(in srgb, var(--primary) 10%, transparent) 0, transparent 60%),
         radial-gradient(100% 80% at 0% 100%, color-mix(in srgb, var(--leaf) 14%, transparent) 0, transparent 60%),
@@ -546,31 +556,42 @@ a.help-item:hover { transform: translateY(-3px); box-shadow: 0 12px 26px rgba(15
     font-size: 12px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--primary);
 }
 
-/* Every reflection sits in the same grid cell, so the card never changes height as they fade. */
-.rq-stage { position: relative; display: grid; }
+/* Every reflection sits in the same grid cell, so the card never changes height as they fade.
+   The stage grows to fill the card, which keeps the dots at the bottom when the card is stretched
+   to match a taller program card beside it. */
+.rq-stage { position: relative; display: grid; flex: 1; }
 .rq {
     grid-area: 1 / 1; margin: 0; display: flex; flex-direction: column; justify-content: center; gap: 1.4rem;
     opacity: 0; visibility: hidden; transform: translateY(8px);
     transition: opacity 1s ease, transform 1s ease, visibility 1s;
 }
 .rq.on { opacity: 1; visibility: visible; transform: none; }
+
+/* Reflection text: upright serif, calmer size, generous line spacing, softened ink.
+   (The earlier large italic serif was the tiring part.) To match the rest of the page instead,
+   use font-family: 'Inter', -apple-system, sans-serif here, with line-height 1.7. */
 .rq blockquote {
-    margin: 0; font-family: 'Lora', Georgia, 'Times New Roman', serif; font-style: italic; font-weight: 400;
-    font-size: clamp(1.12rem, .9rem + .7vw, 1.38rem); line-height: 1.7; letter-spacing: .005em; color: var(--ink);
+    margin: 0; max-width: 62ch;
+    font-family: 'Lora', Georgia, 'Times New Roman', serif; font-style: normal; font-weight: 400;
+    font-size: clamp(1.02rem, .95rem + .4vw, 1.18rem); line-height: 1.75; letter-spacing: .005em;
+    color: #34425a;
 }
-.rq blockquote a { font-style: normal; font-weight: 500; }
+.rq blockquote a { font-weight: 500; }
 .rq figcaption { display: flex; align-items: center; gap: 12px; }
 .rq-av {
     flex: none; width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center;
     font-weight: 700; font-size: 15px; color: #fff; background: linear-gradient(135deg, var(--primary), var(--leaf-dark));
 }
-.rq-by { font-weight: 700; font-size: 15.5px; color: var(--ink); }
+.rq-by { font-weight: 600; font-size: 15px; color: #4a5872; }
 .rq-by::before {
     content: ""; display: inline-block; width: 18px; height: 2px; margin: 0 9px 4px 0; border-radius: 2px;
     background: var(--leaf); vertical-align: middle; opacity: .7;
 }
-.reflect a { color: var(--primary); text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
-.reflect a:hover { color: var(--accent); text-decoration-thickness: 2px; }
+.reflect a {
+    color: var(--primary); text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px;
+    text-decoration-color: color-mix(in srgb, var(--primary) 45%, transparent);
+}
+.reflect a:hover { color: var(--accent); text-decoration-thickness: 2px; text-decoration-color: currentColor; }
 .reflect a.more { font-weight: 700; font-size: 14.5px; text-decoration: none; }
 .reflect a.more:hover { text-decoration: underline; }
 
@@ -587,6 +608,15 @@ a.help-item:hover { transform: translateY(-3px); box-shadow: 0 12px 26px rgba(15
 .rq-dot.on { background: var(--leaf-dark); transform: scale(1.35); }
 
 /* ---------- Responsive ---------- */
+/* Programs + reflection on one row: step down as the screen narrows. */
+@media (max-width: 1000px) {
+    .grid--beside.n2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid--beside.n2 .reflect { grid-column: 1 / -1; }
+}
+@media (max-width: 800px) {
+    .grid--beside.n1, .grid--beside.n2 { grid-template-columns: 1fr; }
+    .grid--beside.n2 .reflect { grid-column: auto; }
+}
 @media (max-width: 640px) {
     .hero, .hero.home { padding: 28px 18px 96px; }
     .topbar { justify-content: center; text-align: center; }
