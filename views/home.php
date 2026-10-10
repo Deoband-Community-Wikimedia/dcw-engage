@@ -153,7 +153,7 @@ if (!empty($reflections)) {
     <section class="reflect" id="reflect" data-seconds="<?= (int) $reflectionsSeconds ?>"
              aria-label="A reflection from the DCW community">
         <span class="rq-mark" aria-hidden="true">&ldquo;</span>
-        <span class="rq-tag">From our community &middot; DCW@5</span>
+        <span class="rq-tag">Reflections</span>
 
         <div class="rq-stage">
             <?php foreach ($reflections as $k => $r): ?>
@@ -253,8 +253,8 @@ engage_header([
         <?php endif; ?>
 
         <?php if (!empty($gallery)): ?>
-            <section class="gallery" aria-label="From our events">
-                <h2>From our events</h2>
+            <section class="gallery" aria-label="Our volunteers across">
+                <h2>Our volunteers across</h2>
                 <div class="marquee" id="galMarquee" style="--gal-dur: <?= (int) $galleryDuration ?>s;">
                     <div class="track">
                         <?php foreach ([false, true] as $isDup): ?>
