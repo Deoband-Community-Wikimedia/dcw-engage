@@ -51,9 +51,10 @@ try {
 // numbers can't be read, the panel is simply left out.
 $stats = member_stats();
 
-// Upcoming events from dcwwiki.org, read from the view `engage_events_v` on the wiki database
-// (see includes/dcw_events.php and docs/wiki_events_view.sql). Cached, never throws: if the database
-// isn't set up or can't be reached, this is just empty and the "What's on" section is left out.
+// Upcoming events from dcwwiki.org, read from the wiki's public Cargo API (api.php?action=cargoquery;
+// see includes/dcw_events.php). No database login is used and nothing on the wiki is changed.
+// Cached, never throws: if the wiki can't be reached, this is just empty and the "What's on"
+// section is left out.
 try {
     $events = dcw_upcoming_events(3);
 } catch (Throwable $e) {
