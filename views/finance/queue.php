@@ -396,7 +396,7 @@ engage_header([
                 <div class="qlinks">
                     <strong>Receipts:</strong>
                     <?php foreach ($req['receipts'] as $n => $path): ?>
-                        <a href="/<?= $e($path) ?>" target="_blank" download>⬇ Receipt <?= $n + 1 ?></a>
+                        <a href="<?= $e(engage_upload_url($path)) ?>" target="_blank" download>⬇ Receipt <?= $n + 1 ?></a>
                     <?php endforeach; ?>
                 </div>
             <?php else: ?>
@@ -541,7 +541,7 @@ engage_header([
 
             <div class="qlinks">
                 <?php if ($req['receipt_path'] !== ''): ?>
-                    <a href="/<?= $e($req['receipt_path']) ?>" target="_blank" download>⬇ Download receipt</a>
+                    <a href="<?= $e(engage_upload_url($req['receipt_path'])) ?>" target="_blank" download>⬇ Download receipt</a>
                 <?php else: ?>
                     <span style="color:var(--muted);">Receipt file is missing.</span>
                 <?php endif; ?>

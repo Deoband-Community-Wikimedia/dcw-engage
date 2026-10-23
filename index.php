@@ -189,6 +189,10 @@ if ($route === '/' || $route === '/index.php') {
     // Applications (DCW-) only. Reimbursement (RB-) and internet support (IS-)
     // IDs are sent on to /member/request by the view itself.
     require __DIR__ . '/views/track.php';
+// Uploaded files (application answers, receipts). Direct /uploads/ requests are refused by .htaccess;
+// the view checks who is asking before it sends anything.
+} elseif ($route === '/file') {
+    require __DIR__ . '/views/file.php';
 } elseif (preg_match('/^\/resume\/([a-zA-Z0-9_-]+)$/', $route, $matches)) {
     $token = $matches[1];
     global $resumeToken;

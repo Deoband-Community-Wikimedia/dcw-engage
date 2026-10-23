@@ -255,7 +255,7 @@ engage_header([
                         ?>
                         <?php if (!empty($value)): ?>
                             <div style="margin-bottom:10px; font-size:14px;">
-                                Currently uploaded: <a href="/<?= $e($value) ?>" target="_blank" rel="noopener">View file</a>
+                                Currently uploaded: <a href="<?= $e(engage_upload_url((string) $value, (string) $resumeToken)) ?>" target="_blank" rel="noopener">View file</a>
                             </div>
                         <?php endif; ?>
 

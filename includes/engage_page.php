@@ -260,6 +260,14 @@ function engage_safe_url($u): string {
 }
 
 /**
+ * Link to an uploaded file (a stored 'uploads/...' value). Files are never linked directly: /file checks who
+ * is asking (views/file.php). Pass the resume token when the reader is the applicant, not staff.
+ */
+function engage_upload_url(string $path, string $resumeToken = ''): string {
+    return '/file?' . http_build_query(['p' => $path] + ($resumeToken !== '' ? ['t' => $resumeToken] : []));
+}
+
+/**
  * True on the owner-only chapter theme preview page. That page sets $GLOBALS['ENGAGE_THEME_PREVIEW'] = true
  * (after its own owner check) so the header and footer draw the member look instead of the staff look.
  */
