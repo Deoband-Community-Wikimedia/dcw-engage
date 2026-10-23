@@ -35,6 +35,11 @@ RewriteEngine On
 #    directly would skip the router.
 RewriteRule ^(includes|models|views|vendor|migrations|bin|cron|docs|\.github)(/|$) - [F,L]
 
+# 5b. Uploaded files (ID proofs, CVs, receipts) are never served directly. /file sends them after
+#     checking who is asking (views/file.php). This rule lives here, not in uploads/.htaccess,
+#     because the deploy leaves uploads/ alone.
+RewriteRule ^uploads(/|$) - [F,L]
+
 # 6. Route everything through index.php (except real files/folders)
 RewriteCond %{REQUEST_FILENAME} !-f
 RewriteCond %{REQUEST_FILENAME} !-d

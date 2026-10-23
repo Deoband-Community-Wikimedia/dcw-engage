@@ -185,7 +185,7 @@ function reimbursement_card(array $req, bool $failed, callable $h, InternalNoteM
                         <td class="num">₹<?= number_format($item['amount_paise'] / 100, 2) ?></td>
                         <td>
                             <?php if (!empty($item['receipt_path'])): ?>
-                                <a class="dl" href="/<?= $h($item['receipt_path']) ?>" target="_blank" rel="noopener">View</a>
+                                <a class="dl" href="<?= $h(engage_upload_url($item['receipt_path'])) ?>" target="_blank" rel="noopener">View</a>
                             <?php else: ?>
                                 <span class="sub">None attached</span>
                             <?php endif; ?>

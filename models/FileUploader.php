@@ -61,9 +61,12 @@ class FileUploader {
         // Sanitize applicant name for filename
         $safeName = preg_replace('/[^a-zA-Z0-9_-]/', '_', strtolower($applicantName));
         $safeSlug = preg_replace('/[^a-zA-Z0-9_-]/', '_', strtolower($formSlug));
+        $safeField = preg_replace('/[^a-zA-Z0-9_-]/', '_', strtolower((string) $fieldName));
         $timestamp = time();
+        // Random part: names can't be guessed, and two uploads in the same second never overwrite each other.
+        $random = bin2hex(random_bytes(8));
 
-        $newFileName = sprintf('%s_%s_%s_%s.%s', $safeSlug, $safeName, $fieldName, $timestamp, $ext);
+        $newFileName = sprintf('%s_%s_%s_%s_%s.%s', $safeSlug, $safeName, $safeField, $timestamp, $random, $ext);
         $destination = $this->uploadDir . $newFileName;
 
         if (!move_uploaded_file($fileArray['tmp_name'], $destination)) {

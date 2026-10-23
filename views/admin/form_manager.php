@@ -605,7 +605,7 @@ engage_header([
 
                 if (value && typeof value === 'string' && value.startsWith('uploads/')) {
                     const link = document.createElement('a');
-                    link.href = '/' + value;
+                    link.href = '/file?p=' + encodeURIComponent(value);   // access-checked, see views/file.php
                     link.target = '_blank';
                     link.style.color = 'var(--primary)';
                     link.style.textDecoration = 'underline';
