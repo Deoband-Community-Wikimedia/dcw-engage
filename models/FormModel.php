@@ -223,10 +223,57 @@ class FormModel {
         return $form;
     }
 
+    /** Return the schema sections, adapting older flat schemas without changing their stored data. */
+    public static function schemaSections(array $schema): array {
+        if (isset($schema['sections']) && is_array($schema['sections'])) {
+            $sections = [];
+            foreach ($schema['sections'] as $index => $section) {
+                if (!is_array($section)) continue;
+                $sections[] = [
+                    'id' => (string) ($section['id'] ?? ('section_' . ($index + 1))),
+                    'title' => (string) ($section['title'] ?? ''),
+                    'description' => (string) ($section['description'] ?? ''),
+                    'fields' => is_array($section['fields'] ?? null) ? $section['fields'] : [],
+                ];
+            }
+            return $sections;
+        }
+
+        // Legacy forms remain a single uninterrupted field list with no extra heading.
+        return [[
+            'id' => 'section_1',
+            'title' => '',
+            'description' => '',
+            'fields' => is_array($schema['fields'] ?? null) ? $schema['fields'] : [],
+        ]];
+    }
+
+    /** Ensure flattened field names are present and unique across all sections. */
+    public static function hasUniqueFieldNames(array $schema): bool {
+        $seen = [];
+        foreach (self::schemaFields($schema) as $field) {
+            $name = trim((string) ($field['name'] ?? ''));
+            if ($name === '' || isset($seen[$name])) return false;
+            $seen[$name] = true;
+        }
+        return true;
+    }
+
+    /** Flatten fields for validation, uploads, exports, and other non-layout operations. */
+    public static function schemaFields(array $schema): array {
+        $fields = [];
+        foreach (self::schemaSections($schema) as $section) {
+            foreach ($section['fields'] as $field) {
+                if (is_array($field)) $fields[] = $field;
+            }
+        }
+        return $fields;
+    }
+
     public function validateSubmission($schema, $postData, $skipRequired = false) {
         $errors = [];
 
-        foreach ($schema['fields'] as $field) {
+        foreach (self::schemaFields(is_array($schema) ? $schema : []) as $field) {
             $name = $field['name'];
             $isRequired = $field['required'] ?? false;
             $type = $field['type'] ?? 'text';

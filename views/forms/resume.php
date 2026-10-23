@@ -28,6 +28,8 @@ if (!$application) {
 }
 
 $schema = json_decode($application['schema_json'], true);
+$schemaSections = FormModel::schemaSections(is_array($schema) ? $schema : []);
+$schema['fields'] = FormModel::schemaFields(is_array($schema) ? $schema : []);
 $formData = json_decode($application['form_data'], true);
 $status = $application['status'];
 $isLocked = in_array($status, ['Under Review', 'Accepted', 'Rejected']);
@@ -185,7 +187,14 @@ engage_header([
             </div>
         </fieldset>
 
-        <?php foreach ($schema['fields'] as $field):
+        <?php foreach ($schemaSections as $section): ?>
+            <?php if (trim($section['title']) !== '' || trim($section['description']) !== ''): ?>
+                <section class="form-section">
+                    <?php if (trim($section['title']) !== ''): ?><h2><?= $e($section['title']) ?></h2><?php endif; ?>
+                    <?php if (trim($section['description']) !== ''): ?><div class="form-section-intro"><?= MiniWikiText::render($section['description']) ?></div><?php endif; ?>
+                </section>
+            <?php endif; ?>
+            <?php foreach ($section['fields'] as $field):
             $name = $field['name'];
             $label = $field['label'] ?? $name;
             $type = $field['type'] ?? 'text';
@@ -295,6 +304,7 @@ engage_header([
                     <span class="error-text"><?= $e($fieldError) ?></span>
                 <?php endif; ?>
             </div>
+            <?php endforeach; ?>
         <?php endforeach; ?>
 
         <?php if (!$isLocked && $wasDraft): ?>

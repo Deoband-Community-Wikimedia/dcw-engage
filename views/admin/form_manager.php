@@ -236,7 +236,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'export') {
     // Dynamic headers based on Schema + default ones
     $headers = ['Tracking ID', 'Status', 'Date Submitted'];
     $fields = [];
-    foreach ($form['schema']['fields'] as $f) {
+    foreach (FormModel::schemaFields($form['schema']) as $f) {
         $headers[] = $f['label'] ?? $f['name'];
         $fields[] = $f['name'];
     }
@@ -575,7 +575,7 @@ engage_header([
 
 <script>
     // Use the schema from PHP to properly map keys to labels if possible
-    const formSchema = <?= json_encode($form['schema']['fields'] ?? [], JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+    const formSchema = <?= json_encode(FormModel::schemaFields($form['schema']), JSON_HEX_TAG | JSON_HEX_AMP) ?>;
 
     function getLabelForName(name) {
         const field = formSchema.find(f => f.name === name);

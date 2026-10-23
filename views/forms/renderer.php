@@ -71,6 +71,8 @@ if (!empty($previewSchema)) {
 }
 
 $schema = $form['schema'];
+$schemaSections = FormModel::schemaSections(is_array($schema) ? $schema : []);
+$schema['fields'] = FormModel::schemaFields(is_array($schema) ? $schema : []);
 
 // Feedback forms (schema "kind": "feedback") are a different kind of form, unlike applications.
 // No drafts, magic links, tracking ID or applications row. They have their own view and their own table.
@@ -774,7 +776,14 @@ engage_header([
                     </div>
                 </div>
 
-                <?php foreach ($schema['fields'] as $field):
+                <?php foreach ($schemaSections as $section): ?>
+                    <?php if (trim($section['title']) !== '' || trim($section['description']) !== ''): ?>
+                        <section class="form-section">
+                            <?php if (trim($section['title']) !== ''): ?><h2><?= htmlspecialchars($section['title'], ENT_QUOTES, 'UTF-8') ?></h2><?php endif; ?>
+                            <?php if (trim($section['description']) !== ''): ?><div class="form-section-intro"><?= MiniWikiText::render($section['description']) ?></div><?php endif; ?>
+                        </section>
+                    <?php endif; ?>
+                    <?php foreach ($section['fields'] as $field):
                     $name = $field['name'];
                     $label = $field['label'] ?? $name;
                     $type = $field['type'] ?? 'text';
@@ -866,6 +875,7 @@ engage_header([
                             <span class="error-text"><?= htmlspecialchars($fieldError) ?></span>
                         <?php endif; ?>
                     </div>
+                    <?php endforeach; ?>
                 <?php endforeach; ?>
 
                 <div class="btnrow">

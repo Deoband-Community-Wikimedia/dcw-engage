@@ -1162,3 +1162,32 @@ table.ms-table { width: 100%; border-collapse: collapse; min-width: 720px; }
 @media (max-width: 640px) {
     .mpop button.out { padding: 13px 12px; }
 }
+
+
+/* Form sections (public forms and the admin builder). */
+.form-section {
+    margin: 24px 0 12px;
+}
+.form-section-intro {
+    margin-top: 8px;
+}
+.form-section-card {
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 20px;
+    margin: 22px 0;
+    background: var(--surface, #fff);
+}
+.section-card-header {
+    justify-content: space-between;
+    align-items: center;
+}
+.section-description {
+    width: 100%;
+    padding: 12px;
+    border: 1.5px solid var(--border);
+    border-radius: 10px;
+}
+.add-section-field {
+    margin-top: 12px;
+}

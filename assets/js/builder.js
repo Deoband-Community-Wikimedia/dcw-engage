@@ -1,5 +1,4 @@
-const fieldsContainer = document.getElementById('fields_container');
-const addFieldBtn = document.getElementById('add_field_btn');
+const sectionsContainer = document.getElementById('sections_container');
 const builderForm = document.getElementById('builderForm');
 let fieldCounter = 0;
 
@@ -8,7 +7,7 @@ let fieldCounter = 0;
 // (which would silently attach the old question's answers to it).
 const savedFieldNames = new Set();
 
-function createFieldCard(fieldData = null) {
+function createFieldCard(fieldData = null, targetContainer = null) {
     fieldCounter++;
     const card = document.createElement('div');
     card.className = 'field-card';
@@ -67,7 +66,7 @@ function createFieldCard(fieldData = null) {
         </div>
     `;
 
-    fieldsContainer.appendChild(card);
+    (targetContainer || document.querySelector('.section-fields')).appendChild(card);
 }
 
 // Toggle options visibility if select is chosen
@@ -82,13 +81,11 @@ window.removeField = function (id) {
     document.getElementById(`field_${id}`).remove();
 };
 
-// Move a field card up (-1) or down (+1). Field order on submit is read
-// straight off the DOM (see the submit handler below), so swapping the
-// cards' position in fields_container is the whole fix — no separate
-// "order" value to track or persist.
+// Move a field card within its own section. Field order is read from the DOM.
 window.moveField = function (id, direction) {
     const card = document.getElementById(`field_${id}`);
     if (!card) return;
+    const fieldsContainer = card.parentElement;
 
     if (direction === -1) {
         const prev = card.previousElementSibling;
@@ -103,9 +100,8 @@ window.moveField = function (id, direction) {
 // Same Bold/Italic/Link syntax as the description toolbar below, but
 // deliberately without heading/indent/list — those are block-level
 // constructs that don't make sense inside a single-line question label.
-// Delegated on fieldsContainer since cards are added/removed dynamically,
-// so one listener covers every card without rebinding per-card.
-fieldsContainer.addEventListener('click', function(e) {
+// Delegated on the sections container so dynamic field cards share one listener.
+sectionsContainer.addEventListener('click', function(e) {
     const wrapBtn = e.target.closest('.label-fmt-btn');
     const linkBtn = e.target.closest('.label-fmt-link');
     if (!wrapBtn && !linkBtn) return;
@@ -240,7 +236,55 @@ if (descriptionToolbar) {
     window.addEventListener('load', autoGrowDescription);
 }
 
+let sectionCounter = 0;
 let slugEdited = false;
+
+function createSection(sectionData = {}) {
+    sectionCounter++;
+    const section = document.createElement('section');
+    section.className = 'form-section-card';
+    section.dataset.sectionId = sectionData.id || ('section_' + sectionCounter);
+    section.innerHTML = `
+        <div class="row section-card-header">
+            <strong>Section ${sectionCounter}</strong>
+            <button type="button" class="btn-danger remove-section-btn">Remove section</button>
+        </div>
+        <label for="section_title_${sectionCounter}">Section title</label>
+        <input type="text" id="section_title_${sectionCounter}" class="section-title" placeholder="e.g. Personal Details" value="${String(sectionData.title || '').replace(/&/g, '&amp;').replace(/\"/g, '&quot;').replace(/</g, '&lt;')}">
+        <label for="section_description_${sectionCounter}">Section introduction (optional)</label>
+        <textarea id="section_description_${sectionCounter}" class="section-description" rows="2" placeholder="Briefly explain this section to applicants">${String(sectionData.description || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</textarea>
+        <div class="section-fields"></div>
+        <button type="button" class="btn-outline btn-sm add-section-field">+ Add Question to Section</button>
+    `;
+    sectionsContainer.appendChild(section);    sectionsContainer.appendChild(section);
+    const fieldContainer = section.querySelector('.section-fields');
+    if (Array.isArray(sectionData.fields) && sectionData.fields.length) {
+        sectionData.fields.forEach(field => createFieldCard(field, fieldContainer));
+    }
+    return section;
+}
+
+sectionsContainer.addEventListener('click', function (e) {
+    const add = e.target.closest('.add-section-field');
+    if (add) {
+        createFieldCard(null, add.closest('.form-section-card').querySelector('.section-fields'));
+        return;
+    }
+    const remove = e.target.closest('.remove-section-btn');
+    if (remove) {
+        const section = remove.closest('.form-section-card');
+        const all = sectionsContainer.querySelectorAll('.form-section-card');
+        if (all.length <= 1) {
+            window.alert('A form must have at least one section.');
+            return;
+        }
+        if (section.querySelectorAll('.field-card').length > 0
+            && !window.confirm('This section contains questions. Removing it will permanently remove those questions from this form. Continue?')) {
+            return;
+        }
+        section.remove();
+    }
+});
 
 if (typeof existingSchema !== 'undefined' && existingSchema) {
     document.getElementById('form_title').value = existingSchema.title || '';
@@ -249,20 +293,28 @@ if (typeof existingSchema !== 'undefined' && existingSchema) {
     document.getElementById('form_type').value = typeof existingFormType !== 'undefined' ? existingFormType : '';
     slugEdited = true;
 
-    if (existingSchema.fields && existingSchema.fields.length > 0) {
-        existingSchema.fields.forEach(field => {
-            createFieldCard(field);
-        });
+    if (Array.isArray(existingSchema.sections) && existingSchema.sections.length) {
+        existingSchema.sections.forEach(sectionData => createSection(sectionData));
     } else {
-        createFieldCard();
+        const section = createSection({title: '', description: ''});
+        const container = section.querySelector('.section-fields');
+        if (Array.isArray(existingSchema.fields) && existingSchema.fields.length) {
+            existingSchema.fields.forEach(field => createFieldCard(field, container));
+        } else {
+            createFieldCard(null, container);
+        }
     }
 } else {
-    // Add initial field
-    createFieldCard();
+    const section = createSection({title: '', description: ''});
+    createFieldCard(null, section.querySelector('.section-fields'));
 }
 
-if (addFieldBtn) {
-    addFieldBtn.addEventListener('click', () => createFieldCard());
+const addSectionBtn = document.getElementById('add_section_btn');
+if (addSectionBtn) {
+    addSectionBtn.addEventListener('click', () => {
+        const section = createSection({title: '', description: ''});
+        section.querySelector('.section-title').focus();
+    });
 }
 
 // Auto-generate URL Slug from Title
@@ -293,18 +345,13 @@ function buildSchemaFromForm() {
     const description = document.getElementById('form_description').value;
     const bannerImage = document.getElementById('banner_image').value;
 
-    const schema = {
-        title: title,
-        description: description,
-        banner_image: bannerImage,
-        fields: []
-    };
+    const schema = {title, description, banner_image: bannerImage, sections: []};
 
     const cards = Array.from(document.querySelectorAll('.field-card'));
 
     // Keys that are off limits for a brand-new field: every key loaded from the
     // saved schema (even if its question was trashed since) plus every key
-    // currently on a card. Keeps new keys unique and never reuses a saved one.
+    // currently on a card, in any section. Keeps new keys unique and never reuses a saved one.
     const used = new Set(savedFieldNames);
     cards.forEach(c => { if (c.dataset.fieldName) used.add(c.dataset.fieldName); });
 
@@ -324,33 +371,33 @@ function buildSchemaFromForm() {
         return candidate;
     };
 
-    cards.forEach(card => {
-        const label = card.querySelector('.field-label').value;
-        const type = card.querySelector('.field-type').value;
-        const isRequired = card.querySelector('.field-required').checked;
-
-        // Existing fields keep their saved key no matter how the label changes.
-        let name = card.dataset.fieldName;
-        if (!name) {
-            name = makeName(label);
-            card.dataset.fieldName = name;
-        }
-
-        const fieldData = {
-            name: name,
-            label: label,
-            type: type,
-            required: isRequired
+    document.querySelectorAll('.form-section-card').forEach((section, sectionIndex) => {
+        const sectionData = {
+            id: section.dataset.sectionId || ('section_' + (sectionIndex + 1)),
+            title: section.querySelector('.section-title').value.trim(),
+            description: section.querySelector('.section-description').value.trim(),
+            fields: []
         };
+        section.querySelectorAll('.field-card').forEach(card => {
+            const label = card.querySelector('.field-label').value;
+            const type = card.querySelector('.field-type').value;
+            const isRequired = card.querySelector('.field-required').checked;
 
-        if (type === 'select' || type === 'checkbox_group') {
-            const optionsRaw = card.querySelector('.field-options').value;
-            fieldData.options = optionsRaw.split(',').map(opt => opt.trim()).filter(opt => opt.length > 0);
-        }
+            // Existing fields keep their saved key no matter how the label changes.
+            let name = card.dataset.fieldName;
+            if (!name) {
+                name = makeName(label);
+                card.dataset.fieldName = name;
+            }
 
-        schema.fields.push(fieldData);
+            const fieldData = {name, label, type, required: isRequired};
+            if (type === 'select' || type === 'checkbox_group') {
+                fieldData.options = card.querySelector('.field-options').value.split(',').map(opt => opt.trim()).filter(opt => opt.length > 0);
+            }
+            sectionData.fields.push(fieldData);
+        });
+        schema.sections.push(sectionData);
     });
-
     return schema;
 }
 
@@ -370,7 +417,7 @@ const previewForm = document.getElementById('previewForm');
 if (previewFormBtn && previewForm) {
     previewFormBtn.addEventListener('click', function () {
         const schema = buildSchemaFromForm();
-        if (!schema.fields.length) {
+        if (!schema.sections.some(section => section.fields.length)) {
             window.alert('Add at least one question before previewing.');
             return;
         }

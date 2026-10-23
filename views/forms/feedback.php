@@ -55,7 +55,8 @@ $isPreview = !empty($previewSchema);
 $fbFormId  = $form['id'] ?? null;
 $formIdInt = (int) $fbFormId;
 $fbPath    = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
-$fbFields  = is_array($schema['fields'] ?? null) ? $schema['fields'] : [];
+$fbSections = isset($schemaSections) && is_array($schemaSections) ? $schemaSections : FormModel::schemaSections($schema);
+$fbFields  = FormModel::schemaFields($schema);
 $fbTitle   = (string) ($schema['title'] ?? 'Feedback');
 $fbErrors  = [];
 $fbName    = '';   // gate form values (kept when re-showing the gate with errors)
@@ -528,7 +529,14 @@ engage_header([
                 (<?= htmlspecialchars($fbVerified['email']) ?>). A receipt will be sent to this address.
             </p>
 
-            <?php foreach ($fbFields as $field):
+            <?php foreach ($fbSections as $section): ?>
+                <?php if (trim($section['title']) !== '' || trim($section['description']) !== ''): ?>
+                    <section class="form-section">
+                        <?php if (trim($section['title']) !== ''): ?><h2><?= htmlspecialchars($section['title'], ENT_QUOTES, 'UTF-8') ?></h2><?php endif; ?>
+                        <?php if (trim($section['description']) !== ''): ?><div class="form-section-intro"><?= MiniWikiText::render($section['description']) ?></div><?php endif; ?>
+                    </section>
+                <?php endif; ?>
+                <?php foreach ($section['fields'] as $field):
                 $name = (string) ($field['name'] ?? '');
                 if ($name === '') continue;
                 $type = (string) ($field['type'] ?? 'text');
@@ -593,6 +601,7 @@ engage_header([
                         <span class="error-text"><?= htmlspecialchars($fieldErr) ?></span>
                     <?php endif; ?>
                 </div>
+                <?php endforeach; ?>
             <?php endforeach; ?>
 
             <button type="submit" <?= $isPreview ? 'disabled title="Disabled in preview mode"' : '' ?>>Submit Feedback</button>
