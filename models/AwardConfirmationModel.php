@@ -33,8 +33,10 @@ Date you will arrive | date | required
 Date you will leave | date | required
 Mode of travel | select | required | Train, Bus, Flight, Own vehicle
 Food preference | select | required | Vegetarian, Non-vegetarian, Vegan, No preference
-Do you need accommodation arranged? | select | required | Yes, No
-Stay preferences or accessibility needs | textarea | optional
+Are you local to the event city? | select | required | Yes, No
+Do you need accommodation arranged? | select | required | Yes, No | if Are you local to the event city? = No
+Stay preferences | textarea | optional | | if Do you need accommodation arranged? = Yes
+Accessibility needs or other requests | textarea | optional
 Emergency contact (name and phone) | text | required
 TXT;
 
@@ -49,8 +51,13 @@ TXT;
     // ------------------------------------------------------------------
 
     /**
-     * Parse the questions text into fields: [['name' => 'q0', 'label', 'type', 'required' => bool, 'options' => []], ...].
+     * Parse the questions text into fields:
+     *   [['name' => 'q0', 'label', 'type', 'required' => bool, 'options' => [], 'showif' => null|['name','label','value']], ...].
      * Blank lines are ignored. Throws InvalidArgumentException with a message that is safe to show the organizer.
+     *
+     * Line format:  Question | type | required or optional | choices (a select only) | if Earlier question = Choice
+     * The last part is optional: the question is then shown (and asked) only when the awardee gave that answer to an
+     * EARLIER select question. Leave the choices part empty for other types:  Stay preferences | textarea | optional | | if ...
      */
     public static function parseFields(string $text): array {
         $fields = [];
@@ -86,13 +93,55 @@ TXT;
                 if (count($options) > 20) throw new InvalidArgumentException($at . 'a select can have at most 20 choices.');
             }
 
+            // Optional "only if" rule: it must point at a select question listed ABOVE this one, and at one of its choices.
+            $showif = null;
+            if (($parts[4] ?? '') !== '') {
+                if (!preg_match('/^if\s+(.+?)\s*=\s*(.+)$/iu', $parts[4], $m)) {
+                    throw new InvalidArgumentException($at . 'the fifth part must look like:  if Earlier question = Choice');
+                }
+                [$ctlLabel, $ctlValue] = [trim($m[1]), trim($m[2])];
+                $ctl = null;
+                foreach ($fields as $prev) {
+                    if (mb_strtolower($prev['label']) === mb_strtolower($ctlLabel)) { $ctl = $prev; break; }
+                }
+                if ($ctl === null) {
+                    throw new InvalidArgumentException($at . "\"$ctlLabel\" must be a question listed above this one.");
+                }
+                if ($ctl['type'] !== 'select') {
+                    throw new InvalidArgumentException($at . "\"$ctlLabel\" is not a select, so it cannot decide whether this question is shown.");
+                }
+                if (!in_array($ctlValue, $ctl['options'], true)) {
+                    throw new InvalidArgumentException($at . "\"$ctlValue\" is not one of the choices of \"$ctlLabel\".");
+                }
+                $showif = ['name' => $ctl['name'], 'label' => $ctl['label'], 'value' => $ctlValue];
+            }
+
             $fields[] = ['name' => 'q' . count($fields), 'label' => $label, 'type' => $type,
-                         'required' => $req === 'required', 'options' => $options];
+                         'required' => $req === 'required', 'options' => $options, 'showif' => $showif];
             if (count($fields) > self::MAX_FIELDS) {
                 throw new InvalidArgumentException('Ask at most ' . self::MAX_FIELDS . ' questions.');
             }
         }
         return $fields;
+    }
+
+    /**
+     * Which questions are shown, given the current answers ($values: field name => answer).
+     * A question with an "only if" rule is shown when the question it depends on is itself shown and has that answer,
+     * so a chain (local? -> accommodation? -> stay preferences) hides everything below a "no".
+     * Returns [field name => bool]. Used for what the page shows AND for what the server accepts, so a hidden
+     * question can never be required, validated or saved.
+     */
+    public static function visibleMap(array $fields, array $values): array {
+        $vis = [];
+        foreach ($fields as $f) {
+            $c = $f['showif'] ?? null;
+            if ($c === null) { $vis[$f['name']] = true; continue; }
+            $v = $values[$c['name']] ?? '';
+            $v = is_scalar($v) ? trim((string) $v) : '';
+            $vis[$f['name']] = !empty($vis[$c['name']]) && $v === $c['value'];
+        }
+        return $vis;
     }
 
     // ------------------------------------------------------------------
