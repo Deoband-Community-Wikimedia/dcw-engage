@@ -41,6 +41,8 @@ require_once __DIR__ . '/../../includes/mail/ApplicationMail.php';   // Applicat
  * overdue row is only FLAGGED, and a reviewer accepts whoever they choose from the applications still open.
  * "Send confirmation link / reminder" emails the private link again (it is also how people accepted before
  * confirmation was switched on get their first link). Responses download as a CSV from the program panel.
+ * The introduction supports the same wiki formatting as the letters (the public page renders it with
+ * MiniWikiText), and "Preview confirmation page" shows the page as an awardee sees it without saving or sending.
  *
  * "Needs information" sets the application back to Draft, makes a one-time link (/resume/<token>) and EMAILS
  * the applicant your message plus that link (Mailer::sendSentBack). If the email cannot be sent, the link and
@@ -189,11 +191,11 @@ $emailSentBack = function (array $row, string $message, string $token): bool {
 };
 
 // ---------------------------------------------------------------------------
-// Scholarship letters: save, or preview (nothing is sent by a preview).
+// Scholarship letters and award confirmation: save, or preview (nothing is sent or saved by a preview).
 // The program must be one this person may review, so editing the request cannot reach any other form.
 // ---------------------------------------------------------------------------
 if (!$id && $_SERVER['REQUEST_METHOD'] === 'POST'
-    && in_array($_POST['action'] ?? '', ['save_letters', 'preview_award', 'preview_decline', 'save_confirm'], true)) {
+    && in_array($_POST['action'] ?? '', ['save_letters', 'preview_award', 'preview_decline', 'save_confirm', 'preview_confirm'], true)) {
     if (!CSRF::validate($_POST['csrf_token'] ?? '')) die('Invalid CSRF token.');
     $lf = (int) ($_POST['form_id'] ?? 0);
     if (!isset($allowed[$lf])) { http_response_code(404); die('Program not found.'); }
@@ -243,6 +245,141 @@ if (!$id && $_SERVER['REQUEST_METHOD'] === 'POST'
             $error = $e->getMessage();
             $keepConfirm = $_POST;
         }
+    } elseif ($_POST['action'] === 'preview_confirm') {
+        // The confirmation page as an awardee sees it, built from what is typed in the panel (saved or not).
+        // Uses the real engage_header / engage_footer and the same MiniWikiText rendering as /confirm/<token>.
+        // Nothing is saved or sent, and the form on the preview page does not submit.
+        $ph = fn($v) => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');   // local: $h is defined further down
+        $pform = $formModel->getFormById($lf);
+        $ptitle = CoreMail::eventTitle((string) (($pform['schema']['title'] ?? '') ?: ($pform['form_type'] ?? '')));
+        $pintro = trim(str_replace(["\r\n", "\r"], "\n", (string) ($_POST['confirm_intro'] ?? '')));
+
+        // The deadline is typed in IST; show it the way the live page does (formatIst expects a stored UTC value).
+        $pdl = trim((string) ($_POST['confirm_deadline'] ?? ''));
+        $pts = $pdl !== '' ? FormModel::istInputToTs($pdl) : null;
+        $pdlLabel = $pts !== null ? FormModel::formatIst(gmdate('Y-m-d H:i:s', $pts)) : '';
+
+        try {
+            $pfields = AwardConfirmationModel::parseFields((string) ($_POST['confirm_fields'] ?? ''));
+            $pfieldsError = '';
+        } catch (Throwable $ex) {
+            $pfields = [];
+            $pfieldsError = $ex->getMessage();
+        }
+
+        engage_header([
+            'title'   => 'Preview: Confirm your scholarship - ' . $ptitle,
+            'heading' => $ptitle,
+            'kicker'  => 'Confirm your scholarship',
+            'lead'    => $pdlLabel !== '' ? 'Please submit your response by ' . $pdlLabel . '.' : '',
+            'crumbs'  => [['Home', '/'], ['Confirm your scholarship']],
+            'noindex' => true,
+        ]);
+        ?>
+<style>
+    .fcard .field .error-text { display: block; margin-top: 5px; font-size: 13px; color: var(--accent, #b91c1c); }
+    .choices.stack input { margin: 0; }
+    .confirm-intro { margin: 0 0 22px; line-height: 1.6; }
+    .confirm-hint { margin: 6px 0 0; font-size: 13px; color: var(--muted); }
+    .when-confirming[hidden], .when-declining[hidden], .fcard .field[hidden] { display: none !important; }
+</style>
+<div class="fcard">
+    <div class="action-banner"><strong>Preview only.</strong> Nothing was saved or sent, and this form does not submit. Your own settings are used, whether or not they are saved yet.</div>
+    <?php if ($pfieldsError !== ''): ?><div class="alert error">The questions could not be read: <?= $ph($pfieldsError) ?></div><?php endif; ?>
+    <?php if ($pdlLabel === ''): ?><div class="alert error">No deadline is set yet. Confirmation cannot be turned on without one.</div><?php endif; ?>
+
+    <p class="confirm-intro">Dear <strong>Sample Applicant</strong>,</p>
+    <?php if ($pintro !== ''): ?>
+        <div class="confirm-intro"><?= MiniWikiText::render($pintro) ?></div>
+    <?php endif; ?>
+    <?php if ($pdlLabel !== ''): ?>
+        <p class="confirm-intro">Please submit your response by <strong><?= $ph($pdlLabel) ?></strong>.</p>
+    <?php endif; ?>
+
+    <form id="previewForm" onsubmit="return false;">
+        <fieldset class="group">
+            <legend>Your scholarship</legend>
+            <div class="field">
+                <div class="choices stack">
+                    <label>
+                        <input type="radio" name="response" value="confirmed">
+                        <span>Yes, I confirm that I will accept the scholarship for <?= $ph($ptitle) ?></span>
+                    </label>
+                    <label>
+                        <input type="radio" name="response" value="declined">
+                        <span>No, I am unable to accept the scholarship</span>
+                    </label>
+                </div>
+            </div>
+        </fieldset>
+
+        <div class="when-confirming" id="whenConfirming" hidden>
+            <?php if ($pfields): ?>
+            <fieldset class="group">
+                <legend>Your details</legend>
+                <?php foreach ($pfields as $pf): $psf = $pf['showif'] ?? null; $pn = $pf['name']; ?>
+                    <div class="field"<?= $psf ? ' data-showif-name="' . $ph($psf['name']) . '" data-showif-value="' . $ph($psf['value']) . '"' : '' ?><?= $psf ? ' hidden' : '' ?>>
+                        <label for="<?= $ph($pn) ?>"><?= $ph($pf['label']) ?><?= $pf['required'] ? ' <span class="req-star">*</span>' : '' ?></label>
+                        <?php if ($pf['type'] === 'select'): ?>
+                            <select name="<?= $ph($pn) ?>" id="<?= $ph($pn) ?>">
+                                <option value="">-- Please Select --</option>
+                                <?php foreach ($pf['options'] as $opt): ?>
+                                    <option value="<?= $ph($opt) ?>"><?= $ph($opt) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        <?php elseif ($pf['type'] === 'textarea'): ?>
+                            <textarea name="<?= $ph($pn) ?>" id="<?= $ph($pn) ?>" rows="3"></textarea>
+                        <?php else: ?>
+                            <input type="<?= $ph($pf['type']) ?>" name="<?= $ph($pn) ?>" id="<?= $ph($pn) ?>">
+                        <?php endif; ?>
+                        <?php if ($psf): ?><p class="confirm-hint">Only shown when &ldquo;<?= $ph($psf['label']) ?>&rdquo; is &ldquo;<?= $ph($psf['value']) ?>&rdquo;.</p><?php endif; ?>
+                    </div>
+                <?php endforeach; ?>
+            </fieldset>
+            <?php endif; ?>
+        </div>
+
+        <div class="when-declining" id="whenDeclining" hidden>
+            <div class="field">
+                <label for="reason">Reason (optional)</label>
+                <textarea name="reason" id="reason" rows="3"></textarea>
+                <p class="confirm-hint">Declining your scholarship is final on this page. If you change your mind later, please write to the committee.</p>
+            </div>
+        </div>
+
+        <button type="button" disabled>Save my response</button>
+    </form>
+</div>
+<script>
+    (function () {
+        var form = document.getElementById('previewForm');
+        var yes = document.getElementById('whenConfirming');
+        var no = document.getElementById('whenDeclining');
+
+        // Same rule as the live page: a question shows when the select it depends on is shown and has that answer.
+        function applyConditions() {
+            yes.querySelectorAll('.field').forEach(function (w) {
+                var n = w.getAttribute('data-showif-name');
+                if (!n) return;
+                var c = form.elements[n];
+                var cw = c && c.closest ? c.closest('.field') : null;
+                w.hidden = !(c && cw && !cw.hidden && c.value === w.getAttribute('data-showif-value'));
+            });
+        }
+        function sync() {
+            var r = form.querySelector('input[name=response]:checked');
+            var v = r ? r.value : '';
+            yes.hidden = v !== 'confirmed';
+            no.hidden = v !== 'declined';
+            applyConditions();
+        }
+        form.addEventListener('change', sync);
+        sync();
+    })();
+</script>
+        <?php
+        engage_footer();
+        exit;
     } else {
         $kind = $_POST['action'] === 'preview_award' ? 'award' : 'decline';
         $pf = $formModel->getFormById($lf);
@@ -1031,7 +1168,8 @@ engage_header([
                     <textarea id="cf-<?= (int) $f['id'] ?>" name="confirm_fields" rows="9" maxlength="<?= (int) AwardConfirmationModel::FIELDS_MAX_CHARS ?>"><?= $h($cv('confirm_fields', 'fields_text', AwardConfirmationModel::DEFAULT_FIELDS)) ?></textarea>
                 </div>
 
-                <p class="hint">Format: <code>Question | type | required or optional | choices</code>. Types: text, textarea, date, tel, number, email, select (a select needs its choices, separated by commas). To ask a question only for some answers, add a fifth part: <code>Do you need accommodation? | select | required | Yes, No | if Are you local? = No</code> (the earlier question must be a select; leave the choices part empty for other types).
+                <p class="hint">Introduction formatting: <code>'''bold'''</code> <code>''italic''</code> <code>[https://example.org link text]</code> <code>* bullet</code> <code># numbered</code> <code>== heading ==</code>. Use &ldquo;Preview confirmation page&rdquo; to see it as an awardee will.<br>
+                    Question format: <code>Question | type | required or optional | choices</code>. Types: text, textarea, date, tel, number, email, select (a select needs its choices, separated by commas). To ask a question only for some answers, add a fifth part: <code>Do you need accommodation? | select | required | Yes, No | if Are you local? = No</code> (the earlier question must be a select; leave the choices part empty for other types).
                     The award letter must contain <code>[{confirm_link} Confirm your place]</code> where the link should appear; confirmation can only be turned on once it does, and letters are on.
                     Answers are stored encrypted. Declining only flags the place as free: nothing is released automatically, and you accept whoever you choose.
                     <?php if (!empty($CS['saved_at'])): ?>Last saved <?= $h($CS['saved_at']) ?> by <?= $h($CS['saved_by']) ?>.<?php endif; ?></p>
@@ -1039,6 +1177,7 @@ engage_header([
 
                 <div class="actrow">
                     <button type="submit" name="action" value="save_confirm" class="btn-solid sm">Save confirmation settings</button>
+                    <button type="submit" name="action" value="preview_confirm" formtarget="_blank" class="btn-ghost sm">Preview confirmation page</button>
                     <a class="btn-ghost sm" style="text-decoration:none" href="?export_confirm=<?= (int) $f['id'] ?>">Download responses (CSV)</a>
                 </div>
             </form>
