@@ -89,6 +89,8 @@ function engage_logo_url(string $chapter = ''): string {
  *   image        social preview image: a Commons file name or link, any URL, or a path (optional;
  *                the default Commons photo in includes/social_meta.php is used)
  *   image_alt    alt text for the preview image (defaults to the heading)
+ *   noindex      true for a private page opened from a secret link (for example /confirm/<token>): the page is marked
+ *                noindex and gets no social preview tags, so the event name and link are never shared or indexed.
  *
  * Top bar: the brand sits alone on the left. On the right, a signed-in member gets the avatar menu
  * (engage_member_menu(), which also holds the About DCW links). Everyone else gets whatever 'tools'
@@ -102,6 +104,7 @@ function engage_header(array $o) {
     $leadHtml = (string) ($o['lead_html'] ?? '');
     $member   = $o['member'] ?? null;
     $tools    = $o['tools'] ?? null;
+    $noindex  = !empty($o['noindex']);   // private page: not indexed, no social preview
 
     // Staff pages with no top-bar tools of their own get the shared staff menu.
     if (engage_is_staff_path() && ($tools === null || trim((string) $tools) === '')) {
@@ -150,10 +153,10 @@ function engage_header(array $o) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="<?= $e($themeColor) ?>">
-    <?php if ($isStaff || $isPreview): ?><meta name="robots" content="noindex, nofollow"><?php endif; ?>
+    <?php if ($isStaff || $isPreview || $noindex): ?><meta name="robots" content="noindex, nofollow"><?php endif; ?>
     <title><?= $e($title) ?> - DCW Engage</title>
     <?php ob_start(); require __DIR__ . '/favicon.php'; echo engage_strip_social_images(ob_get_clean()); ?>
-    <?php if (!$isStaff && !$isPreview) engage_social_meta([
+    <?php if (!$isStaff && !$isPreview && !$noindex) engage_social_meta([
         'title'       => $title . ' - DCW Engage',
         'description' => $o['description'] ?? null,
         'image'       => $o['image'] ?? null,
