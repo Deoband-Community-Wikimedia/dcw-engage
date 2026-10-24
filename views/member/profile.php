@@ -69,17 +69,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } catch (InvalidArgumentException $e) {
         $error = $e->getMessage();
     } catch (Throwable $e) {
-        error_log('Engage profile save failed: ' . $e->getMessage());
+        app_log('Member profile save failed: ' . $e->getMessage());
         $error = 'We could not save that just now. Please try again in a moment.';
     }
 }
 
 // ---- Read ------------------------------------------------------------------------------------------
 $profile = null;
-try { $profile = $profiles->get($memberId); } catch (Throwable $e) { error_log('Engage profile read failed: ' . $e->getMessage()); }
+try { $profile = $profiles->get($memberId); } catch (Throwable $e) { app_log('Member profile read failed: ' . $e->getMessage()); }
 
 $memberships = [];
-try { $memberships = (new MemberModel())->membershipsFor($memberId); } catch (Throwable $e) { /* fall back below */ }
+try { $memberships = (new MemberModel())->membershipsFor($memberId); } catch (Throwable $e) { app_log_ignored('profile.php:82', $e); /* fall back below */ }
 if (!$memberships) $memberships = [$member];
 
 $h = fn($v) => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');

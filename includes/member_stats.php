@@ -56,6 +56,7 @@ function member_stats(): array
             'memberships' => $memberships,
         ];
     } catch (Throwable $e) {
+        app_log_ignored('member_stats.php:58', $e);
         // leave ok = false
     }
 

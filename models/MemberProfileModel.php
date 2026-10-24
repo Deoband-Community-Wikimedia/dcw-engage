@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/../includes/app_log.php';
+require_once __DIR__ . '/../includes/audit.php';
 require_once __DIR__ . '/../includes/wiki_username.php';
 
 /**
@@ -80,7 +81,7 @@ class MemberProfileModel
             'UPDATE member_profile SET username_verified_at = ?, username_verified_by = ?, updated_by = ? WHERE member_id = ?'
         );
         $st->execute([$verified ? gmdate('Y-m-d H:i:s') : null, $verified ? $by : null, $by, $memberId]);
-        app_log('Member profile ' . ($verified ? 'verified' : 'unverified') . ": $memberId username '{$p['wikimedia_username']}' by $by");
+        AuditLog::activity('member.username_' . ($verified ? 'verified' : 'unverified'), $memberId, (string) $p['wikimedia_username'], (string) $by);
     }
 
     public const CARD_TITLE_MAX = 120;
@@ -106,7 +107,7 @@ class MemberProfileModel
              ON DUPLICATE KEY UPDATE card_title = VALUES(card_title), updated_by = VALUES(updated_by)'
         );
         $st->execute([$memberId, $title !== '' ? $title : null, $by]);
-        app_log("Member profile card title: $memberId '" . ($old['card_title'] ?? '') . "' -> '$title' by $by");
+        AuditLog::activity('member.card_title', $memberId, "'" . ($old['card_title'] ?? '') . "' -> '$title'", (string) $by);
     }
 
     private function store(string $memberId, string $raw, string $by, bool $verify): void
@@ -151,8 +152,8 @@ class MemberProfileModel
             throw $e;
         }
 
-        app_log("Member profile username: $memberId '" . ($old['wikimedia_username'] ?? '') . "' -> '$name' by $by"
-            . ($verify ? ' (verified)' : ''));
+        AuditLog::activity('member.username_changed', $memberId,
+            "'" . ($old['wikimedia_username'] ?? '') . "' -> '$name'" . ($verify ? ' (verified)' : ''), (string) $by);
     }
 
     // ---- About you: bio, languages, contribution areas ----------------------------------------
@@ -214,7 +215,7 @@ class MemberProfileModel
             $areaKeys ? implode(',', $areaKeys) : null,
             $by,
         ]);
-        app_log("Member profile about saved: $memberId by $by");
+        AuditLog::activity('member.profile_saved', $memberId, null, (string) $by);
     }
 
     /** Languages of a profile row, as a list. */

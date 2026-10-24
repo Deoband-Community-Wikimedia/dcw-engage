@@ -30,7 +30,7 @@ $page   = max(1, (int) ($_GET['page'] ?? 1));
 
 // A draft can be resumed only while its form is still open (same rule as the dashboard).
 $resumable = [];
-try { $resumable = array_map('intval', array_column((new FormModel())->draftsForEmail($email), 'id')); } catch (Throwable $e) { /* none resumable */ }
+try { $resumable = array_map('intval', array_column((new FormModel())->draftsForEmail($email), 'id')); } catch (Throwable $e) { app_log_ignored('applications.php:33', $e); /* none resumable */ }
 
 $rows = []; $total = 0; $years = []; $failed = false;
 try {
@@ -49,7 +49,7 @@ try {
     }
     $rows = $res['rows'];
 } catch (Throwable $e) {
-    error_log('Engage applications page failed: ' . $e->getMessage());
+    app_log('Member applications page failed: ' . $e->getMessage());
     $failed = true;
 }
 $pages     = max(1, (int) ceil($total / APP_PER_PAGE));

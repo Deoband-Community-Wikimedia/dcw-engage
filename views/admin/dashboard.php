@@ -44,7 +44,7 @@ try {
     $techModel = new TechIssueModel();
     if ($canWorkTech) $techOpen = $techModel->openCount();
     $techWaiting = $techModel->awaitingReporter('team', strtolower((string) Auth::email()));
-} catch (Throwable $e) { /* tables not created yet */ }
+} catch (Throwable $e) { app_log_ignored('dashboard.php:47', $e); /* tables not created yet */ }
 
 // Who gets the forms grid, and which forms they see. Mirrors
 // FormModel::userCanOpen(), which form_manager.php enforces:
@@ -78,7 +78,7 @@ try {
     foreach ((new FeedbackModel())->feedbackForms() as $fbForm) {
         $feedbackCounts[(int) $fbForm['id']] = (int) $fbForm['response_count'];
     }
-} catch (Throwable $e) { /* migration not run yet */ }
+} catch (Throwable $e) { app_log_ignored('dashboard.php:81', $e); /* migration not run yet */ }
 
 // Application forms and feedback forms are shown separately: feedback has responses, not applications.
 $isFeedbackForm = fn($f) => FeedbackModel::isFeedbackSchema(json_decode((string) ($f['schema_json'] ?? ''), true));

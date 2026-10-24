@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/../../includes/init.php';
+require_once __DIR__ . '/../../includes/audit.php';
 require_once __DIR__ . '/../../includes/require_role.php';
 require_once __DIR__ . '/../../includes/wikitext.php';
 require_once __DIR__ . '/../../includes/app_log.php';
@@ -121,7 +122,7 @@ if (!$id && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') ==
                     }
                 }
 
-                app_log("Membership bulk $bulkAct: application #{$row['id']} ({$row['tracking_id']}) by $by");
+                AuditLog::record('membership.' . $bulkAct, Auth::id(), Auth::email(), 'Application #' . $row['id'], $row['tracking_id'] . ' (bulk)');
                 $result['done']++;
 
                 if ($mail) {
@@ -277,13 +278,13 @@ if ($app && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 $model->unlinkMemberId((int) $app['id']);
             } else {
                 $old = $model->relinkApproved($app, $given, $by, $confirm);
-                app_log("Membership ID changed: application #{$app['id']} ({$app['tracking_id']}) $old -> "
-                    . strtoupper(trim($given)) . " by $by");
+                AuditLog::record('membership.id_changed', Auth::id(), Auth::email(), 'Application #' . $app['id'],
+                    "$old -> " . strtoupper(trim($given)));
             }
             $mail = null;
         } else { throw new Exception('Unknown action.'); }
 
-        app_log("Membership $act: application #{$app['id']} ({$app['tracking_id']}) by $by");
+        AuditLog::record('membership.' . $act, Auth::id(), Auth::email(), 'Application #' . $app['id'], (string) $app['tracking_id']);
         // Email failure must never undo a decision that is already saved.
         if (!empty($mail)) {
             try {
