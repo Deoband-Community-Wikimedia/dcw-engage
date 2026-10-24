@@ -21,9 +21,10 @@ class CoreMail {
      * Some forms ask for the age, and people put it in the name field:
      *   "Name, 20"   "Name (20)"   "Name (20 years)"   "Name [20 yrs old]"   "Name - 20"
      *   "Name 20"    "Name 20 years"   "Name, age 20"   "Name aged 20"   "20, Name"
+     *   "Name and 21 years"   "Name & 21"   "Name, and 21"   "Name and I am 21"
      *   "Name, 20, Male"  (everything from the age onwards is dropped)
      * A field label typed before the name is removed too: "Name: Aafi Khan, Age: 21" -> "Aafi Khan".
-     * Names that legitimately contain a comma ("Khan, Mohammad") or other text are left alone.
+     * Names that legitimately contain a comma ("Khan, Mohammad") or other text ("Ali and Sara") are left alone.
      * Returns '' when nothing usable is left (callers then use their own fallback greeting).
      * Use this only for what goes into an email; never to change what is stored.
      */
@@ -40,6 +41,9 @@ class CoreMail {
         $n = preg_replace('/(?:\s*[,;|\/:]\s*|\s+[-–—]\s*)(?:aged?\s*[:\-]?\s*)?\d.*$/isu', '', $n);
         // "Name aged 20", "Name age 20"
         $n = preg_replace('/\s+aged?\s*[:\-]?\s*\d.*$/isu', '', $n);
+        // "Name and 21", "Name & 21 years", "Name, and 21", "Name and I am 21", "Name and aged 21":
+        // "and" (or "&") joining the name to an age. Needs a digit after it, so "Ali and Sara" is left alone.
+        $n = preg_replace('/(?:\s*,\s*|\s+)(?:and\s+|&\s*)(?:(?:i\s*am|i\'m|aged?)\s*[:\-]?\s*)?\d.*$/isu', '', $n);
         // "20, Name": age first.
         $n = preg_replace('/^\d{1,3}\s*[,;:|\/\-–—]\s*/u', '', $n);
         // "Name 20", "Name 20 years", "Name 20 yrs old".
