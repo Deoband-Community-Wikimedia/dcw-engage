@@ -31,7 +31,7 @@ class AwardConfirmationModel {
 Travelling from (city) | text | required
 Date you will arrive | date | required
 Date you will leave | date | required
-Mode of travel | select | required | Train, Bus, Flight, Own vehicle
+Mode of travel | select | required | Train, Bus, Own vehicle
 Food preference | select | required | Vegetarian, Non-vegetarian, Vegan, No preference
 Are you local to the event city? | select | required | Yes, No
 Do you need accommodation arranged? | select | required | Yes, No | if Are you local to the event city? = No
