@@ -193,6 +193,12 @@ if ($route === '/' || $route === '/index.php') {
 // the view checks who is asking before it sends anything.
 } elseif ($route === '/file') {
     require __DIR__ . '/views/file.php';
+// Scholarship award confirmation: the private link in an award letter (see AwardConfirmationModel). The 64-character
+// token identifies one awarded application; no sign-in. Literal pattern, so it must come before the catch-all form route.
+} elseif (preg_match('/^\/confirm\/([a-f0-9]{64})$/', $route, $matches)) {
+    global $confirmToken;
+    $confirmToken = $matches[1];
+    require __DIR__ . '/views/forms/confirm.php';
 } elseif (preg_match('/^\/resume\/([a-zA-Z0-9_-]+)$/', $route, $matches)) {
     $token = $matches[1];
     global $resumeToken;
