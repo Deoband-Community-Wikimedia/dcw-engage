@@ -293,22 +293,33 @@ class ApplicationMail {
     /**
      * Receipt for an awardee's response (confirmed or declined), with the same private link so they can update
      * their answers until the deadline. Failure to send never undoes the response: the caller only logs it.
+     *
+     * $previous is the response they had BEFORE this save ('pending', 'confirmed' or 'declined'), so the wording
+     * can tell a first confirmation, an update of details, and a decline after confirming apart.
+     * (The confirm page may choose not to call this for a plain update; the wording is kept for when it does.)
      */
-    public static function awardReceipt($email, $applicantName, $formTitle, $response, $deadlineLabel, $url, $replyTo, $replyToName = '') {
+    public static function awardReceipt($email, $applicantName, $formTitle, $response, $deadlineLabel, $url, $replyTo, $replyToName = '', $previous = '') {
         $e = fn($s) => CoreMail::e($s);
         $name = self::displayName($applicantName);
         $event = CoreMail::eventTitle($formTitle);
+        $until = $deadlineLabel !== '' ? " You may update your responses until <strong>" . $e($deadlineLabel) . "</strong> using your private link." : '';
+        $untilPlain = $deadlineLabel !== '' ? " You may update your responses until $deadlineLabel using your private link." : '';
 
-        if ($response === 'confirmed') {
-            $line = "Thank you for confirming. We have recorded your acceptance of the scholarship for <strong>" . $e($event) . "</strong>, along with your travel and accommodation details."
-                  . ($deadlineLabel !== '' ? " You may update your responses until <strong>" . $e($deadlineLabel) . "</strong> using your private link." : '');
-            $linePlain = "Thank you for confirming. We have recorded your acceptance of the scholarship for $event, along with your travel and accommodation details."
-                  . ($deadlineLabel !== '' ? " You may update your responses until $deadlineLabel using your private link." : '');
+        if ($response === 'confirmed' && $previous === 'confirmed') {
+            // Already confirmed, now changed their details.
+            $line = "We have received your updated travel and accommodation details for <strong>" . $e($event) . "</strong>. Your scholarship stays confirmed." . $until;
+            $linePlain = "We have received your updated travel and accommodation details for $event. Your scholarship stays confirmed." . $untilPlain;
+            $button = CoreMail::button($url, 'Review or update my answers');
+            $subject = "Your details were updated: $event";
+        } elseif ($response === 'confirmed') {
+            $line = "Thank you for confirming. We have recorded your acceptance of the scholarship for <strong>" . $e($event) . "</strong>, along with your travel and accommodation details." . $until;
+            $linePlain = "Thank you for confirming. We have recorded your acceptance of the scholarship for $event, along with your travel and accommodation details." . $untilPlain;
             $button = CoreMail::button($url, 'Review or update my answers');
             $subject = "Scholarship confirmed: $event";
         } else {
-            $line = "We have recorded that you are unable to accept the scholarship for <strong>" . $e($event) . "</strong>. Thank you for informing us. If you made this selection by mistake, please reply directly to this email.";
-            $linePlain = "We have recorded that you are unable to accept the scholarship for $event. Thank you for informing us. If you made this selection by mistake, please reply directly to this email.";
+            $change = $previous === 'confirmed' ? ' This replaces your earlier confirmation.' : '';
+            $line = "We have recorded that you are unable to accept the scholarship for <strong>" . $e($event) . "</strong>." . $change . " Thank you for informing us. If you made this selection by mistake, please reply directly to this email.";
+            $linePlain = "We have recorded that you are unable to accept the scholarship for $event." . $change . " Thank you for informing us. If you made this selection by mistake, please reply directly to this email.";
             $button = '';
             $subject = "Scholarship declined: $event";
         }
@@ -324,7 +335,7 @@ class ApplicationMail {
             'subject' => $subject,
             'html' => $inner, 'alt' => $alt,
             'dev_result' => true,
-            'dev_log' => "Award $response receipt for $email ($formTitle)",
+            'dev_log' => "Award $response receipt for $email ($formTitle)" . ($previous !== '' ? " (was $previous)" : ''),
         ]);
     }
 
