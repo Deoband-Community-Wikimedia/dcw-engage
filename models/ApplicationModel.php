@@ -408,6 +408,28 @@ class ApplicationModel {
         return $stmt->execute(['status' => $status, 'id' => $id]);
     }
     
+    /** Statuses an application can still be decided from (the same rule as application_review.php). */
+    public const OPEN_STATUSES = ['New', 'Submitted', 'Under Review'];
+
+    /**
+     * Change the status of one application of $formId, but only while it is still open and only if the
+     * status really changes. One guarded UPDATE, so two people clicking at once, or a double click, change
+     * it (and email the applicant) once. A decided (Accepted/Rejected), Discarded or Draft application is
+     * never changed here. Returns true when the row was changed.
+     */
+    public function updateStatusIfOpen(int $id, string $status, int $formId): bool {
+        if (!in_array($status, self::VALID_STATUSES, true)) {
+            throw new Exception("Invalid status.");
+        }
+        $open = implode(',', array_map(fn($s) => $this->db->quote($s), self::OPEN_STATUSES));
+        $stmt = $this->db->prepare(
+            "UPDATE applications SET status = :status
+              WHERE id = :id AND form_id = :form_id AND status IN ($open) AND status <> :same"
+        );
+        $stmt->execute(['status' => $status, 'id' => $id, 'form_id' => $formId, 'same' => $status]);
+        return $stmt->rowCount() === 1;
+    }
+
     /**
      * Bulk-update status for many applications at once.
      * Validates the status against the same whitelist as updateStatus(), and
