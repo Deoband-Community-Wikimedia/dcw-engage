@@ -7,6 +7,8 @@
  * team is shown just "Member" (reporter_label), never an ID, email, name or chapter, and
  * replies reach the member through their own dashboard thread.
  */
+require_once __DIR__ . '/../includes/app_log.php';
+
 class TechIssueModel {
     /** Roles that can work the issue queue and run diagnostics. */
     const STAFF_ROLES = ['technical_manager', 'owner'];
@@ -59,7 +61,7 @@ class TechIssueModel {
 
     public function create(string $type, string $ref, string $label, array $d): string {
         if ($this->recentCount($type, $ref) >= self::MAX_PER_HOUR) {
-            throw new RuntimeException('You have sent several reports in the last hour. Please wait a while, or reply on one you already sent.');
+            throw new UserFacingException('You have sent several reports in the last hour. Please wait a while, or reply on one you already sent.');
         }
         $now = gmdate('Y-m-d H:i:s');
         $ua  = mb_substr((string) ($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 255);

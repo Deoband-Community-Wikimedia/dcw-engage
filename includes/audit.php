@@ -20,6 +20,21 @@ class AuditLog {
      * rather than a signed-in owner. $actorEmail is always stored so the row
      * still names someone after their account is gone.
      */
+    /**
+     * Record something that happened, from code that doesn't know who is signed in (models).
+     * The actor is the signed-in staff account when there is one, otherwise $by (e.g. a member's own
+     * Member ID when they edit their profile), otherwise 'system'.
+     */
+    public static function activity(string $action, ?string $target = null, ?string $detail = null, string $by = ''): void {
+        $id = null;
+        $who = $by;
+        if (class_exists('Auth') && Auth::id()) {
+            $id = Auth::id();
+            $who = (string) Auth::email();
+        }
+        self::record($action, $id, $who !== '' ? $who : 'system', $target, $detail);
+    }
+
     public static function record($action, $actorId, $actorEmail, $target = null, $detail = null) {
         try {
             $db = DB::getInstance()->getConnection();

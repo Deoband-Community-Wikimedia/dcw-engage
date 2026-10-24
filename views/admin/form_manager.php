@@ -193,6 +193,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             try {
                                 Mailer::sendStatusUpdate($target['email'], $target['applicant_name'], $newBulkStatus, $trackingId, $target['form_title'] ?? $form['title'], $applicantNote);
                             } catch (Throwable $e) {
+                                app_log_ignored('form_manager.php:195', $e);
                                 // One failed email must not stop the rest; the status change is already saved.
                             }
                         }

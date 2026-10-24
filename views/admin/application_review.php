@@ -154,7 +154,7 @@ $sendLetter = function (array $row, string $status) use ($letters, $letterModel,
         if ($ok) $letterModel->markSent((int) $row['id']); else $letterModel->markFailed((int) $row['id']);
     } catch (Throwable $e) {
         app_log("Scholarship $kind letter failed for application #{$row['id']}: " . $e->getMessage());
-        try { $letterModel->markFailed((int) $row['id']); } catch (Throwable $e2) {}
+        try { $letterModel->markFailed((int) $row['id']); } catch (Throwable $e2) { app_log_ignored('application_review.php:157', $e2);}
         $ok = false;
     }
     if ($ok) AuditLog::record('scholarship.letter_sent', Auth::id(), Auth::email(), 'Application #' . $row['id'],
@@ -641,7 +641,7 @@ if (!$id && isset($_GET['export_confirm'])) {
     $labels = [];
     try {
         foreach (AwardConfirmationModel::parseFields((string) ($confSettings[$ef]['fields_text'] ?? '')) as $f) $labels[$f['label']] = true;
-    } catch (Throwable $e) {}
+    } catch (Throwable $e) { app_log_ignored('application_review.php:644', $e);}
     $perApp = [];
     foreach ($awardees as $r) {
         $blob = AwardConfirmationModel::decrypt($confByApp[(int) $r['id']]['answers_enc'] ?? '');

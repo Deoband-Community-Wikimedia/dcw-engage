@@ -5,6 +5,7 @@
  * rows are ever visible or changeable through this class.
  */
 require_once __DIR__ . '/MemberStrikeModel.php';
+require_once __DIR__ . '/../includes/audit.php';
 
 class MemberModel {
     const TERM = '+1 year';                       // membership length, confirm with organizers
@@ -393,7 +394,8 @@ class MemberModel {
             $this->db->commit();
 
             if (function_exists('app_log')) {
-                app_log("Answer '$field' changed on application #$id ({$app['tracking_id']}) by $by: '$old' -> '$value'");
+                AuditLog::activity('membership.answer_changed', 'Application #' . $id,
+                    "$field: '" . mb_strimwidth((string) $old, 0, 200, '…') . "' -> '" . mb_strimwidth((string) $value, 0, 200, '…') . "'", (string) $by);
             }
         } catch (Throwable $e) {
             if ($this->db->inTransaction()) $this->db->rollBack();
@@ -541,7 +543,7 @@ class MemberModel {
             $st->execute(['a' => $app['id']]);
             $id = $st->fetchColumn();
             if ($id) return (string) $id;
-        } catch (Throwable $e) { /* links table not created yet */ }
+        } catch (Throwable $e) { app_log_ignored('MemberModel.php:546', $e); /* links table not created yet */ }
 
         if ($verified) return (string) $verified['member_id'];
 

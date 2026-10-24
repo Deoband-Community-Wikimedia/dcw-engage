@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/../includes/app_log.php';
+require_once __DIR__ . '/../includes/audit.php';
 
 /**
  * DCW Engage - striking members off (table member_strikes, see member_strikes.sql).
@@ -153,7 +154,7 @@ class MemberStrikeModel
             throw $e;
         }
         unset(self::$cache[$memberId]);
-        app_log("Member struck off: $memberId by $by. Reason: $reason");
+        AuditLog::activity('member.struck_off', $memberId, $reason, (string) $by);
     }
 
     /** Lift the strike in force. The old card stays dead; a new one is made on their next visit. */
@@ -186,6 +187,6 @@ class MemberStrikeModel
             throw $e;
         }
         unset(self::$cache[$memberId]);
-        app_log("Member reinstated: $memberId by $by. Reason: $reason");
+        AuditLog::activity('member.reinstated', $memberId, $reason, (string) $by);
     }
 }

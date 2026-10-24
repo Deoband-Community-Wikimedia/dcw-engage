@@ -115,6 +115,7 @@ if ($loggedMember !== null && $isMembershipForm && !$isRenewalForm) {
             exit;
         }
     } catch (Throwable $ex) {
+        app_log_ignored('renderer.php:117', $ex);
         // If the lookup fails, proceed normally: the submission-time checks below will still apply.
     }
 }

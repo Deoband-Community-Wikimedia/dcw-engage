@@ -39,10 +39,35 @@ function app_log_redact($message): string {
  */
 function app_log($message, bool $redact = true) {
     $text = $redact ? app_log_redact($message) : str_replace(["
-", "", "
+", "
+", "
 "], ' | ', (string) $message);
     $line = '[' . date('Y-m-d H:i:s') . '] ' . $text . PHP_EOL;
-    @file_put_contents(__DIR__ . '/../app_errors.log', $line, FILE_APPEND | LOCK_EX);
+    $path = app_log_path();
+    if (@file_put_contents($path, $line, FILE_APPEND | LOCK_EX) === false && $path !== APP_LOG_DEFAULT) {
+        // The configured file can't be written (missing folder, permissions): never lose the line.
+        @file_put_contents(APP_LOG_DEFAULT, $line, FILE_APPEND | LOCK_EX);
+    }
+}
+
+/** The app folder's own log, refused over HTTP by the *.log rule in .htaccess. */
+define('APP_LOG_DEFAULT', __DIR__ . '/../app_errors.log');
+
+/**
+ * Where the log is written: config app.log_file when it is set (an absolute path, ideally outside
+ * public_html so the web server can't serve it even if .htaccess stops applying), otherwise APP_LOG_DEFAULT.
+ */
+function app_log_path(): string {
+    static $path = null;
+    if ($path !== null) return $path;
+    $path = APP_LOG_DEFAULT;
+    $cfgFile = __DIR__ . '/config.php';
+    if (is_file($cfgFile)) {
+        $cfg = (static function (string $f) { return include $f; })($cfgFile);
+        $custom = is_array($cfg) ? trim((string) ($cfg['app']['log_file'] ?? '')) : '';
+        if ($custom !== '') $path = $custom;
+    }
+    return $path;
 }
 
 /**
@@ -69,4 +94,25 @@ function engage_user_message(Throwable $e, string $context): string {
         return "Something went wrong on our side. Please try again. If it keeps happening, quote reference $ref.";
     }
     return $e->getMessage();
+}
+
+/**
+ * An exception whose message is written for the person using the page (e.g. "You have sent several
+ * reports in the last hour"). engage_user_message() always shows it. Use it instead of RuntimeException
+ * for anything a user should read, since RuntimeException messages are hidden as system failures.
+ */
+class UserFacingException extends Exception {}
+
+/**
+ * For errors that are caught and deliberately ignored (the page carries on without that piece).
+ * They are still logged, so a real failure doesn't vanish, except "table doesn't exist" (SQLSTATE 42S02,
+ * MySQL 1146), which is expected on an install where a migration hasn't been run yet.
+ */
+function app_log_ignored(string $context, Throwable $e): void {
+    if ($e instanceof PDOException
+        && ((string) $e->getCode() === '42S02' || strpos($e->getMessage(), '1146') !== false)) {
+        return;
+    }
+    app_log("$context (ignored): " . get_class($e) . ': ' . $e->getMessage()
+        . ' (' . basename($e->getFile()) . ':' . $e->getLine() . ')');
 }

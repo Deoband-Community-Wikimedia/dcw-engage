@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/../../includes/init.php';
+require_once __DIR__ . '/../../includes/audit.php';
 require_once __DIR__ . '/../../includes/wikitext.php';
 require_once __DIR__ . '/../../includes/app_log.php';
 require_once __DIR__ . '/../../includes/member_session.php';
@@ -136,8 +137,8 @@ if ($action === 'submit_internet_request' && $type === 'internet') {
 
             // Eligibility and narrative answers are validated inside the model,
             // so the rules live in one place.
-            app_log('Internet support submit: member=' . $member['member_id']
-                . ' attended=' . var_export($elig['attended_ch'] ?? null, true) . ' tech=' . var_export($elig['tech'] ?? null, true));
+            AuditLog::activity('internet.request_submitted', (string) $member['member_id'],
+                'attended=' . var_export($elig['attended_ch'] ?? null, true) . ' tech=' . var_export($elig['tech'] ?? null, true), (string) $member['member_id']);
             $result = $internetModel->createRequest(
                 $verifiedEmail,
                 $applicantName,
