@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/../includes/crypto.php';
+require_once __DIR__ . '/../includes/app_log.php';
 
 /**
  * DCW Engage - Internet Support Requests
@@ -911,7 +912,7 @@ class InternetSupportModel {
                 $row['phone'] = null;
                 $row['phone_error'] = true;
                 // Tracking ID only: never log the number or the ciphertext.
-                error_log('Internet support: could not decrypt phone for ' . ($row['tracking_id'] ?? '?') . ' - ' . $e->getMessage());
+                app_log('Internet support: could not decrypt phone for ' . ($row['tracking_id'] ?? '?') . ' - ' . $e->getMessage());
             }
             unset($row['phone_enc']);
         }

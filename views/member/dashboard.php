@@ -86,7 +86,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'send_
             Mailer::sendMagicLink($email, $fullName !== '' ? $fullName : 'Member', $token);
             $sent = true;
         } catch (Throwable $e) {
-            error_log('Engage dashboard resume link failed: ' . $e->getMessage());
+            app_log('Member dashboard: resume link failed: ' . $e->getMessage());
         }
         break;
     }
@@ -228,7 +228,7 @@ try {
         $applications[] = ['id' => $id, 'title' => $title, 'tracking' => (string) $a['tracking_id'],
             'created' => $a['created_at'], 'label' => $label, 'tone' => $tone, 'act' => $act];
     }
-} catch (Throwable $e) { error_log('Engage applications lookup failed: ' . $e->getMessage()); }
+} catch (Throwable $e) { app_log('Member dashboard: applications lookup failed: ' . $e->getMessage()); }
 // Needs the member first, then newest first.
 usort($applications, fn($a, $b) => [(int) $b['act'], (string) $b['created']] <=> [(int) $a['act'], (string) $a['created']]);
 $totalApplications = count($applications);
@@ -254,7 +254,7 @@ try {
     $certModel  = new MemberCertificateModel();
     $certCount  = $certModel->countForMember($email);
     $certLatest = $certCount > 0 ? $certModel->latestForMember($email, DASH_CERT_PREVIEW) : [];
-} catch (Throwable $e) { error_log('Engage certificates lookup failed: ' . $e->getMessage()); }
+} catch (Throwable $e) { app_log('Member dashboard: certificates lookup failed: ' . $e->getMessage()); }
 $certBase = 'https://certificates.dcwwiki.org';
 
 // ---- One combined "requires your attention" list ---------------------------------------------------

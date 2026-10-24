@@ -11,6 +11,8 @@
  * log rather than throwing. The trade-off is accepted on purpose: the action
  * matters more than its footnote.
  */
+require_once __DIR__ . '/app_log.php';
+
 class AuditLog {
     /**
      * Record one action. $actorId may be null for a self-serve event (a
@@ -34,7 +36,7 @@ class AuditLog {
                 'ip'          => $_SERVER['REMOTE_ADDR'] ?? null,
             ]);
         } catch (Throwable $e) {
-            error_log("Audit log write failed for action '$action': " . $e->getMessage());
+            app_log("Audit log write failed for action '$action': " . $e->getMessage());
         }
     }
 
@@ -54,7 +56,7 @@ class AuditLog {
                  LIMIT $limit"
             )->fetchAll();
         } catch (Throwable $e) {
-            error_log("Audit log read failed: " . $e->getMessage());
+            app_log("Audit log read failed: " . $e->getMessage());
             return [];
         }
     }

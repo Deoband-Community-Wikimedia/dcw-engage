@@ -50,7 +50,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             tech_flash('success', $internal ? 'Internal note saved.' : 'Reply sent. The reporter will see it on their page.');
         }
     } catch (Throwable $e) {
-        error_log('Tech issue staff update failed: ' . $e->getMessage());
+        app_log('Tech issue staff update failed: ' . $e->getMessage());
         tech_flash('error', 'Could not save that. Please try again.');
     }
     header('Location: /admin/tech-issues?id=' . rawurlencode($tracking)); exit;
