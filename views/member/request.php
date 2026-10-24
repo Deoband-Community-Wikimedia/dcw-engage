@@ -138,7 +138,7 @@ if ($isRb) {
                 if (!$path) $error = "Please choose a file to upload.";
             } catch (Exception $ex) {
                 // FileUploader messages are written for the user (size, type, etc).
-                $error = $ex->getMessage();
+                $error = engage_user_message($ex, 'Receipt upload');
             }
             if ($path) {
                 try {

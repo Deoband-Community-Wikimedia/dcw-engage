@@ -157,7 +157,7 @@ if (!$id && $_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?
         $profiles->setVerified($mid, currentAdminIdentifier(), $verify);
         $_SESSION['membership_flash'] = ['ok', $verify ? 'Wikimedia username verified.' : 'Verification removed.'];
     } catch (Throwable $e) {
-        $_SESSION['membership_flash'] = ['error', $e->getMessage()];
+        $_SESSION['membership_flash'] = ['error', engage_user_message($e, 'Membership action')];
     }
     $keep = array_filter(['tab' => 'members', 'form' => $_GET['form'] ?? '', 'q' => $_GET['q'] ?? ''], 'strlen');
     header('Location: /admin/membership-review?' . http_build_query($keep));
@@ -175,7 +175,7 @@ if (!$id && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') ==
         $strikes->reinstate((string) ($_POST['member_id'] ?? ''), (string) ($_POST['reason'] ?? ''), currentAdminIdentifier());
         $_SESSION['membership_flash'] = ['ok', 'Member reinstated. They get a new card on their next visit.'];
     } catch (Throwable $e) {
-        $_SESSION['membership_flash'] = ['error', $e->getMessage()];
+        $_SESSION['membership_flash'] = ['error', engage_user_message($e, 'Membership action')];
     }
     header('Location: /admin/membership-review?tab=struck');
     exit;
@@ -295,7 +295,7 @@ if ($app && $_SERVER['REQUEST_METHOD'] === 'POST') {
             : (preg_match('/^(strike|link_id|unlink_id|relink_id)/', $act) ? '#advanced' : '');
         header('Location: /admin/membership-review?id=' . $app['id'] . '&done=' . urlencode($act) . $anchor);
         exit;
-    } catch (Throwable $e) { $error = $e->getMessage(); }
+    } catch (Throwable $e) { $error = engage_user_message($e, 'Membership decision'); }
     $app = $model->getApplication($id, $scope);   // show fresh state after an error
 }
 $doneText = ['approve' => 'Approved.', 'reject' => 'Rejected.', 'review' => 'Marked under review.',
