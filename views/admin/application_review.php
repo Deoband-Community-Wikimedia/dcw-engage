@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/../../includes/init.php';
+require_once __DIR__ . '/../../includes/audit.php';
 require_once __DIR__ . '/../../includes/require_role.php';
 require_once __DIR__ . '/../../includes/wikitext.php';
 require_once __DIR__ . '/../../includes/app_log.php';
@@ -156,7 +157,8 @@ $sendLetter = function (array $row, string $status) use ($letters, $letterModel,
         try { $letterModel->markFailed((int) $row['id']); } catch (Throwable $e2) {}
         $ok = false;
     }
-    if ($ok) app_log("Scholarship $kind letter sent: #{$row['id']} (letters v" . (int) ($l['version'] ?? 0) . ')');
+    if ($ok) AuditLog::record('scholarship.letter_sent', Auth::id(), Auth::email(), 'Application #' . $row['id'],
+        "$kind letter, letters v" . (int) ($l['version'] ?? 0));
     return $ok;
 };
 
@@ -214,7 +216,7 @@ if (!$id && $_SERVER['REQUEST_METHOD'] === 'POST'
                 (string) ($_POST['award_subject'] ?? ''), (string) ($_POST['award_body'] ?? ''),
                 (string) ($_POST['decline_subject'] ?? ''), (string) ($_POST['decline_body'] ?? ''),
                 currentAdminIdentifier());
-            app_log("Scholarship letters saved: form #$lf by " . currentAdminIdentifier());
+            AuditLog::record('scholarship.letters_saved', Auth::id(), Auth::email(), 'Form #' . $lf);
             $keep = array_filter(['form' => $_GET['form'] ?? '', 'status' => $_GET['status'] ?? ''], 'strlen');
             header('Location: /admin/application-review?' . http_build_query($keep + ['letters' => 'saved']));
             exit;
@@ -237,7 +239,7 @@ if (!$id && $_SERVER['REQUEST_METHOD'] === 'POST'
             }
             $confModel->saveSettings($lf, $on, (string) ($_POST['confirm_deadline'] ?? ''),
                 (string) ($_POST['confirm_fields'] ?? ''), (string) ($_POST['confirm_intro'] ?? ''), currentAdminIdentifier());
-            app_log("Award confirmation settings saved: form #$lf by " . currentAdminIdentifier());
+            AuditLog::record('award.settings_saved', Auth::id(), Auth::email(), 'Form #' . $lf);
             $keep = array_filter(['form' => $_GET['form'] ?? '', 'status' => $_GET['status'] ?? ''], 'strlen');
             header('Location: /admin/application-review?' . http_build_query($keep + ['confirm' => 'saved']));
             exit;
@@ -452,7 +454,7 @@ if (!$id && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') ==
                 } else {
                     $result['letter_failed'][] = ['who' => $who, 'email' => $row['email']];
                 }
-                app_log("Application bulk resend_letter: #{$row['id']} ({$row['tracking_id']}, {$row['form_type']}) by $by");
+                AuditLog::record('scholarship.letter_resent', Auth::id(), Auth::email(), 'Application #' . $row['id'], (string) $row['tracking_id']);
                 $result['done']++;
                 continue;
             }
@@ -473,7 +475,7 @@ if (!$id && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') ==
                     } else {
                         $result['remind_failed'][] = ['who' => $who, 'email' => $row['email']];
                     }
-                    app_log("Application bulk remind_confirm: #{$row['id']} ({$row['tracking_id']}, {$row['form_type']}) by $by");
+                    AuditLog::record('award.reminder_sent', Auth::id(), Auth::email(), 'Application #' . $row['id'], (string) $row['tracking_id']);
                     $result['done']++;
                 }
                 continue;
@@ -517,7 +519,7 @@ if (!$id && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') ==
                         $notifyApplicant($row, APP_ACTIONS[$bulkAct], $note);
                     }
                 }
-                app_log("Application bulk $bulkAct: #{$row['id']} ({$row['tracking_id']}, {$row['form_type']}) by $by");
+                AuditLog::record('application.' . $bulkAct, Auth::id(), Auth::email(), 'Application #' . $row['id'], $row['tracking_id'] . ' (bulk)');
                 $result['done']++;
             } catch (Throwable $e) {
                 $result['skipped'][] = "$who: " . $e->getMessage();
@@ -596,7 +598,7 @@ if ($app && $_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             throw new Exception('Unknown action.');
         }
-        app_log("Application $act: #{$app['id']} ({$app['tracking_id']}, {$app['form_type']}) by $by");
+        AuditLog::record('application.' . $act, Auth::id(), Auth::email(), 'Application #' . $app['id'], (string) $app['tracking_id']);
         header('Location: /admin/application-review?id=' . $app['id'] . '&done=' . urlencode($doneKey));
         exit;
     } catch (Throwable $e) { $error = $e->getMessage(); }
@@ -669,7 +671,7 @@ if (!$id && isset($_GET['export_confirm'])) {
         fputcsv($out, $row);
     }
     fclose($out);
-    app_log("Award confirmations exported: form #$ef by " . currentAdminIdentifier());
+    AuditLog::record('award.confirmations_exported', Auth::id(), Auth::email(), 'Form #' . $ef);
     exit;
 }
 
