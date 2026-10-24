@@ -4,6 +4,8 @@
  * Reads the existing applications/forms tables; only form_type 'membership-%'
  * rows are ever visible or changeable through this class.
  */
+require_once __DIR__ . '/MemberStrikeModel.php';
+
 class MemberModel {
     const TERM = '+1 year';                       // membership length, confirm with organizers
     const OPEN = ['New', 'Submitted', 'Under Review'];
@@ -410,6 +412,12 @@ class MemberModel {
         // No Member ID on the application is simply treated as a normal application;
         // a malformed or unmatched ID throws.
         $verified = $this->verifyRenewalMember($app);
+        // A strike covers every chapter the person holds, so check every Member ID they could be approved under.
+        // The review page hides the Approve button for them; this also stops bulk approvals and crafted requests.
+        $struckId = $this->struckIdFor($app, $verified);
+        if ($struckId !== null) {
+            throw new Exception("$struckId is struck off, so this application can't be approved. Reinstate them first.");
+        }
         $shared = false;
 
         $this->db->beginTransaction();
@@ -515,6 +523,18 @@ class MemberModel {
      *   3. any membership held under the same email (the Generic Community one first, then the oldest).
      *      The application's email is always verified, so the same email is the same person.
      */
+    /** The first Member ID this application's person holds (or renews) that is struck off, or null. */
+    private function struckIdFor(array $app, ?array $verified): ?string {
+        $ids = [];
+        if ($verified) $ids[] = (string) $verified['member_id'];
+        foreach ($this->membershipsForEmail((string) $app['email']) as $m) $ids[] = (string) $m['member_id'];
+        $strikes = new MemberStrikeModel();
+        foreach (array_unique($ids) as $id) {
+            if ($strikes->isStruck($id)) return $id;
+        }
+        return null;
+    }
+
     private function sharedIdFor(array $app, ?array $verified): ?string {
         try {
             $st = $this->db->prepare('SELECT member_id FROM membership_id_links WHERE application_id = :a');
@@ -611,7 +631,10 @@ class MemberModel {
         }
         $st = $this->db->prepare($sql . ' ORDER BY (m.chapter = \'generic\') DESC, m.id ASC LIMIT 1');
         $st->execute($params);
-        return $st->fetch(PDO::FETCH_ASSOC) ?: null;
+        $row = $st->fetch(PDO::FETCH_ASSOC) ?: null;
+        // Struck-off members get no reminder (the page shows the same message either way).
+        if ($row && (new MemberStrikeModel())->isStruck((string) $row['member_id'])) return null;
+        return $row;
     }
 
     /** lower-cased email => memberships (member_id, chapter, status, expires_at), so a queue needs one query, not one per row. */

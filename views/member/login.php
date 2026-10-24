@@ -37,9 +37,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             exit;
         }
         // One message for an unknown ID, no password yet and a wrong password: nobody can use this page to find valid IDs.
-        $error = $result['status'] === 'locked'
-            ? 'Too many failed attempts. Please try again after ' . $result['until'] . ', or reset your password.'
-            : 'Member ID or password is incorrect.';
+        if ($result['status'] === 'locked') {
+            $error = 'Too many failed attempts. Please try again after ' . $result['until'] . ', or reset your password.';
+        } elseif ($result['status'] === 'struck') {
+            $error = 'This membership has been struck off, so it can no longer be used to sign in. If you think this is a mistake, please contact DCW.';
+        } else {
+            $error = 'Member ID or password is incorrect.';
+        }
     }
 }
 
