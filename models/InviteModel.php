@@ -22,6 +22,7 @@
  */
 
 require_once __DIR__ . '/../includes/auth.php';
+require_once __DIR__ . '/../includes/app_log.php';
 require_once __DIR__ . '/MemberModel.php';
 
 class InviteModel {
@@ -291,7 +292,7 @@ class InviteModel {
                     (new MemberModel())->setChapters($invite['email'], $chapters);
                 } catch (Throwable $e) {
                     $chaptersSaved = false;
-                    error_log('Invite redeem: could not set chapters for ' . $invite['email'] . ': ' . $e->getMessage());
+                    app_log('Invite redeem: could not set chapters for invite #' . (int) $invite['id'] . ': ' . $e->getMessage());
                 }
             }
 

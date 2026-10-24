@@ -153,7 +153,7 @@ function internet_review_card(array $req, InternetSupportModel $model, InternalN
     try {
         $snap = (new CommunityRecordsModel())->getSnapshot((string) $req['tracking_id']);
     } catch (Throwable $e) {
-        error_log('Internet review: snapshot lookup failed for ' . $req['tracking_id'] . ': ' . $e->getMessage());
+        app_log('Internet review: snapshot lookup failed for ' . $req['tracking_id'] . ': ' . $e->getMessage());
     }
     $internalNotes = $noteModel->forRequest('internet', (int) $req['id']);
     // The amount box starts at the earlier approval (a re-approval after a failed recharge), else the request.
