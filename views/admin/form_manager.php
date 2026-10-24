@@ -97,6 +97,17 @@ if (($_GET['deadline'] ?? '') === 'saved') {
     $success = 'Deadline removed.';
 }
 
+// Result of a status change (set by the redirects in the POST handler).
+if (isset($_GET['changed'])) {
+    $nChanged = max(0, (int) $_GET['changed']);
+    $nSkipped = max(0, (int) ($_GET['skipped'] ?? 0));
+    $success = $nChanged === 1 ? 'Status updated for 1 application.' : "Status updated for $nChanged applications.";
+    if ($nSkipped > 0) {
+        $success .= ' ' . ($nSkipped === 1 ? '1 was' : "$nSkipped were") . ' left as they were: already decided,'
+            . ' already in that status, or waiting on the applicant.';
+    }
+}
+
 // Handle POST actions
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!CSRF::validate($_POST['csrf_token'] ?? ''))
@@ -147,12 +158,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $newStatus = $_POST['status'] ?? '';
             $applicantNote = trim($_POST['applicant_note'] ?? '');
 
+            $changed = 0;
+            // Only an application of this form that is still open (New, Submitted, Under Review) can be
+            // decided here, and only if the status really changes: a decided application stays decided,
+            // so nobody gets a second or contradicting email. The model checks this in one guarded UPDATE.
             if (
                 in_array($targetAppId, $ownedIds, true)
-                && ($statusById[$targetAppId] ?? '') !== 'Draft'
                 && in_array($newStatus, $allowedStatuses, true)
+                && $appModel->updateStatusIfOpen($targetAppId, $newStatus, $formId)
             ) {
-                $appModel->updateStatus($targetAppId, $newStatus);
+                $changed = 1;
 
                 // Let the applicant know the moment a decision is made. Not fired
                 // for 'New' since that's just the default/unreviewed state, not
@@ -167,7 +182,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
 
-            header("Location: /admin/form_manager?id=" . $formId . buildFilterQueryString());
+            header("Location: /admin/form_manager?id=" . $formId . buildFilterQueryString() . "&changed=$changed&skipped=" . (1 - $changed));
             exit;
         } elseif ($_POST['action'] === 'bulk_update_status') {
             // Only ids that really belong to this form, as integers, and never Drafts.
@@ -180,13 +195,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ));
             $newBulkStatus = $_POST['bulk_status'] ?? '';
             $applicantNote = trim($_POST['bulk_applicant_note'] ?? '');
+            $changedIds = [];
             if (!empty($selectedIds) && in_array($newBulkStatus, $allowedStatuses, true)) {
                 @set_time_limit(300);   // each decision sends an email
-                $appModel->updateStatusBulk($selectedIds, $newBulkStatus, $formId);
+                // Same rule as a single change: only still-open applications, and only real changes, are
+                // updated and emailed. Already-decided ones in the selection are skipped and counted.
+                foreach ($selectedIds as $id) {
+                    if ($appModel->updateStatusIfOpen($id, $newBulkStatus, $formId)) $changedIds[] = $id;
+                }
 
                 if (in_array($newBulkStatus, ['Under Review', 'Accepted', 'Rejected'])) {
                     require_once __DIR__ . '/../../includes/mailer.php';
-                    foreach ($selectedIds as $targetAppId) {
+                    foreach ($changedIds as $targetAppId) {
                         $target = $appModel->getApplicationById($targetAppId);
                         if ($target) {
                             $trackingId = $target['tracking_id'];
@@ -200,7 +220,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
                 }
             }
-            header("Location: /admin/form_manager?id=" . $formId . buildFilterQueryString());
+            $skipped = count((array) ($_POST['application_ids'] ?? [])) - count($changedIds);
+            header("Location: /admin/form_manager?id=" . $formId . buildFilterQueryString()
+                . '&changed=' . count($changedIds) . '&skipped=' . max(0, $skipped));
             exit;
         } elseif ($_POST['action'] === 'add_note') {
             $noteText = trim($_POST['note_text'] ?? '');
