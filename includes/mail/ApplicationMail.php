@@ -186,12 +186,14 @@ class ApplicationMail {
      * Only the body is the committee's: the greeting ("Dear <name>,") and the signature are added here.
      * The system never writes an outcome word, so the email says only what the committee wrote.
      * "{event}" in the subject or body is replaced by the short event name (CoreMail::eventTitle()).
+     * "{confirm_link}" in the body is replaced by $confirmUrl, the awardee's private confirmation link; write it as
+     * [{confirm_link} Confirm your place]. With no $confirmUrl the placeholder (and a link around it) is dropped.
      * $body is the wikitext subset rendered by MiniWikiText.
      *
      * dev_result is false on purpose: the caller treats false as "not sent" and shows a resend button.
      */
-    public static function decisionLetter($email, $applicantName, $formTitle, $subject, $body, $replyTo, $replyToName = '') {
-        [$subj, $inner, $alt] = self::letterParts($applicantName, $formTitle, $subject, $body);
+    public static function decisionLetter($email, $applicantName, $formTitle, $subject, $body, $replyTo, $replyToName = '', $confirmUrl = '') {
+        [$subj, $inner, $alt] = self::letterParts($applicantName, $formTitle, $subject, $body, (string) $confirmUrl);
         $name = self::displayName($applicantName);
 
         return CoreMail::send([
@@ -208,36 +210,152 @@ class ApplicationMail {
 
     /** The same email as a full HTML page, for the "Preview" buttons. Sends nothing. */
     public static function decisionLetterPreview($applicantName, $formTitle, $subject, $body, $replyTo, $replyToName = '') {
-        [$subj, $inner] = self::letterParts($applicantName, $formTitle, $subject, $body);
+        // A sample link, so the preview shows where the confirmation link will sit. It goes nowhere.
+        [$subj, $inner] = self::letterParts($applicantName, $formTitle, $subject, $body, CoreMail::appUrl() . '/confirm/preview-only');
         $e = fn($s) => CoreMail::e($s);
-        $banner = "<p style='font-size:13px; color:#64748b; border-bottom:1px solid #e2e8f0; padding-bottom:12px;'>"
+        $banner ="<p style='font-size:13px; color:#64748b; border-bottom:1px solid #e2e8f0; padding-bottom:12px;'>"
                 . "Preview only. Nothing was sent.<br><strong>Subject:</strong> " . $e($subj)
                 . "<br><strong>Reply-To:</strong> " . $e($replyTo !== '' ? $replyTo : 'not set (add mail.src_reply_to to config.php)') . "</p>";
         return CoreMail::template($banner . $inner, null, '');
     }
 
     /** Subject, inner HTML and plain text of a decision letter. */
-    private static function letterParts($applicantName, $formTitle, $subject, $body) {
+    private static function letterParts($applicantName, $formTitle, $subject, $body, $confirmUrl = '') {
         $e = fn($s) => CoreMail::e($s);
         $name = self::displayName($applicantName);
         $event = CoreMail::eventTitle($formTitle);
 
-        $subject = trim((string) preg_replace('/[\x00-\x1F\x7F]+/u', ' ', str_replace('{event}', $event, (string) $subject)));
+        $subject = str_replace('{confirm_link}', '', str_replace('{event}', $event, (string) $subject));
+        $subject = trim((string) preg_replace('/[\x00-\x1F\x7F]+/u', ' ', $subject));
         $body = trim(str_replace(["\r\n", "\r"], "\n", str_replace('{event}', $event, (string) $body)));
-
-        // Signature: a short brand-colour rule, then the committee in bold and the organisation
-        // in brand-colour small caps, so it reads as a sign-off and not as more body text.
-        $signature = "<div style='width:48px; height:3px; background:#106b9a; margin:32px 0 14px; line-height:3px; font-size:0;'>&nbsp;</div>"
-                   . "<p style='margin:0; font-size:17px; line-height:1.3; font-weight:bold; color:#0f172a;'>Scholarship Review Committee</p>"
-                   . "<p style='margin:3px 0 0; font-size:13px; line-height:1.3; font-weight:bold; letter-spacing:1px; text-transform:uppercase; color:#106b9a;'>Deoband Community Wikimedia</p>";
+        if ($confirmUrl !== '') {
+            $body = str_replace('{confirm_link}', $confirmUrl, $body);
+        } else {
+            // No link for this email: drop the placeholder, and a link written around it, instead of leaving "[ text]".
+            $body = preg_replace('/\[\{confirm_link\}[^\]]*\]/', '', $body);
+            $body = trim(str_replace('{confirm_link}', '', $body));
+        }
 
         $inner = "<p>Dear <strong>" . $e($name) . "</strong>,</p>"
                . "<div style='font-size:16px; line-height:1.6;'>" . MiniWikiText::render($body) . "</div>"
-               . $signature;
+               . self::signatureHtml();
 
         $alt = "Dear $name,\n\n" . self::wikiToPlain($body) . "\n\n--\nScholarship Review Committee\nDeoband Community Wikimedia\n";
 
         return [$subject, $inner, $alt];
+    }
+
+    /**
+     * Signature: a short brand-colour rule, then the committee in bold and the organisation
+     * in brand-colour small caps, so it reads as a sign-off and not as more body text.
+     */
+    private static function signatureHtml() {
+        return "<div style='width:48px; height:3px; background:#106b9a; margin:32px 0 14px; line-height:3px; font-size:0;'>&nbsp;</div>"
+             . "<p style='margin:0; font-size:17px; line-height:1.3; font-weight:bold; color:#0f172a;'>Scholarship Review Committee</p>"
+             . "<p style='margin:3px 0 0; font-size:13px; line-height:1.3; font-weight:bold; letter-spacing:1px; text-transform:uppercase; color:#106b9a;'>Deoband Community Wikimedia</p>";
+    }
+
+    /**
+     * Asks an awardee to confirm their scholarship (the first link for someone accepted before confirmation was
+     * switched on, or a reminder). System wording, committee sign-off, sent with the committee Reply-To.
+     * $deadlineLabel is the deadline already formatted in IST ('' when there is none).
+     * dev_result is false: the caller treats false as "not sent".
+     */
+    public static function confirmReminder($email, $applicantName, $formTitle, $deadlineLabel, $url, $replyTo, $replyToName = '') {
+        $e = fn($s) => CoreMail::e($s);
+        $name = self::displayName($applicantName);
+        $event = CoreMail::eventTitle($formTitle);
+        $by = $deadlineLabel !== '' ? " by <strong>" . $e($deadlineLabel) . "</strong>" : '';
+        $byPlain = $deadlineLabel !== '' ? " by $deadlineLabel" : '';
+
+        $inner = "<p>Dear <strong>" . $e($name) . "</strong>,</p>"
+               . "<p>We have not yet heard from you about your scholarship for <strong>" . $e($event) . "</strong>. "
+               . "Please confirm whether you will take up your place, and share your travel and stay details$by.</p>"
+               . CoreMail::button($url, 'Confirm my scholarship')
+               . "<p>If the button does not work, copy this link into your browser:<br><a href='" . $e($url) . "' style='color:#106b9a; word-break:break-all;'>" . $e($url) . "</a></p>"
+               . "<p style='margin-bottom:0;'>This link is private to you. Please do not share it.</p>"
+               . self::signatureHtml();
+
+        $alt = "Dear $name,\n\nWe have not yet heard from you about your scholarship for $event. Please confirm whether you will take up your place, and share your travel and stay details$byPlain.\n\n$url\n\nThis link is private to you. Please do not share it.\n\n--\nScholarship Review Committee\nDeoband Community Wikimedia\n";
+
+        return CoreMail::send([
+            'to' => $email, 'to_name' => $name,
+            'from_name' => $replyToName !== '' ? $replyToName : 'DCW Scholarship Review Committee',
+            'reply_to' => [$replyTo, (string) $replyToName],
+            'footer_note' => '',
+            'subject' => "Please confirm your scholarship: $event",
+            'html' => $inner, 'alt' => $alt,
+            'dev_result' => false,
+            'dev_log' => "Confirmation link for $email ($formTitle): $url",
+        ]);
+    }
+
+    /**
+     * Receipt for an awardee's response (confirmed or declined), with the same private link so they can update
+     * their answers until the deadline. Failure to send never undoes the response: the caller only logs it.
+     */
+    public static function awardReceipt($email, $applicantName, $formTitle, $response, $deadlineLabel, $url, $replyTo, $replyToName = '') {
+        $e = fn($s) => CoreMail::e($s);
+        $name = self::displayName($applicantName);
+        $event = CoreMail::eventTitle($formTitle);
+
+        if ($response === 'confirmed') {
+            $line = "Thank you. We have recorded that you will take up your scholarship for <strong>" . $e($event) . "</strong>, along with your travel and stay details."
+                  . ($deadlineLabel !== '' ? " You can change your answers until <strong>" . $e($deadlineLabel) . "</strong> using your private link." : '');
+            $linePlain = "Thank you. We have recorded that you will take up your scholarship for $event, along with your travel and stay details."
+                  . ($deadlineLabel !== '' ? " You can change your answers until $deadlineLabel using your private link." : '');
+            $button = CoreMail::button($url, 'Review or update my answers');
+            $subject = "Scholarship confirmed: $event";
+        } else {
+            $line = "We have recorded that you are unable to take up your scholarship for <strong>" . $e($event) . "</strong>. Thank you for letting us know. If this was a mistake, please reply to this email.";
+            $linePlain = "We have recorded that you are unable to take up your scholarship for $event. Thank you for letting us know. If this was a mistake, please reply to this email.";
+            $button = '';
+            $subject = "Scholarship declined: $event";
+        }
+
+        $inner = "<p>Dear <strong>" . $e($name) . "</strong>,</p><p>$line</p>" . $button . self::signatureHtml();
+        $alt = "Dear $name,\n\n$linePlain" . ($response === 'confirmed' ? "\n\n$url" : '') . "\n\n--\nScholarship Review Committee\nDeoband Community Wikimedia\n";
+
+        return CoreMail::send([
+            'to' => $email, 'to_name' => $name,
+            'from_name' => $replyToName !== '' ? $replyToName : 'DCW Scholarship Review Committee',
+            'reply_to' => [$replyTo, (string) $replyToName],
+            'footer_note' => '',
+            'subject' => $subject,
+            'html' => $inner, 'alt' => $alt,
+            'dev_result' => true,
+            'dev_log' => "Award $response receipt for $email ($formTitle)",
+        ]);
+    }
+
+    /**
+     * Tells the program's organizers an awardee declined, so the place can be offered to someone else.
+     * $notifyEmails is the form's comma-separated notify_emails. Returns true when there is nobody to tell.
+     * The reason is the awardee's own words, so it is escaped here.
+     */
+    public static function awardDeclinedAlert($notifyEmails, $applicantName, $trackingId, $formTitle, $reason, $reviewUrl) {
+        $e = fn($s) => CoreMail::e($s);
+        $recipients = array_values(array_filter(array_map('trim', explode(',', (string) $notifyEmails))));
+        if (!$recipients) return true;
+        $name = self::displayName($applicantName);
+
+        $reasonHtml = trim((string) $reason) !== '' ? "<p><strong>Reason given:</strong><br>" . nl2br($e($reason)) . "</p>" : '';
+        $inner = "<p>Dear Organiser,</p>"
+               . "<p><strong>" . $e($name) . "</strong> (" . $e($trackingId) . ") has declined their scholarship for <strong>" . $e($formTitle) . "</strong>. Their place is free.</p>"
+               . $reasonHtml
+               . "<p>You can accept another applicant from the review queue whenever you are ready.</p>"
+               . CoreMail::button($reviewUrl, 'Open application');
+        $alt = "Dear Organiser,\n\n$name ($trackingId) has declined their scholarship for $formTitle. Their place is free."
+             . (trim((string) $reason) !== '' ? "\n\nReason given:\n$reason" : '')
+             . "\n\nYou can accept another applicant from the review queue whenever you are ready.\n$reviewUrl";
+
+        return CoreMail::send([
+            'to' => $recipients,
+            'subject' => "Scholarship declined: $formTitle ($trackingId)",
+            'html' => $inner, 'alt' => $alt,
+            'dev_result' => true,
+            'dev_log' => "Award declined alert for $trackingId would be sent to: " . implode(', ', $recipients),
+        ]);
     }
 
     /** Wikitext subset -> readable plain text: lists keep their markers, links show their address. */
