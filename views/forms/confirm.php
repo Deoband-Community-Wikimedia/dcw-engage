@@ -15,6 +15,8 @@ require_once __DIR__ . '/../../includes/mailer.php';
  *   offered the place to someone else); the awardee is told to write to the committee if it was a mistake.
  * - After the deadline, or when confirmation is switched off, the page is read-only.
  * - The answers are stored encrypted. A decline emails the program's organizers so the place can be reused.
+ * - Every save emails the awardee a receipt. The wording depends on what they had before this save ($previous):
+ *   a first confirmation, an update of details after confirming, or a decline (which replaces an earlier confirmation).
  *
  * The router must set $confirmToken from the URL, the same way it sets $resumeToken for /resume/<token>.
  */
@@ -119,17 +121,23 @@ if ($posted) {
     }
 
     if (!$errors) {
+        // What they had before this save: 'pending', 'confirmed' or 'declined'. Used for the wording of the
+        // on-screen message and of the receipt email, and to alert organizers only once.
         $previous = (string) $row['response'];
         try {
             $cm->respond((int) $row['conf_id'], $response, $answers, $reason);
-            $success = $response === 'confirmed'
-                ? 'Thank you. Your confirmation and details have been saved successfully. You may update them until the deadline.'
-                : 'We have recorded that you are unable to accept the scholarship. Thank you for informing us.';
+            if ($response === 'confirmed') {
+                $success = $previous === 'confirmed'
+                    ? 'Thank you! Your details have been successfully updated. You may modify your responses as many times as required until the deadline.'
+                    : 'Thank you! Your confirmation and details have been saved successfully. You can update your information anytime before the deadline.';
+            } else {
+                $success = 'We have recorded that you are unable to accept the scholarship. Thank you for informing us.';
+            }
 
             if ($srcReady) {
                 try {
                     Mailer::sendAwardReceipt($row['email'], $row['applicant_name'], $row['form_title'] ?: $row['form_type'],
-                        $response, $deadlineLabel, $myUrl, $srcReplyTo, $srcName);
+                        $response, $deadlineLabel, $myUrl, $srcReplyTo, $srcName, $previous);
                 } catch (Throwable $ex) {
                     app_log("Award receipt failed for application #{$row['application_id']}: " . $ex->getMessage());
                 }
@@ -143,7 +151,8 @@ if ($posted) {
                     app_log("Award declined alert failed for application #{$row['application_id']}: " . $ex->getMessage());
                 }
             }
-            app_log("Award $response: application #{$row['application_id']} ({$row['tracking_id']})");
+            app_log("Award $response" . ($previous === 'confirmed' && $response === 'confirmed' ? ' (details updated)' : '')
+                . ": application #{$row['application_id']} ({$row['tracking_id']})");
 
             $row = $cm->byToken($row['token']);
             $declined = $row['response'] === 'declined';
@@ -171,7 +180,7 @@ engage_header([
     'title'   => 'Confirm your scholarship - ' . $title,
     'heading' => $title,
     'kicker'  => 'Confirm your scholarship',
-    'lead'    => (!$locked && $deadlineLabel !== '') ? 'Please submit your response by ' . $deadlineLabel . '.' : '',
+    'lead'    => (!$locked && $deadlineLabel !== '') ? 'Kindly ensure you submit your response by ' . $deadlineLabel . '.' : '',
     'crumbs'  => [['Home', '/'], ['Confirm your scholarship']],
     'noindex' => true,
 ]);
@@ -212,9 +221,9 @@ engage_header([
     <?php else: ?>
         <p class="confirm-intro">
             <?php if ($row['response'] === 'confirmed'): ?>
-                You confirmed your acceptance on <?= $e($respondedAt) ?>. You may modify your responses until <strong><?= $e($deadlineLabel) ?></strong>.
+                You confirmed your acceptance on <?= $e($respondedAt) ?>. You may modify your responses anytime until <strong><?= $e($deadlineLabel) ?></strong>.
             <?php else: ?>
-                Please submit your response by <strong><?= $e($deadlineLabel) ?></strong>.
+                Kindly submit your response on or before <strong><?= $e($deadlineLabel) ?></strong>.
             <?php endif; ?>
         </p>
     <?php endif; ?>
