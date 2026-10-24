@@ -11,8 +11,41 @@
  * explicit file we control: the engage app root, next to index.php. That
  * path is blocked from being served over HTTP by the *.log rule in
  * .htaccess.
+ *
+ * Personal data and secrets never reach the file: every line goes through app_log_redact() first (#183).
+ * Callers should still log IDs rather than emails; the redaction is a backstop, not a licence.
  */
+
+/**
+ * Remove personal data and secrets from a log line:
+ *   email addresses             -> [email]
+ *   link tokens (24+ hex chars) -> [token]   (resume, confirm, card, set-password, invite and reset links)
+ *   verification codes          -> [code]    (shown as ABCD-EFGH)
+ *   Indian mobile numbers       -> [phone]
+ * Line breaks become " | " so one entry stays on one line and a value can't forge a new entry.
+ */
+function app_log_redact($message): string {
+    $s = (string) $message;
+    $s = preg_replace('/[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}/', '[email]', $s);
+    $s = preg_replace('/\b[a-fA-F0-9]{24,}\b/', '[token]', $s);
+    $s = preg_replace('/\b[A-Z0-9]{4}-[A-Z0-9]{4}\b/', '[code]', $s);
+    $s = preg_replace('/(?<!\d)(?:\+?91[\s-]?)?[6-9]\d{4}[\s-]?\d{5}(?!\d)/', '[phone]', $s);
+    return str_replace(["\r\n", "\r", "\n"], ' | ', $s);
+}
+
 function app_log($message) {
-    $line = '[' . date('Y-m-d H:i:s') . '] ' . $message . PHP_EOL;
+    $line = '[' . date('Y-m-d H:i:s') . '] ' . app_log_redact($message) . PHP_EOL;
     @file_put_contents(__DIR__ . '/../app_errors.log', $line, FILE_APPEND | LOCK_EX);
+}
+
+/**
+ * Log an exception without its stack trace or arguments, and return a short reference to show the user
+ * instead of the raw message, e.g. "Something went wrong (ref 3F9A1C2B)". The same reference is in the
+ * log line, so a maintainer can find it.
+ */
+function app_log_exception(string $context, Throwable $e): string {
+    $ref = strtoupper(bin2hex(random_bytes(4)));
+    app_log("[ref $ref] $context: " . get_class($e) . ': ' . $e->getMessage()
+        . ' (' . basename($e->getFile()) . ':' . $e->getLine() . ')');
+    return $ref;
 }
