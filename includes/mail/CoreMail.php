@@ -9,6 +9,7 @@
 if (file_exists(__DIR__ . '/../../vendor/autoload.php')) {
     require_once __DIR__ . '/../../vendor/autoload.php';
 }
+require_once __DIR__ . '/../app_log.php';
 
 class CoreMail {
     /** HTML-escape for anything that lands inside an email body. Never use on a Subject line. */
@@ -159,7 +160,13 @@ class CoreMail {
         $devLog = $o['dev_log'] ?? ('Email to ' . implode(', ', $to) . ': ' . $o['subject']);
 
         if (!class_exists('PHPMailer\PHPMailer\PHPMailer') || $mailConfig['host'] === 'smtp.example.com') {
-            error_log("DEV MODE: $devLog");
+            // The full dev_log line (recipient, codes, links) is only written when app.debug is on, i.e. on a
+            // developer's machine. Otherwise a short line without personal data still shows that mail is off.
+            if (!empty($config['app']['debug'])) {
+                app_log("DEV MODE: $devLog", false);   // unredacted: the developer needs the code or link
+            } else {
+                app_log('Email not sent (mailer not configured): ' . $o['subject']);
+            }
             return $devResult;
         }
 
@@ -197,7 +204,7 @@ class CoreMail {
             $mail->send();
             return true;
         } catch (Exception $e) {
-            error_log("Email could not be sent ({$o['subject']}). Mailer Error: {$mail->ErrorInfo}");
+            app_log("Email could not be sent ({$o['subject']}). Mailer Error: {$mail->ErrorInfo}");
             return false;
         }
     }

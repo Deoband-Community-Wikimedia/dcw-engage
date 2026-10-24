@@ -33,8 +33,15 @@ function app_log_redact($message): string {
     return str_replace(["\r\n", "\r", "\n"], ' | ', $s);
 }
 
-function app_log($message) {
-    $line = '[' . date('Y-m-d H:i:s') . '] ' . app_log_redact($message) . PHP_EOL;
+/**
+ * $redact = false is only for CoreMail's dev-mode lines when config app.debug is on (a developer's own machine,
+ * where the verification code or link is needed to test a flow). Everything else is always redacted.
+ */
+function app_log($message, bool $redact = true) {
+    $text = $redact ? app_log_redact($message) : str_replace(["
+", "", "
+"], ' | ', (string) $message);
+    $line = '[' . date('Y-m-d H:i:s') . '] ' . $text . PHP_EOL;
     @file_put_contents(__DIR__ . '/../app_errors.log', $line, FILE_APPEND | LOCK_EX);
 }
 
