@@ -5,7 +5,9 @@ Options -Indexes
 ServerSignature Off
 
 # 3. Protect Configuration & Hidden Files
-<FilesMatch "^(config\.php|certs_db\.php|\.env|\.git|database\.sql|composer\.(json|lock))">
+#    .ftp-deploy-sync-state.json is the deploy tool's list of every file on the server (sizes and
+#    hashes). The tool reads it over FTP, so blocking it on the web doesn't affect deploys.
+<FilesMatch "^(config\.php|certs_db\.php|events_db\.php|\.env|\.git|\.ftp-deploy-sync-state\.json|database\.sql|composer\.(json|lock))">
     Require all denied
 </FilesMatch>
 
