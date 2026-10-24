@@ -269,14 +269,14 @@ class ApplicationMail {
         $byPlain = $deadlineLabel !== '' ? " by $deadlineLabel" : '';
 
         $inner = "<p>Dear <strong>" . $e($name) . "</strong>,</p>"
-               . "<p>We have not yet heard from you about your scholarship for <strong>" . $e($event) . "</strong>. "
-               . "Please confirm whether you will take up your place, and share your travel and stay details$by.</p>"
+               . "<p>We have not yet received your response regarding your scholarship for <strong>" . $e($event) . "</strong>. "
+               . "Please confirm your participation and share your travel and accommodation details$by.</p>"
                . CoreMail::button($url, 'Confirm my scholarship')
                . "<p>If the button does not work, copy this link into your browser:<br><a href='" . $e($url) . "' style='color:#106b9a; word-break:break-all;'>" . $e($url) . "</a></p>"
                . "<p style='margin-bottom:0;'>This link is private to you. Please do not share it.</p>"
                . self::signatureHtml();
 
-        $alt = "Dear $name,\n\nWe have not yet heard from you about your scholarship for $event. Please confirm whether you will take up your place, and share your travel and stay details$byPlain.\n\n$url\n\nThis link is private to you. Please do not share it.\n\n--\nScholarship Review Committee\nDeoband Community Wikimedia\n";
+        $alt = "Dear $name,\n\nWe have not yet received your response regarding your scholarship for $event. Please confirm your participation and share your travel and accommodation details$byPlain.\n\n$url\n\nThis link is private to you. Please do not share it.\n\n--\nScholarship Review Committee\nDeoband Community Wikimedia\n";
 
         return CoreMail::send([
             'to' => $email, 'to_name' => $name,
@@ -300,15 +300,15 @@ class ApplicationMail {
         $event = CoreMail::eventTitle($formTitle);
 
         if ($response === 'confirmed') {
-            $line = "Thank you. We have recorded that you will take up your scholarship for <strong>" . $e($event) . "</strong>, along with your travel and stay details."
-                  . ($deadlineLabel !== '' ? " You can change your answers until <strong>" . $e($deadlineLabel) . "</strong> using your private link." : '');
-            $linePlain = "Thank you. We have recorded that you will take up your scholarship for $event, along with your travel and stay details."
-                  . ($deadlineLabel !== '' ? " You can change your answers until $deadlineLabel using your private link." : '');
+            $line = "Thank you for confirming. We have recorded your acceptance of the scholarship for <strong>" . $e($event) . "</strong>, along with your travel and accommodation details."
+                  . ($deadlineLabel !== '' ? " You may update your responses until <strong>" . $e($deadlineLabel) . "</strong> using your private link." : '');
+            $linePlain = "Thank you for confirming. We have recorded your acceptance of the scholarship for $event, along with your travel and accommodation details."
+                  . ($deadlineLabel !== '' ? " You may update your responses until $deadlineLabel using your private link." : '');
             $button = CoreMail::button($url, 'Review or update my answers');
             $subject = "Scholarship confirmed: $event";
         } else {
-            $line = "We have recorded that you are unable to take up your scholarship for <strong>" . $e($event) . "</strong>. Thank you for letting us know. If this was a mistake, please reply to this email.";
-            $linePlain = "We have recorded that you are unable to take up your scholarship for $event. Thank you for letting us know. If this was a mistake, please reply to this email.";
+            $line = "We have recorded that you are unable to accept the scholarship for <strong>" . $e($event) . "</strong>. Thank you for informing us. If you made this selection by mistake, please reply directly to this email.";
+            $linePlain = "We have recorded that you are unable to accept the scholarship for $event. Thank you for informing us. If you made this selection by mistake, please reply directly to this email.";
             $button = '';
             $subject = "Scholarship declined: $event";
         }
@@ -341,11 +341,11 @@ class ApplicationMail {
 
         $reasonHtml = trim((string) $reason) !== '' ? "<p><strong>Reason given:</strong><br>" . nl2br($e($reason)) . "</p>" : '';
         $inner = "<p>Dear Organiser,</p>"
-               . "<p><strong>" . $e($name) . "</strong> (" . $e($trackingId) . ") has declined their scholarship for <strong>" . $e($formTitle) . "</strong>. Their place is free.</p>"
+               . "<p><strong>" . $e($name) . "</strong> (" . $e($trackingId) . ") has declined their scholarship for <strong>" . $e($formTitle) . "</strong>, and their seat is now available.</p>"
                . $reasonHtml
                . "<p>You can accept another applicant from the review queue whenever you are ready.</p>"
                . CoreMail::button($reviewUrl, 'Open application');
-        $alt = "Dear Organiser,\n\n$name ($trackingId) has declined their scholarship for $formTitle. Their place is free."
+        $alt = "Dear Organiser,\n\n$name ($trackingId) has declined their scholarship for $formTitle, and their seat is now available."
              . (trim((string) $reason) !== '' ? "\n\nReason given:\n$reason" : '')
              . "\n\nYou can accept another applicant from the review queue whenever you are ready.\n$reviewUrl";
 
