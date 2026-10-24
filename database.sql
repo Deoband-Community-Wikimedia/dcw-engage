@@ -295,7 +295,8 @@ CREATE TABLE IF NOT EXISTS `award_confirm_settings` (
 CREATE TABLE IF NOT EXISTS `award_confirmations` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
   `application_id` int(11) NOT NULL,
-  `token` char(64) NOT NULL,
+  `token_hash` char(64) DEFAULT NULL,        -- sha256 of the private link (see AwardConfirmationModel)
+  `old_token_hash` char(64) DEFAULT NULL,    -- sha256 of a link emailed before links were hashed
   `response` enum('pending','confirmed','declined') NOT NULL DEFAULT 'pending',
   `answers_enc` mediumtext DEFAULT NULL,
   `responded_at` datetime DEFAULT NULL,
@@ -304,7 +305,8 @@ CREATE TABLE IF NOT EXISTS `award_confirmations` (
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uniq_award_app` (`application_id`),
-  UNIQUE KEY `uniq_award_token` (`token`),
+  UNIQUE KEY `uniq_award_token_hash` (`token_hash`),
+  KEY `idx_award_old_token_hash` (`old_token_hash`),
   CONSTRAINT `fk_ac_application` FOREIGN KEY (`application_id`) REFERENCES `applications` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

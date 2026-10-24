@@ -267,20 +267,46 @@ TXT;
         return $out;
     }
 
-    /** This awardee's row, creating it (with a new private link) the first time. */
+    // ------------------------------------------------------------------
+    // Private links. Only a sha256 hash of each link is stored (token_hash), like every other token in
+    // the app, so a copy of the database can't be used to open anyone's link. The link itself is an HMAC
+    // of the application id keyed with security.otp_secret, so the same link can be rebuilt for every
+    // reminder without storing it, and earlier emails keep working.
+    // Links emailed before this change were random; their hash is kept in old_token_hash so they still work.
+    // ------------------------------------------------------------------
+
+    private static function linkToken(int $applicationId): string {
+        $config = require __DIR__ . '/../includes/config.php';
+        $secret = (string) ($config['security']['otp_secret'] ?? '');
+        if (strlen($secret) < 32) {
+            throw new RuntimeException('security.otp_secret is missing or too short in config.php.');
+        }
+        return hash_hmac('sha256', 'award-confirm|' . $applicationId, $secret);
+    }
+
+    /** This awardee's row, creating it the first time. */
     public function ensureFor(int $applicationId): array {
-        $this->db->prepare("INSERT IGNORE INTO award_confirmations (application_id, token) VALUES (:a, :t)")
-                 ->execute(['a' => $applicationId, 't' => bin2hex(random_bytes(32))]);
+        $hash = hash('sha256', self::linkToken($applicationId));
+        $this->db->prepare("INSERT IGNORE INTO award_confirmations (application_id, token_hash) VALUES (:a, :h)")
+                 ->execute(['a' => $applicationId, 'h' => $hash]);
         $stmt = $this->db->prepare("SELECT * FROM award_confirmations WHERE application_id = :a");
         $stmt->execute(['a' => $applicationId]);
         $row = $stmt->fetch();
         if (!$row) throw new RuntimeException('Could not create the confirmation link.');
+        // A row from before this change has no token_hash yet: give it one now, so the link sent from here
+        // on works too (its original link keeps working through old_token_hash).
+        if (($row['token_hash'] ?? null) === null) {
+            $this->db->prepare("UPDATE award_confirmations SET token_hash = :h WHERE id = :id AND token_hash IS NULL")
+                     ->execute(['h' => $hash, 'id' => $row['id']]);
+            $row['token_hash'] = $hash;
+        }
         return $row;
     }
 
     /** The awardee's private link. The same link every time, so earlier emails keep working. */
     public function urlFor(int $applicationId, string $appUrl): string {
-        return rtrim($appUrl, '/') . '/confirm/' . $this->ensureFor($applicationId)['token'];
+        $this->ensureFor($applicationId);
+        return rtrim($appUrl, '/') . '/confirm/' . self::linkToken($applicationId);
     }
 
     /** Everything the public page needs for one link, or false when the link is unknown. */
@@ -288,7 +314,7 @@ TXT;
         if (!preg_match('/^[0-9a-f]{64}$/', $token)) return false;
         try {
             $stmt = $this->db->prepare("
-                SELECT c.id AS conf_id, c.application_id, c.token, c.response, c.answers_enc, c.responded_at,
+                SELECT c.id AS conf_id, c.application_id, c.response, c.answers_enc, c.responded_at,
                        a.email, a.applicant_name, a.tracking_id, a.status, a.form_id,
                        f.form_type, f.notify_emails,
                        JSON_UNQUOTE(JSON_EXTRACT(f.schema_json, '$.title')) AS form_title,
@@ -297,9 +323,10 @@ TXT;
                 JOIN applications a ON a.id = c.application_id
                 JOIN forms f ON f.id = a.form_id
                 LEFT JOIN award_confirm_settings s ON s.form_id = a.form_id
-                WHERE c.token = :t
+                WHERE c.token_hash = :h OR c.old_token_hash = :h2
             ");
-            $stmt->execute(['t' => $token]);
+            $h = hash('sha256', $token);
+            $stmt->execute(['h' => $h, 'h2' => $h]);
             return $stmt->fetch() ?: false;
         } catch (Throwable $e) {
             return false;

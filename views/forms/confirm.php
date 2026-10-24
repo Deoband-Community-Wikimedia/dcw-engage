@@ -59,7 +59,7 @@ $srcReady = $srcReplyTo !== '' && filter_var($srcReplyTo, FILTER_VALIDATE_EMAIL)
 
 $title = CoreMail::eventTitle($row['form_title'] ?: $row['form_type']);
 $name = CoreMail::cleanName($row['applicant_name']);
-$myUrl = $appUrl . '/confirm/' . $row['token'];
+$myUrl = $appUrl . '/confirm/' . $confirmToken;   // the link they opened (only its hash is stored)
 
 try {
     $fields = AwardConfirmationModel::parseFields((string) ($row['fields_text'] ?? ''));
@@ -156,7 +156,7 @@ if ($posted) {
             AuditLog::record('award.' . $response, null, 'Awardee', 'Application #' . $row['application_id'],
                 ($previous === 'confirmed' && $response === 'confirmed') ? 'details updated' : null);
 
-            $row = $cm->byToken($row['token']);
+            $row = $cm->byToken((string) $confirmToken);
             $declined = $row['response'] === 'declined';
             $locked = $closed || $declined;
         } catch (Throwable $ex) {
