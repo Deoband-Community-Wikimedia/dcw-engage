@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../../includes/init.php';
 require_once __DIR__ . '/../../includes/app_log.php';
+require_once __DIR__ . '/../../includes/audit.php';
 require_once __DIR__ . '/../../includes/engage_page.php';
 require_once __DIR__ . '/../../includes/wikitext.php';
 require_once __DIR__ . '/../../models/FormModel.php';
@@ -151,8 +152,9 @@ if ($posted) {
                     app_log("Award declined alert failed for application #{$row['application_id']}: " . $ex->getMessage());
                 }
             }
-            app_log("Award $response" . ($previous === 'confirmed' && $response === 'confirmed' ? ' (details updated)' : '')
-                . ": application #{$row['application_id']} ({$row['tracking_id']})");
+            // The awardee acting through their private link: no staff account, so the actor is "Awardee".
+            AuditLog::record('award.' . $response, null, 'Awardee', 'Application #' . $row['application_id'],
+                ($previous === 'confirmed' && $response === 'confirmed') ? 'details updated' : null);
 
             $row = $cm->byToken($row['token']);
             $declined = $row['response'] === 'declined';
