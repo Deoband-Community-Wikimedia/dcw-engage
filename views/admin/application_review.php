@@ -219,7 +219,7 @@ if (!$id && $_SERVER['REQUEST_METHOD'] === 'POST'
             header('Location: /admin/application-review?' . http_build_query($keep + ['letters' => 'saved']));
             exit;
         } catch (Throwable $e) {
-            $error = $e->getMessage();
+            $error = engage_user_message($e, 'Scholarship letters');
             $keepLetters = $_POST;
         }
     } elseif ($_POST['action'] === 'save_confirm') {
@@ -242,7 +242,7 @@ if (!$id && $_SERVER['REQUEST_METHOD'] === 'POST'
             header('Location: /admin/application-review?' . http_build_query($keep + ['confirm' => 'saved']));
             exit;
         } catch (Throwable $e) {
-            $error = $e->getMessage();
+            $error = engage_user_message($e, 'Award confirmation settings');
             $keepConfirm = $_POST;
         }
     } elseif ($_POST['action'] === 'preview_confirm') {
@@ -264,7 +264,7 @@ if (!$id && $_SERVER['REQUEST_METHOD'] === 'POST'
             $pfieldsError = '';
         } catch (Throwable $ex) {
             $pfields = [];
-            $pfieldsError = $ex->getMessage();
+            $pfieldsError = engage_user_message($ex, 'Award confirmation fields');
         }
 
         engage_header([
@@ -599,7 +599,7 @@ if ($app && $_SERVER['REQUEST_METHOD'] === 'POST') {
         app_log("Application $act: #{$app['id']} ({$app['tracking_id']}, {$app['form_type']}) by $by");
         header('Location: /admin/application-review?id=' . $app['id'] . '&done=' . urlencode($doneKey));
         exit;
-    } catch (Throwable $e) { $error = $e->getMessage(); }
+    } catch (Throwable $e) { $error = engage_user_message($e, 'Application decision'); }
     $app = $model->getApplicationById($id);   // fresh state after an error
 }
 

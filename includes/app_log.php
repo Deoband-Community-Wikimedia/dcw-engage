@@ -56,3 +56,17 @@ function app_log_exception(string $context, Throwable $e): string {
         . ' (' . basename($e->getFile()) . ':' . $e->getLine() . ')');
     return $ref;
 }
+
+/**
+ * The message to show a user for a caught exception. Messages written for users (validation, "already
+ * decided", "invalid file format": InvalidArgumentException or a plain Exception) are shown as they are.
+ * System failures (RuntimeException, which includes every PDOException, and PHP Errors) are logged and
+ * replaced with a generic message carrying the log reference, so SQL and file paths never reach the page.
+ */
+function engage_user_message(Throwable $e, string $context): string {
+    if ($e instanceof RuntimeException || $e instanceof Error) {
+        $ref = app_log_exception($context, $e);
+        return "Something went wrong on our side. Please try again. If it keeps happening, quote reference $ref.";
+    }
+    return $e->getMessage();
+}
