@@ -46,6 +46,13 @@ class Mailer {
     // Returns false when the email was not really sent, so the caller can show the link instead.
     public static function sendSentBack(...$a)            { return ApplicationMail::sentBack(...$a); }
     public static function sendOrganizerAlert(...$a)      { return ApplicationMail::organizerAlert(...$a); }
+    // Scholarship award confirmation (see models/AwardConfirmationModel.php). All three go out with the committee Reply-To.
+    // ($email, $name, $formTitle, $deadlineLabel, $url, $replyTo, $replyToName = '')   first link or reminder; false = not sent
+    public static function sendConfirmReminder(...$a)     { return ApplicationMail::confirmReminder(...$a); }
+    // ($email, $name, $formTitle, $response ['confirmed'|'declined'], $deadlineLabel, $url, $replyTo, $replyToName = '')
+    public static function sendAwardReceipt(...$a)        { return ApplicationMail::awardReceipt(...$a); }
+    // ($notifyEmails, $name, $trackingId, $formTitle, $reason, $reviewUrl)   tells organizers a place is free
+    public static function sendAwardDeclinedAlert(...$a)  { return ApplicationMail::awardDeclinedAlert(...$a); }
 
     // --- Feedback forms -----------------------------------------------------
     // ($email, $name, $formTitle)
