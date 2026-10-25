@@ -11,6 +11,8 @@
  * - The answers are encrypted (security.field_encryption_key) and never stored in plain text.
  * - The application's own status does not change: an awardee who declines stays "Accepted", with the response
  *   "Declined". A freed place is filled by a reviewer accepting whoever they choose; nothing is automatic.
+ * - A reviewer can record a decline that reached the committee some other way (email, phone):
+ *   recordReviewerDecline(). It sends nothing and is shown exactly like a decline made on the confirmation page.
  *
  * Until the migration has been run, the "all..." readers return [] and the whole feature stays off.
  */
@@ -342,6 +344,27 @@ TXT;
         $blob = self::encrypt(['answers' => $answers, 'reason' => $reason]);
         $this->db->prepare("UPDATE award_confirmations SET response = :r, answers_enc = :b, responded_at = UTC_TIMESTAMP() WHERE id = :id")
                  ->execute(['r' => $response, 'b' => $blob, 'id' => $confId]);
+    }
+
+    /**
+     * A reviewer records a decline that reached the committee some other way (email, phone). Sends nothing.
+     * Works whether or not the awardee was ever sent a link: ensureFor() creates the row (and its token_hash)
+     * if needed, so an old emailed link still opens a page that says "already answered".
+     * Idempotent: an awardee who has already declined is left untouched.
+     * Any earlier "confirmed" answers are overwritten: the awardee has withdrawn, so the logistics details no longer apply.
+     */
+    public function recordReviewerDecline(int $applicationId, string $reason, string $by): void {
+        $row = $this->ensureFor($applicationId);
+        if (($row['response'] ?? '') === 'declined') return;
+
+        $text = '[Recorded by a reviewer: ' . mb_substr(trim($by), 0, 100) . '] ' . trim($reason);
+        $text = mb_substr(rtrim($text), 0, self::REASON_MAX);
+
+        $blob = self::encrypt(['answers' => [], 'reason' => $text]);
+        $this->db->prepare("UPDATE award_confirmations
+                            SET response = 'declined', answers_enc = :b, responded_at = UTC_TIMESTAMP()
+                            WHERE id = :id")
+                 ->execute(['b' => $blob, 'id' => $row['id']]);
     }
 
     /** A reminder (or the first link) was emailed. */
