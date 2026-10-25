@@ -18,6 +18,8 @@ require_once __DIR__ . '/../../includes/mailer.php';
  * - The answers are stored encrypted. A decline emails the program's organizers so the place can be reused.
  * - Every save emails the awardee a receipt. The wording depends on what they had before this save ($previous):
  *   a first confirmation, an update of details after confirming, or a decline (which replaces an earlier confirmation).
+ * - A decline can also be recorded by a reviewer (email or phone): the response is then "declined" without the
+ *   awardee having used this page, so the declined banner below is worded neutrally.
  *
  * The router must set $confirmToken from the URL, the same way it sets $resumeToken for /resume/<token>.
  */
@@ -212,7 +214,7 @@ engage_header([
 
     <?php if ($declined): ?>
         <div class="action-banner">
-            <strong>You have declined this scholarship<?= $respondedAt !== '' ? ' on ' . $e($respondedAt) : '' ?>.</strong>
+            <strong>This scholarship has been recorded as declined<?= $respondedAt !== '' ? ' on ' . $e($respondedAt) : '' ?>.</strong>
             If this was done in error, please write to the scholarship committee<?= $srcReady ? ' at ' . $e($srcReplyTo) : '' ?>.
         </div>
     <?php elseif ($closed): ?>
