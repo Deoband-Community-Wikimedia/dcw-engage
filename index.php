@@ -9,7 +9,7 @@
 // Initialize application (Session, DB, CSRF, Configuration).
 // The session is started inside init.php so that every entry point gets the
 // same hardened cookie flags. Starting one here first would win and quietly
-// drop SameSite=Strict, which the admin login depends on.
+// drop them (HttpOnly, SameSite), which the admin login depends on.
 require_once __DIR__ . '/includes/init.php';
 
 $requestPath = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);

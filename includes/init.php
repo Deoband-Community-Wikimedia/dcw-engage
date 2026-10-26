@@ -53,7 +53,10 @@ if (session_status() === PHP_SESSION_NONE) {
     session_start([
         'cookie_httponly' => true,
         'cookie_secure' => isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on', // True if HTTPS
-        'cookie_samesite' => 'Strict',
+        // Lax, not Strict: Strict withholds the cookie when someone arrives from a link in one of our emails
+        // (magic links, status updates), so they look signed out on that first page. Lax still blocks the cookie
+        // on cross-site POSTs, and every form carries a CSRF token as well.
+        'cookie_samesite' => 'Lax',
         'use_strict_mode' => true,
     ]);
 }
