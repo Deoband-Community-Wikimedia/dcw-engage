@@ -104,6 +104,11 @@ if ($route === '/' || $route === '/index.php') {
 } elseif ($route === '/member/profile') {
     require __DIR__ . '/views/member/profile.php';
 
+// Signed-in members only. Points earned for contributing to DCW, and goodies redeemed with them.
+// The view calls MemberSession::requireLogin() itself. Reviewers manage this at /admin/goodies.
+} elseif ($route === '/member/goodies') {
+    require __DIR__ . '/views/member/goodies.php';
+
 // Signed-in members only. The member's own membership card (QR code), and the same card as a PDF
 // that is built in memory and downloaded. The public page the QR code opens is /card/{token} below.
 } elseif ($route === '/member/card') {
@@ -168,6 +173,12 @@ if ($route === '/' || $route === '/index.php') {
 // requireRole(['membership_reviewer', 'owner']).
 } elseif ($route === '/admin/community-records') {
     require __DIR__ . '/views/admin/community_records.php';
+
+// Goodies: award points to members, manage the catalogue, fulfil orders. Role check is inside the view:
+// support_reviewer or owner (a signed-in person without either role gets a 403 page). Under /admin so
+// Auth::isSafeNext() lets the login redirect bring people back.
+} elseif ($route === '/admin/goodies') {
+    require __DIR__ . '/views/admin/goodies.php';
 
 // Old address: coordinators' chapters are now managed on the Team page (the separate view was removed).
 } elseif ($route === '/admin/membership-access') {
