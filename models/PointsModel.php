@@ -220,12 +220,18 @@ class PointsModel
         $variants = array_values(array_unique(array_filter(array_map(fn($v) => mb_substr(trim($v), 0, 60), explode(',', $variantsCsv)), fn($v) => $v !== '')));
         $json = $variants ? json_encode($variants, JSON_UNESCAPED_UNICODE) : null;
         $desc = mb_substr(trim($description), 0, 500);
-        if ($id) {
-            $st = $this->pdo->prepare('UPDATE goodies SET name = :n, description = :d, points_cost = :c, variants_json = :v, is_active = :a WHERE id = :id');
-            $st->execute([':n' => $name, ':d' => $desc, ':c' => $cost, ':v' => $json, ':a' => $active ? 1 : 0, ':id' => $id]);
-        } else {
-            $st = $this->pdo->prepare('INSERT INTO goodies (name, description, points_cost, variants_json, is_active) VALUES (:n, :d, :c, :v, :a)');
-            $st->execute([':n' => $name, ':d' => $desc, ':c' => $cost, ':v' => $json, ':a' => $active ? 1 : 0]);
+        try {
+            if ($id) {
+                $st = $this->pdo->prepare('UPDATE goodies SET name = :n, description = :d, points_cost = :c, variants_json = :v, is_active = :a WHERE id = :id');
+                $st->execute([':n' => $name, ':d' => $desc, ':c' => $cost, ':v' => $json, ':a' => $active ? 1 : 0, ':id' => $id]);
+            } else {
+                $st = $this->pdo->prepare('INSERT INTO goodies (name, description, points_cost, variants_json, is_active) VALUES (:n, :d, :c, :v, :a)');
+                $st->execute([':n' => $name, ':d' => $desc, ':c' => $cost, ':v' => $json, ':a' => $active ? 1 : 0]);
+            }
+        } catch (PDOException $e) {
+            // goodies.name is unique (uniq_goody_name). Any other database error goes up to the page as usual.
+            if (($e->errorInfo[1] ?? 0) === 1062) return ['ok' => false, 'error' => 'A goody with that name already exists.'];
+            throw $e;
         }
         $this->audit($actorEmail, $id ? 'goodies.catalogue_edit' : 'goodies.catalogue_add', $name, $cost . ' pts, ' . ($active ? 'active' : 'inactive'));
         return ['ok' => true];
