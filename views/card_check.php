@@ -9,7 +9,7 @@ require_once __DIR__ . '/../models/MemberCardModel.php';
  * DCW Engage - public membership check (/card/<token>), opened by scanning a member's QR code.
  *
  * PUBLIC: no sign-in, and it does not use the session at all. A scan usually comes from a camera or another
- * app, and the session cookie is SameSite=Strict, so it would not arrive on that first request anyway.
+ * app, so there is no session cookie to rely on.
  *
  * What it shows is deliberately small: the member's verified Wikimedia username (never their real name),
  * each chapter (with its logo), and whether it is current. Never an email, phone, Member ID or real name.

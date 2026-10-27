@@ -4,6 +4,7 @@ require_once __DIR__ . '/../../includes/wikitext.php';
 require_once __DIR__ . '/../../includes/app_log.php';
 require_once __DIR__ . '/../../includes/engage_page.php';
 require_once __DIR__ . '/../../includes/wiki_username.php';
+require_once __DIR__ . '/../../includes/applicant_name.php';
 require_once __DIR__ . '/../../models/FormModel.php';
 require_once __DIR__ . '/../../models/EmailVerificationModel.php';
 
@@ -136,6 +137,10 @@ if ($loggedMember !== null && $isMembershipForm && !$isRenewalForm) {
 //
 // The code screen looks the same whether or not a code was really issued (rate limit hit, or the address
 // already holds this membership), so the page does not reveal what the system knows about an address.
+//
+// NAME: asked once, at the gate, and carried forward (verified_names in the session). The form's own
+// name field is taken out of the form below, so nobody types it twice. Signed-in members use the name
+// on their member record.
 $verifiedEmail = '';
 $verifiedName = '';   // name entered at the gate, carried forward with the verified code
 $verifyName = '';     // name entered in the current gate request (to repopulate the field)
@@ -165,6 +170,21 @@ if (empty($previewSchema)) {
     }
 }
 
+// The name that goes forward: the member's own name when signed in, otherwise the one typed at the gate.
+// When we have one, the form's own name field is removed (not shown, not required), and the value is
+// written into the answers again on save, so reviewers, exports and emails still see it.
+// The admin preview (no session, no name yet) hides it as well, so organizers see what applicants will see.
+$carriedName = $memberAutoVerified
+    ? trim((string) ($loggedMember['full_name'] ?? ''))
+    : trim($verifiedName);
+$nameFieldKey = null;
+if ($carriedName !== '' || !empty($previewSchema)) {
+    $nameFieldKey = applicantNameField($schema);
+    if ($nameFieldKey !== null) {
+        [$schema, $schemaSections] = schemaWithoutField($schema, $schemaSections, $nameFieldKey);
+    }
+}
+
 /**
  * Send a verification for this address, whichever way applies. Used by the gate and by "Resend".
  *
@@ -191,7 +211,7 @@ $sendVerification = function (string $email, string $name) use ($form, $formType
         && in_array($joinChapter, array_column($held, 'chapter'), true);
 
     if ($holdsThis) {
-        MembershipMailer::sendExistingAccount($email, $held, $joinChapter, $formTitle);
+        MembershipMailer::sendExistingAccount($email, $held, $joinChapter, $formTitle, null, null, $name);
         return;
     }
 
@@ -200,7 +220,7 @@ $sendVerification = function (string $email, string $name) use ($form, $formType
         return;
     }
     if (!empty($held)) {
-        MembershipMailer::sendExistingAccount($email, $held, $joinChapter, $formTitle, $issued['code'], $issued['expires_at']);
+        MembershipMailer::sendExistingAccount($email, $held, $joinChapter, $formTitle, $issued['code'], $issued['expires_at'], $name);
     } else {
         Mailer::sendEmailVerification($email, $formTitle, $issued['code'], $issued['expires_at'], $name);
     }
@@ -339,7 +359,8 @@ if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $isDraft = $intent === 'draft';
 
         // By definition, drafts are permitted to be incomplete; therefore, required
-        // fields are not enforced for them.
+        // fields are not enforced for them. (The form's own name field is no longer in $schema when a
+        // verified name is being carried forward, so it is not required here either.)
         $errors = $formModel->validateSubmission($schema, $_POST, $isDraft);
 
         if (empty($email)) {
@@ -353,6 +374,11 @@ if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $postData = $_POST;
         unset($postData['csrf_token']);
+
+        // The name comes from verification (or the member record), never from the request.
+        if ($nameFieldKey !== null) {
+            $postData[$nameFieldKey] = $carriedName;
+        }
 
         // Wikimedia usernames: MediaWiki always capitalises the first letter (and treats underscores
         // as spaces), so store them that way. This sits before the save, so it covers both
@@ -374,16 +400,10 @@ if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
-        // Determine the applicant's name from the submitted field name rather than
-        // relying on a hardcoded full_name assumption, ensuring compatibility with both full_name and
-        // applicant_name labels across builder-generated schemas.
-        $applicantName = resolveApplicantName($postData, $schema);
-
-        // If the form lacks a name field (or it was left blank, such as in a draft), default to the
-        // name provided by the applicant during email verification to prevent emails from displaying "Applicant".
-        if ($verifiedName !== '' && (trim((string) $applicantName) === '' || $applicantName === 'Applicant')) {
-            $applicantName = $verifiedName;
-        }
+        // The applicant's name: the one carried from verification when there is one. Otherwise (a preview,
+        // or a verified session that somehow has no name) fall back to the name field on the form, found
+        // through the schema rather than a hardcoded full_name, so builder-generated forms still work.
+        $applicantName = $carriedName !== '' ? $carriedName : resolveApplicantName($postData, $schema);
 
         // Membership forms: validate the Member ID immediately (renewal form: the ID entered on the form;
         // other forms: the ID assigned above), ensuring typos or unauthorized IDs are identified here
@@ -754,7 +774,7 @@ engage_header([
         <?php else: ?>
 
             <?php if ($memberAutoVerified): ?>
-                <p class="verified-line">Signed in as <strong><?= htmlspecialchars($verifiedEmail) ?></strong> ✓
+                <p class="verified-line">Signed in as <strong><?= htmlspecialchars($carriedName !== '' ? "$carriedName ($verifiedEmail)" : $verifiedEmail) ?></strong> ✓
                     Email verification is not required.</p>
             <?php elseif ($verifiedEmail !== ''): ?>
                 <form method="POST" class="verified-line">
