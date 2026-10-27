@@ -14,6 +14,7 @@ require_once __DIR__ . '/../../models/MemberTicketModel.php';
 require_once __DIR__ . '/../../models/TechIssueModel.php';
 require_once __DIR__ . '/../../models/MemberCertificateModel.php';
 require_once __DIR__ . '/../../models/MemberProfileModel.php';
+require_once __DIR__ . '/../../models/PointsModel.php';
 require_once __DIR__ . '/../../includes/member_session.php';
 require_once __DIR__ . '/../../includes/member_requests.php';
 require_once __DIR__ . '/../../includes/cert_rows.php';
@@ -29,6 +30,9 @@ require_once __DIR__ . '/../../includes/cert_rows.php';
  *
  * Certificates: only the latest few are shown here. The full list, with search and paging,
  * is /member/certificates.
+ *
+ * Goodies: the points balance is a chip in the quick links, and a tile in "More from DCW", both
+ * linking to /member/goodies. They only appear once the goodies tables exist.
  *
  * Link-only forms (schema "unlisted": true) are never listed. Feedback forms (schema "kind": "feedback")
  * are not applications, so they are kept out of "More from DCW" and get their own "Share your feedback"
@@ -148,6 +152,10 @@ $dashProfile = null;
 try { $dashProfile = (new MemberProfileModel())->get((string) $member['member_id']); } catch (Throwable $e) { app_log_ignored('dashboard.php:148', $e); /* table not created yet: stay quiet */ }
 $wmName = (string) ($dashProfile['wikimedia_username'] ?? '');
 $wmOk   = $wmName !== '' && !empty($dashProfile['username_verified_at']);
+
+// ---- Goodies points balance (null until the goodies tables exist, so nothing shows before then) ----
+$pointsBalance = null;
+try { $pointsBalance = (new PointsModel())->balance((string) $member['member_id']); } catch (Throwable $e) { app_log_ignored('dashboard.php:points', $e); /* tables not created yet */ }
 
 // ---- What is open (each guarded so the page never breaks) -------------------------------------
 try { $internetOpen = (new InternetSupportModel())->isOpen(); } catch (Throwable $e) { $internetOpen = false; }
@@ -437,6 +445,9 @@ cert_rows_css();   // icons, buttons and certificate rows shared with /member/ce
             <a class="d-chip" style="--tone: var(--leaf-dark);" href="#certificates"><?= cert_icon('award') ?><b><?= (int) $certCount ?></b> certificate<?= $certCount === 1 ? '' : 's' ?></a>
             <a class="d-chip" style="--tone: var(--primary);" href="/member/applications"><?= dash_svg($icons, 'doc') ?><b><?= (int) $totalApplications ?></b> application<?= $totalApplications === 1 ? '' : 's' ?></a>
             <a class="d-chip" style="--tone: var(--primary);" href="#requests"><?= dash_svg($icons, 'card') ?><b><?= (int) $totalRequests ?></b> request<?= $totalRequests === 1 ? '' : 's' ?></a>
+            <?php if ($pointsBalance !== null): ?>
+                <a class="d-chip" style="--tone: var(--accent);" href="/member/goodies"><?= dash_svg($icons, 'star') ?><b><?= number_format($pointsBalance) ?></b> point<?= $pointsBalance === 1 ? '' : 's' ?></a>
+            <?php endif; ?>
             <a class="d-chip" style="--tone: <?= $wmName === '' ? 'var(--muted)' : ($wmOk ? 'var(--leaf-dark)' : '#b45309') ?>;" href="/member/profile#wikimedia"><?= dash_svg($icons, 'user') ?><?php if ($wmName === ''): ?>Add Wikimedia username<?php else: ?><b><?= htmlspecialchars($wmName) ?></b> <?= $wmOk ? 'Verified' : 'Not verified' ?><?php endif; ?></a>
             <a class="d-chip" style="--tone: var(--accent);" href="#conversations"><?= dash_svg($icons, 'chat') ?><b><?= count($tickets) ?></b> conversation<?= count($tickets) === 1 ? '' : 's' ?></a>
         </nav>
@@ -663,6 +674,9 @@ cert_rows_css();   // icons, buttons and certificate rows shared with /member/ce
             <?php
             dash_tile($icons, '#106b9a', 'search', 'Track an application', 'Check the status of a public application (ID begins with DCW-).', '/track');
             dash_tile($icons, '#97161b', 'people', $memberActive ? 'Membership' : 'Renew membership', 'Join a club or renew your membership.', '/membership');
+            if ($pointsBalance !== null) {
+                dash_tile($icons, '#106b9a', 'star', 'My goodies', 'Redeem the points you have earned for contributing to DCW.', '/member/goodies');
+            }
             foreach ($programs as $p) {
                 $title = $p['title'] ?: ucwords(str_replace(['-', '_'], ' ', $p['form_type']));
                 $desc = !empty($p['description']) ? MiniWikiText::stripToPlainText($p['description']) : 'Currently open for applications.';
