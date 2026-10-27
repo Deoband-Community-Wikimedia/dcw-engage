@@ -53,7 +53,7 @@ function goodies_flash(string $kind, string $text): void
 }
 
 /**
- * The members rows for a typed Member ID, or [] when it is malformed or unknown. A Member ID is one
+ * The members rows for a Member ID, or [] when it is malformed or unknown. A Member ID is one
  * person across every chapter (letter + 8 digits), so the first row is enough to identify them.
  */
 function goodies_find_member(string $raw): array
@@ -61,6 +61,25 @@ function goodies_find_member(string $raw): array
     $id = strtoupper(trim($raw));
     if (MemberModel::chapterFromMemberId($id) === null) return [];
     try { return (new MemberModel())->membershipsFor($id); } catch (Throwable $e) { app_log_ignored('goodies.php:member', $e); return []; }
+}
+
+/**
+ * What a reviewer typed (a name, a verified Wikimedia username or a Member ID) as [memberships, error].
+ * The error says why nobody was picked, listing the candidates when the name is shared or only partly matches.
+ */
+function goodies_lookup(PointsModel $model, string $typed): array
+{
+    $hit = $model->findMember($typed);
+    if (!isset($hit['member_id'])) return [[], $hit['error']];
+    $rows = goodies_find_member($hit['member_id']);
+    return $rows ? [$rows, ''] : [[], 'No member was found for "' . trim($typed) . '".'];
+}
+
+/** "Full Name (A48213977)" for messages, so the reviewer can see who was picked. */
+function goodies_who(array $memberships): string
+{
+    $m = $memberships[0];
+    return trim((string) $m['full_name']) . ' (' . $m['member_id'] . ')';
 }
 
 /** True when the signed-in reviewer holds one of these memberships (any email on the rows is theirs). */
@@ -80,10 +99,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         if ($do === 'award' || $do === 'reverse') {
             $back = 'award';
-            $found = goodies_find_member((string) ($_POST['member_id'] ?? ''));
+            [$found, $notFound] = goodies_lookup($model, (string) ($_POST['member_id'] ?? ''));
             $mid   = $found ? (string) $found[0]['member_id'] : '';
             if (!$found) {
-                goodies_flash('error', 'No member was found with that Member ID. It is one letter followed by 8 digits, for example A48213977.');
+                goodies_flash('error', $notFound);
             } elseif ($do === 'award') {
                 if (goodies_is_own($found)) {
                     goodies_flash('error', 'You cannot award points to yourself. Ask another reviewer.');
@@ -93,7 +112,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $r = $model->createAward($mid, (int) ($_POST['activity_type_id'] ?? 0),
                         trim((string) ($_POST['evidence_url'] ?? '')), trim((string) ($_POST['note'] ?? '')), $actor);
                     goodies_flash($r['ok'] ? 'ok' : 'error', $r['ok']
-                        ? ($r['status'] === 'Approved' ? $r['points'] . ' points awarded.' : 'Saved. This award is ' . $r['points'] . ' points, so a different reviewer must approve it before it counts.')
+                        ? ($r['status'] === 'Approved' ? $r['points'] . ' points awarded to ' . goodies_who($found) . '.' : 'Saved for ' . goodies_who($found) . '. This award is ' . $r['points'] . ' points, so a different reviewer must approve it before it counts.')
                         : $r['error']);
                 }
             } else {
@@ -101,7 +120,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     goodies_flash('error', 'You cannot change your own points. Ask another reviewer.');
                 } else {
                     $r = $model->reverse($mid, (int) ($_POST['points'] ?? 0), (string) ($_POST['reason'] ?? ''), $actor);
-                    goodies_flash($r['ok'] ? 'ok' : 'error', $r['ok'] ? 'Points taken back.' : $r['error']);
+                    goodies_flash($r['ok'] ? 'ok' : 'error', $r['ok'] ? 'Points taken back from ' . goodies_who($found) . '.' : $r['error']);
                 }
             }
         } elseif ($do === 'approve' || $do === 'reject') {
@@ -132,8 +151,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         } elseif ($do === 'ch_host_add') {
             $back = 'award';
-            $r = $model->addChHost((int) ($_POST['session_id'] ?? 0), (string) ($_POST['member_id'] ?? ''), $actor);
-            goodies_flash($r['ok'] ? 'ok' : 'error', $r['ok'] ? 'Host saved. Use Award now to award them.' : $r['error']);
+            [$found, $notFound] = goodies_lookup($model, (string) ($_POST['member_id'] ?? ''));
+            if (!$found) {
+                goodies_flash('error', $notFound);
+            } else {
+                $r = $model->addChHost((int) ($_POST['session_id'] ?? 0), (string) $found[0]['member_id'], $actor);
+                goodies_flash($r['ok'] ? 'ok' : 'error', $r['ok'] ? goodies_who($found) . ' saved as host. Use Award now to award them.' : $r['error']);
+            }
         } elseif ($do === 'ch_host_remove') {
             $back = 'award';
             $model->removeChHost((int) ($_POST['session_id'] ?? 0), (string) ($_POST['member_id'] ?? ''), $actor);
@@ -173,6 +197,13 @@ try {
 } catch (Throwable $e) {
     app_log('Goodies admin: load failed: ' . $e->getMessage());
     $flash = ['error', 'The goodies tables are not set up yet. Run database_goodies.sql first.'];
+}
+
+// Type-ahead for the member fields (award tab): every member's name, verified username and Member ID.
+// The fields also accept any of the three typed by hand; see goodies_lookup().
+$directory = [];
+if ($tab === 'award') {
+    try { $directory = $model->memberDirectory(); } catch (Throwable $e) { app_log_ignored('goodies.php:directory', $e); }
 }
 
 // Conversation Hour sessions with what "Award now" would do for each (award tab only).
@@ -255,12 +286,18 @@ engage_header([
 
 <?php if ($tab === 'award'): ?>
 
+    <datalist id="gd-members">
+        <?php foreach ($directory as $mid => $m): ?>
+            <option value="<?= htmlspecialchars($mid) ?>"><?= htmlspecialchars($m['name'] . ($m['username'] !== '' ? ' · ' . $m['username'] : '')) ?></option>
+        <?php endforeach; ?>
+    </datalist>
+
     <section class="gd-card">
         <h3>Award points</h3>
         <form method="POST" action="/admin/goodies?tab=award" class="gd-form">
             <?= CSRF::getInputField() ?>
             <input type="hidden" name="do" value="award">
-            <label>Member ID<input type="text" name="member_id" required maxlength="40" autocomplete="off"></label>
+            <label>Member (name, Wikimedia username or Member ID)<input type="text" name="member_id" list="gd-members" required maxlength="190" autocomplete="off"></label>
             <label>Activity
                 <select name="activity_type_id" required>
                     <option value="">Choose…</option>
@@ -303,7 +340,7 @@ engage_header([
                         <?php endforeach; ?>
                         <form method="POST" action="/admin/goodies?tab=award" class="gd-inline"><?= CSRF::getInputField() ?>
                             <input type="hidden" name="do" value="ch_host_add"><input type="hidden" name="session_id" value="<?= $sid ?>">
-                            <input type="text" name="member_id" required maxlength="20" placeholder="Host Member ID" aria-label="Host Member ID for <?= htmlspecialchars((string) $sess['title']) ?>" autocomplete="off">
+                            <input type="text" name="member_id" list="gd-members" required maxlength="190" placeholder="Host: name or ID" aria-label="Host for <?= htmlspecialchars((string) $sess['title']) ?>: name, Wikimedia username or Member ID" autocomplete="off">
                             <button type="submit" class="gd-btn line">Add host</button>
                         </form>
                     </div>
@@ -350,7 +387,7 @@ engage_header([
         <form method="POST" action="/admin/goodies?tab=award" class="gd-form">
             <?= CSRF::getInputField() ?>
             <input type="hidden" name="do" value="reverse">
-            <label>Member ID<input type="text" name="member_id" required maxlength="40" autocomplete="off"></label>
+            <label>Member (name, Wikimedia username or Member ID)<input type="text" name="member_id" list="gd-members" required maxlength="190" autocomplete="off"></label>
             <label>Points to take back<input type="number" name="points" min="1" max="100000" required></label>
             <label class="wide">Reason (shown to the member)<input type="text" name="reason" required maxlength="230"></label>
             <div><button type="submit" class="gd-btn red">Take back</button></div>
