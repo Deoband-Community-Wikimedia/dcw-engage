@@ -211,7 +211,7 @@ $sendVerification = function (string $email, string $name) use ($form, $formType
         && in_array($joinChapter, array_column($held, 'chapter'), true);
 
     if ($holdsThis) {
-        MembershipMailer::sendExistingAccount($email, $held, $joinChapter, $formTitle);
+        MembershipMailer::sendExistingAccount($email, $held, $joinChapter, $formTitle, null, null, $name);
         return;
     }
 
@@ -220,7 +220,7 @@ $sendVerification = function (string $email, string $name) use ($form, $formType
         return;
     }
     if (!empty($held)) {
-        MembershipMailer::sendExistingAccount($email, $held, $joinChapter, $formTitle, $issued['code'], $issued['expires_at']);
+        MembershipMailer::sendExistingAccount($email, $held, $joinChapter, $formTitle, $issued['code'], $issued['expires_at'], $name);
     } else {
         Mailer::sendEmailVerification($email, $formTitle, $issued['code'], $issued['expires_at'], $name);
     }
