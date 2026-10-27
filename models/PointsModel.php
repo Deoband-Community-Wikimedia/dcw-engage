@@ -48,6 +48,7 @@ class PointsModel
     private ?array $knownMembers = null;     // MEMBER ID => true
     private ?array $verifiedUsers = null;    // lower-case verified Wikimedia username => MEMBER ID
     private ?array $struckMembers = null;    // MEMBER ID => strike row
+    private ?array $directory = null;        // MEMBER ID => ['name' => ..., 'username' => ...]
 
     public function __construct(?PDO $pdo = null)
     {
@@ -454,6 +455,73 @@ class PointsModel
         $username = mb_strtolower(trim($username));
         if ($username !== '') return $this->verifiedUsers()[$username] ?? null;
         return null;
+    }
+
+    /**
+     * Find a member from what a reviewer typed: a Member ID, a verified Wikimedia username (with or without
+     * "User:"), or a full name (ignoring case and extra spaces). Several people with the same name, or only
+     * partial matches, are listed back instead of guessed. Matching is done in PHP, like the rest of this class.
+     * @return array{member_id?:string, name?:string, error?:string}
+     */
+    public function findMember(string $typed): array
+    {
+        $q = trim((string) preg_replace('/\s+/u', ' ', $typed));
+        $q = trim((string) preg_replace('/^(user:|@)/i', '', $q));
+        if ($q === '') return ['error' => 'Enter a name, Wikimedia username or Member ID.'];
+
+        $dir = $this->memberDirectory();
+        $id = strtoupper($q);
+        if (isset($dir[$id])) return ['member_id' => $id, 'name' => $dir[$id]['name']];
+        $byUser = $this->verifiedUsers()[mb_strtolower($q)] ?? null;
+        if ($byUser !== null && isset($dir[$byUser])) return ['member_id' => $byUser, 'name' => $dir[$byUser]['name']];
+
+        $key = mb_strtolower($q);
+        $exact = $near = [];
+        foreach ($dir as $mid => $m) {
+            $name = mb_strtolower($m['name']);
+            if ($name === $key) {
+                $exact[$mid] = $m;
+            } elseif (($name !== '' && mb_strpos($name, $key) !== false)
+                   || ($m['username'] !== '' && mb_strpos(mb_strtolower($m['username']), $key) !== false)) {
+                $near[$mid] = $m;
+            }
+        }
+        $list = fn(array $rows) => implode(', ', array_map(fn($mid, $m) => $m['name'] . ' (' . $mid . ')', array_keys($rows), $rows));
+        if (count($exact) === 1) {
+            $mid = (string) array_key_first($exact);
+            return ['member_id' => $mid, 'name' => $exact[$mid]['name']];
+        }
+        if ($exact) return ['error' => 'More than one member is called "' . $q . '": ' . $list(array_slice($exact, 0, 8, true)) . '. Enter the Member ID of the right one.'];
+        if ($near && count($near) <= 8) return ['error' => 'No exact match for "' . $q . '". Did you mean ' . $list($near) . '? Enter the full name or the Member ID.'];
+        if ($near) return ['error' => count($near) . ' members match "' . $q . '". Type more of the name, or the Member ID.'];
+        return ['error' => 'No member found for "' . $q . '". Try the full name, the verified Wikimedia username or the Member ID.'];
+    }
+
+    /**
+     * Every member once: [MEMBER ID => ['name' => full name, 'username' => verified Wikimedia username or '']],
+     * sorted by name. For findMember() and the reviewer's type-ahead list.
+     */
+    public function memberDirectory(): array
+    {
+        if ($this->directory === null) {
+            $users = array_flip($this->verifiedUsers());   // MEMBER ID => lower-case username
+            $dir = [];
+            foreach ($this->pdo->query('SELECT member_id, full_name FROM members ORDER BY id')->fetchAll(PDO::FETCH_ASSOC) as $r) {
+                $mid = strtoupper(trim((string) $r['member_id']));
+                if ($mid === '' || isset($dir[$mid])) continue;
+                $dir[$mid] = ['name' => trim((string) preg_replace('/\s+/u', ' ', (string) $r['full_name'])), 'username' => ''];
+            }
+            if ($users) {
+                // The username as the member wrote it (verifiedUsers() keeps it lower-case for matching).
+                foreach ($this->pdo->query('SELECT member_id, wikimedia_username FROM member_profile WHERE username_verified_at IS NOT NULL')->fetchAll(PDO::FETCH_ASSOC) as $r) {
+                    $mid = strtoupper((string) $r['member_id']);
+                    if (isset($dir[$mid], $users[$mid])) $dir[$mid]['username'] = trim((string) $r['wikimedia_username']);
+                }
+            }
+            uasort($dir, fn($a, $b) => strcasecmp($a['name'], $b['name']));
+            $this->directory = $dir;
+        }
+        return $this->directory;
     }
 
     private function knownMembers(): array
