@@ -33,8 +33,14 @@ class PointsModel
         'Cancelled' => [],
     ];
 
-    /** Activities a member can be awarded only once, ever (a rejected award doesn't count). */
-    public const ONE_TIME_CODES = ['first_edit', 'taw_graduate'];
+    /**
+     * Activities the code looks up by their code (Conversation Hour awards, the TaW edition check). Reviewers
+     * can rename them, change their points or switch them off, but not delete them.
+     * Whether an activity can be awarded only once is the activity's own one_time setting.
+     */
+    public const BUILT_IN_CODES = ['ch_attend', 'ch_host', 'taw_graduate'];
+
+    public const CATEGORIES = ['learn' => 'Learning', 'contribute' => 'Contributing', 'community' => 'Community', 'organisation' => 'Organising'];
 
     /**
      * Train a Wikipedian: one award for graduating from the whole programme, and only from the April 2026
@@ -117,7 +123,7 @@ class PointsModel
     {
         $row = $this->pdo->query(
             "SELECT COALESCE(SUM(points), 0) AS outstanding,
-                    COALESCE(SUM(CASE WHEN entry_type = 'award' THEN points END), 0) AS awarded,
+                    COALESCE(SUM(CASE WHEN entry_type IN ('award','revaluation') THEN points END), 0) AS awarded,
                     COALESCE(-SUM(CASE WHEN entry_type IN ('redemption','refund') THEN points END), 0) AS spent
              FROM points_ledger"
         )->fetch(PDO::FETCH_ASSOC) ?: [];
@@ -148,7 +154,7 @@ class PointsModel
                 return ['ok' => false, 'error' => 'Only TaW April 2026 and later count. Earlier editions are not awarded.'];
             }
         }
-        if (in_array((string) $type['code'], self::ONE_TIME_CODES, true)) {
+        if ((int) ($type['one_time'] ?? 0)) {
             $st = $this->pdo->prepare("SELECT 1 FROM point_awards WHERE member_id = :m AND activity_type_id = :t AND status <> 'Rejected' LIMIT 1");
             $st->execute([':m' => $memberId, ':t' => $typeId]);
             if ($st->fetchColumn()) return ['ok' => false, 'error' => '"' . $type['name'] . '" can only be awarded once, and this member already has it.'];
@@ -353,6 +359,7 @@ class PointsModel
             $others = $plan['present'] - count(array_intersect_key($attending, $hosts));
             $short = $t['min_attendees'] !== null && $others < (int) $t['min_attendees'] && $t['below_min_points'] !== null;
             $plan['host_points'] = $short ? (int) $t['below_min_points'] : (int) $t['points'];
+            $plan['host_tier'] = $short ? 'below_min' : 'standard';
         }
 
         // Awards already made for this session: [activity_type_id][MEMBER ID] => true (any status: the unique key covers all).
@@ -363,13 +370,13 @@ class PointsModel
 
         $struck = $this->struckMembers();
         $want = [];
-        if (isset($types['ch_attend'])) foreach (array_keys($attendees) as $m) $want[] = [$m, 'ch_attend', (int) $types['ch_attend']['points']];
-        if (isset($types['ch_host'])) foreach (array_keys($hosts) as $m) $want[] = [$m, 'ch_host', $plan['host_points']];
-        foreach ($want as [$m, $code, $points]) {
+        if (isset($types['ch_attend'])) foreach (array_keys($attendees) as $m) $want[] = [$m, 'ch_attend', (int) $types['ch_attend']['points'], 'standard'];
+        if (isset($types['ch_host'])) foreach (array_keys($hosts) as $m) $want[] = [$m, 'ch_host', $plan['host_points'], $plan['host_tier'] ?? 'standard'];
+        foreach ($want as [$m, $code, $points, $tier]) {
             if (isset($made[(int) $types[$code]['id']][$m])) $plan['done']++;
             elseif (isset($own[$m])) $plan['own'][] = $m;
             elseif (isset($struck[$m])) $plan['struck'][] = $m;
-            elseif ($points > 0) $plan['award'][] = ['member_id' => $m, 'code' => $code, 'points' => $points];
+            elseif ($points > 0) $plan['award'][] = ['member_id' => $m, 'code' => $code, 'points' => $points, 'tier' => $tier];
         }
         if (isset($types['ch_attend'])) {
             foreach (array_keys($made[(int) $types['ch_attend']['id']] ?? []) as $m) {
@@ -400,7 +407,7 @@ class PointsModel
             $awarded = 0;
             foreach ($plan['award'] as $a) {
                 $type = $this->activityTypeByCode($a['code']);
-                if ($type && $this->insertSourceAward($a['member_id'], $type, $a['points'], self::chRef($sessionId), $label, $actorEmail)) $awarded++;
+                if ($type && $this->insertSourceAward($a['member_id'], $type, $a['points'], $a['tier'], self::chRef($sessionId), $label, $actorEmail)) $awarded++;
             }
         } finally {
             $rel = $this->pdo->prepare('SELECT RELEASE_LOCK(:l)');
@@ -414,17 +421,17 @@ class PointsModel
     }
 
     /** One automatic award and, when it needs no second reviewer, its ledger row. False if it already exists. */
-    private function insertSourceAward(string $memberId, array $type, int $points, string $sourceRef, string $label, string $actorEmail): bool
+    private function insertSourceAward(string $memberId, array $type, int $points, string $tier, string $sourceRef, string $label, string $actorEmail): bool
     {
         $needsSecond = $points >= self::SECOND_APPROVAL_AT;
         $this->pdo->beginTransaction();
         try {
             $st = $this->pdo->prepare(
-                'INSERT INTO point_awards (member_id, activity_type_id, source_ref, points, note, status, created_by_email, first_reviewer_email, decided_at)
-                 VALUES (:m, :t, :r, :p, :n, :s, :a, :a2, :d)'
+                'INSERT INTO point_awards (member_id, activity_type_id, source_ref, points, tier, note, status, created_by_email, first_reviewer_email, decided_at)
+                 VALUES (:m, :t, :r, :p, :tier, :n, :s, :a, :a2, :d)'
             );
             $st->execute([
-                ':m' => $memberId, ':t' => (int) $type['id'], ':r' => $sourceRef, ':p' => $points,
+                ':m' => $memberId, ':t' => (int) $type['id'], ':r' => $sourceRef, ':p' => $points, ':tier' => $tier,
                 ':n' => mb_substr(ltrim($label, ' '), 0, 500), ':s' => $needsSecond ? 'Needs Second Approval' : 'Approved',
                 ':a' => $actorEmail, ':a2' => $actorEmail, ':d' => $needsSecond ? null : gmdate('Y-m-d H:i:s'),
             ]);
@@ -556,6 +563,152 @@ class PointsModel
             foreach ((new MemberStrikeModel($this->pdo))->activeMap() as $m => $row) $this->struckMembers[strtoupper((string) $m)] = $row;
         }
         return $this->struckMembers;
+    }
+
+    // ---- Activities (what can earn points, and how many) ---------------------------------------
+    //
+    // Managed on /admin/goodies?tab=activities, so nothing about points is hard-coded (#208).
+    // Changing an activity's points REVISES every award already made for it: each award's points are set to
+    // the new value, and each member's balance moves by the difference through a 'revaluation' ledger row
+    // (the ledger stays append-only). Awards waiting for a second reviewer are revised too; rejected ones
+    // are left alone. A Conversation Hour host award keeps its tier: one made under the minimum attendance
+    // follows below_min_points.
+
+    /** Approved and waiting awards per activity: [activity_type_id => count]. */
+    public function activityUsage(): array
+    {
+        $out = [];
+        foreach ($this->pdo->query("SELECT activity_type_id, COUNT(*) AS n FROM point_awards WHERE status <> 'Rejected' GROUP BY activity_type_id")->fetchAll(PDO::FETCH_ASSOC) as $r) {
+            $out[(int) $r['activity_type_id']] = (int) $r['n'];
+        }
+        return $out;
+    }
+
+    /**
+     * Create ($id = null) or update an activity. $in holds the form fields: name, category, points,
+     * needs_evidence, one_time, min_attendees, below_min_points, is_active.
+     * @return array{ok:bool, error?:string, revised?:int, members?:int, change?:int}
+     */
+    public function saveActivity(?int $id, array $in, string $actorEmail): array
+    {
+        $name = trim((string) preg_replace('/\s+/u', ' ', (string) ($in['name'] ?? '')));
+        $category = (string) ($in['category'] ?? '');
+        $points = (int) ($in['points'] ?? 0);
+        $minRaw = trim((string) ($in['min_attendees'] ?? ''));
+        $belowRaw = trim((string) ($in['below_min_points'] ?? ''));
+        $min = $minRaw === '' ? null : (int) $minRaw;
+        $below = $belowRaw === '' ? null : (int) $belowRaw;
+
+        if ($name === '' || mb_strlen($name) > 160) return ['ok' => false, 'error' => 'Give the activity a name (up to 160 characters).'];
+        if (!isset(self::CATEGORIES[$category])) return ['ok' => false, 'error' => 'Choose a category.'];
+        if ($points < 1 || $points > 10000) return ['ok' => false, 'error' => 'Points must be between 1 and 10000.'];
+        if (($min === null) !== ($below === null)) return ['ok' => false, 'error' => 'Set both the minimum attendance and the points below it, or neither.'];
+        if ($min !== null && ($min < 1 || $min > 1000)) return ['ok' => false, 'error' => 'The minimum attendance must be between 1 and 1000.'];
+        if ($below !== null && ($below < 0 || $below >= $points)) return ['ok' => false, 'error' => 'Points below the minimum must be less than the full points.'];
+
+        $fields = [
+            ':n' => $name, ':c' => $category, ':p' => $points,
+            ':e' => !empty($in['needs_evidence']) ? 1 : 0, ':o' => !empty($in['one_time']) ? 1 : 0,
+            ':min' => $min, ':below' => $below, ':act' => !empty($in['is_active']) ? 1 : 0,
+        ];
+
+        if (!$id) {
+            $base = trim((string) preg_replace('/[^a-z0-9]+/', '_', strtolower($name)), '_') ?: 'activity';
+            $base = substr($base, 0, 34);
+            $code = $base;
+            for ($i = 2; $this->activityTypeByCode($code); $i++) $code = $base . '_' . $i;
+            try {
+                $st = $this->pdo->prepare(
+                    'INSERT INTO activity_types (code, name, category, points, needs_evidence, one_time, min_attendees, below_min_points, is_active)
+                     VALUES (:code, :n, :c, :p, :e, :o, :min, :below, :act)'
+                );
+                $st->execute($fields + [':code' => $code]);
+            } catch (PDOException $e) {
+                if (($e->errorInfo[1] ?? 0) === 1062) return ['ok' => false, 'error' => 'An activity with that name already exists.'];
+                throw $e;
+            }
+            $this->audit($actorEmail, 'goodies.activity_add', $name, $points . ' pts');
+            return ['ok' => true, 'revised' => 0, 'members' => 0, 'change' => 0];
+        }
+
+        $this->pdo->beginTransaction();
+        try {
+            $st = $this->pdo->prepare('SELECT * FROM activity_types WHERE id = :id FOR UPDATE');
+            $st->execute([':id' => $id]);
+            $old = $st->fetch(PDO::FETCH_ASSOC);
+            if (!$old) {
+                $this->pdo->rollBack();
+                return ['ok' => false, 'error' => 'That activity no longer exists.'];
+            }
+            $st = $this->pdo->prepare(
+                'UPDATE activity_types SET name = :n, category = :c, points = :p, needs_evidence = :e, one_time = :o,
+                        min_attendees = :min, below_min_points = :below, is_active = :act WHERE id = :id'
+            );
+            $st->execute($fields + [':id' => $id]);
+
+            $rev = ['revised' => 0, 'members' => 0, 'change' => 0];
+            if ($points !== (int) $old['points'] || $below !== ($old['below_min_points'] === null ? null : (int) $old['below_min_points'])) {
+                $rev = $this->revalue($id, $name, $points, $below, $actorEmail);
+            }
+            $this->pdo->commit();
+        } catch (Throwable $e) {
+            if ($this->pdo->inTransaction()) $this->pdo->rollBack();
+            $this->log('saveActivity failed: ' . $e->getMessage());
+            if ($e instanceof PDOException && ($e->errorInfo[1] ?? 0) === 1062) return ['ok' => false, 'error' => 'An activity with that name already exists.'];
+            return ['ok' => false, 'error' => 'Could not save the activity. Nothing was changed.'];
+        }
+        $this->audit($actorEmail, 'goodies.activity_edit', $name,
+            $old['points'] . ' -> ' . $points . ' pts' . ($rev['revised'] ? ', ' . $rev['revised'] . ' award(s) revised (' . sprintf('%+d', $rev['change']) . ' pts)' : ''));
+        return ['ok' => true] + $rev;
+    }
+
+    /**
+     * Inside saveActivity()'s transaction: set every non-rejected award of this activity to the new value,
+     * and move approved awards' balances by the difference with one 'revaluation' ledger row each.
+     */
+    private function revalue(int $typeId, string $name, int $points, ?int $below, string $actorEmail): array
+    {
+        $st = $this->pdo->prepare("SELECT id, member_id, points, tier, status FROM point_awards
+                                    WHERE activity_type_id = :t AND status <> 'Rejected' FOR UPDATE");
+        $st->execute([':t' => $typeId]);
+        $up = $this->pdo->prepare('UPDATE point_awards SET points = :p WHERE id = :id');
+        $lg = $this->pdo->prepare("INSERT INTO points_ledger (member_id, points, entry_type, reason, actor_email)
+                                   VALUES (:m, :p, 'revaluation', :r, :a)");
+        $revised = 0; $change = 0; $members = [];
+        foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $a) {
+            $new = ($a['tier'] === 'below_min' && $below !== null) ? $below : $points;
+            $diff = $new - (int) $a['points'];
+            if ($diff === 0) continue;
+            $up->execute([':p' => $new, ':id' => $a['id']]);
+            $revised++;
+            if ($a['status'] === 'Approved') {
+                $lg->execute([
+                    ':m' => $a['member_id'], ':p' => $diff, ':a' => $actorEmail,
+                    ':r' => mb_substr('Points revised: ' . $name . ' (' . $a['points'] . ' to ' . $new . ')', 0, 255),
+                ]);
+                $change += $diff;
+                $members[$a['member_id']] = true;
+            }
+        }
+        return ['revised' => $revised, 'members' => count($members), 'change' => $change];
+    }
+
+    /** Delete an activity that has never been awarded. Built-in ones, and used ones, can only be switched off. */
+    public function deleteActivity(int $id, string $actorEmail): array
+    {
+        $t = $this->activityType($id);
+        if (!$t) return ['ok' => false, 'error' => 'That activity no longer exists.'];
+        if (in_array((string) $t['code'], self::BUILT_IN_CODES, true)) {
+            return ['ok' => false, 'error' => '"' . $t['name'] . '" is used by the app itself, so it can only be switched off.'];
+        }
+        $st = $this->pdo->prepare('SELECT COUNT(*) FROM point_awards WHERE activity_type_id = :t');
+        $st->execute([':t' => $id]);
+        if ((int) $st->fetchColumn() > 0) {
+            return ['ok' => false, 'error' => '"' . $t['name'] . '" has been awarded before, so it stays on record. Switch it off instead.'];
+        }
+        $this->pdo->prepare('DELETE FROM activity_types WHERE id = :id')->execute([':id' => $id]);
+        $this->audit($actorEmail, 'goodies.activity_delete', (string) $t['name'], (string) $t['points'] . ' pts');
+        return ['ok' => true];
     }
 
     // ---- Catalogue -----------------------------------------------------------------------------

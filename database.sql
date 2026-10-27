@@ -775,13 +775,15 @@ CREATE TABLE IF NOT EXISTS `activity_types` (
   `category` enum('learn','contribute','community','organisation') NOT NULL,
   `points` int(10) UNSIGNED NOT NULL,
   `needs_evidence` tinyint(1) NOT NULL DEFAULT 0,
+  `one_time` tinyint(1) NOT NULL DEFAULT 0,        -- can be awarded to a member only once
   -- Used from Phase 2 (event finalise): a meetup under the minimum pays below_min_points.
   `min_attendees` int(10) UNSIGNED DEFAULT NULL,
   `below_min_points` int(10) UNSIGNED DEFAULT NULL,
   `is_active` tinyint(1) NOT NULL DEFAULT 1,
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
-  UNIQUE KEY `code` (`code`)
+  UNIQUE KEY `code` (`code`),
+  UNIQUE KEY `uniq_activity_name` (`name`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Used from Phase 2. Created now so point_awards can reference it.
@@ -819,7 +821,8 @@ CREATE TABLE IF NOT EXISTS `point_awards` (
   `activity_type_id` int(11) NOT NULL,
   `event_id` int(11) DEFAULT NULL,
   `source_ref` varchar(60) DEFAULT NULL,         -- where an automatic award came from, e.g. 'ch-session-14'
-  `points` int(10) UNSIGNED NOT NULL,               -- snapshot of the activity's points at creation
+  `points` int(10) UNSIGNED NOT NULL,               -- the activity's points; revised when an organiser changes them
+  `tier` enum('standard','below_min') NOT NULL DEFAULT 'standard',   -- below_min: a host award under the minimum attendance
   `evidence_url` varchar(500) DEFAULT NULL,
   `note` varchar(500) DEFAULT NULL,
   `status` enum('Needs Second Approval','Approved','Rejected') NOT NULL,
@@ -876,7 +879,7 @@ CREATE TABLE IF NOT EXISTS `points_ledger` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
   `member_id` varchar(40) NOT NULL,
   `points` int(11) NOT NULL,                        -- + award or refund, - redemption or reversal
-  `entry_type` enum('award','redemption','refund','reversal') NOT NULL,
+  `entry_type` enum('award','redemption','refund','reversal','revaluation') NOT NULL,   -- revaluation: an activity's points were changed
   `award_id` int(11) DEFAULT NULL,
   `redemption_id` int(11) DEFAULT NULL,
   `reason` varchar(255) NOT NULL,
@@ -924,15 +927,15 @@ VALUES (1, 0, 80000, JSON_ARRAY('Travel', 'Accommodation', 'Food', 'Other'), NUL
 -- INACTIVE so nothing shows to members until a support reviewer has set real
 -- prices and switched them on. INSERT IGNORE (activity_types.code and
 -- goodies.name are unique) means a re-run never duplicates or overwrites rows.
-INSERT IGNORE INTO `activity_types` (`code`,`name`,`category`,`points`,`needs_evidence`,`min_attendees`,`below_min_points`) VALUES
-  ('ch_attend',            'Attend a Conversation Hour',                'learn',      20,  0, NULL, NULL),
-  ('ch_host',              'Host a Conversation Hour',                  'community',  100, 0, 3,    50),
-  ('mehfil_attend',        'Attend a Mehfil-e-Wiki',                    'learn',      30,  0, 6,    15),
-  ('mehfil_host',          'Host a Mehfil-e-Wiki',                      'community',  120, 0, 6,    60),
-  ('taw_graduate',         'Train a Wikipedian: graduated (April 2026 onwards)', 'learn', 140, 1, NULL, NULL),
-  ('first_edit',           'First verified edit (one-time)',            'contribute', 30,  1, NULL, NULL),
-  ('mentor_first_edit',    'Mentor a newcomer to their first edit',     'community',  100, 1, NULL, NULL),
-  ('mentor_first_article', 'Mentor a newcomer to their first article',  'community',  150, 1, NULL, NULL);
+INSERT IGNORE INTO `activity_types` (`code`,`name`,`category`,`points`,`needs_evidence`,`min_attendees`,`below_min_points`,`one_time`) VALUES
+  ('ch_attend',            'Attend a Conversation Hour',                'learn',      20,  0, NULL, NULL, 0),
+  ('ch_host',              'Host a Conversation Hour',                  'community',  100, 0, 3,    50, 0),
+  ('mehfil_attend',        'Attend a Mehfil-e-Wiki',                    'learn',      30,  0, 6,    15, 0),
+  ('mehfil_host',          'Host a Mehfil-e-Wiki',                      'community',  120, 0, 6,    60, 0),
+  ('taw_graduate',         'Train a Wikipedian: graduated (April 2026 onwards)', 'learn', 140, 1, NULL, NULL, 1),
+  ('first_edit',           'First verified edit (one-time)',            'contribute', 30,  1, NULL, NULL, 1),
+  ('mentor_first_edit',    'Mentor a newcomer to their first edit',     'community',  100, 1, NULL, NULL, 0),
+  ('mentor_first_article', 'Mentor a newcomer to their first article',  'community',  150, 1, NULL, NULL, 0);
 
 INSERT IGNORE INTO `goodies` (`name`,`description`,`points_cost`,`variants_json`,`is_active`) VALUES
   ('Sticker pack', 'DCW stickers.',       50,  NULL, 0),
