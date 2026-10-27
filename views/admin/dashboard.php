@@ -369,6 +369,8 @@ engage_header([
                         <?php
                         lrow($icons, 'var(--primary)', 'star', 'Award points',
                             'Award points for activities, approve large awards, or take points back.', '/admin/goodies?tab=award');
+                        lrow($icons, 'var(--primary)', 'check', 'Activities and points',
+                            'What members can earn points for, and how many. Changing points revises past awards.', '/admin/goodies?tab=activities');
                         lrow($icons, 'var(--primary)', 'doc', 'Catalogue',
                             'The goodies members can redeem, and what each costs in points.', '/admin/goodies?tab=catalogue');
                         lrow($icons, 'var(--leaf-dark, #3E7A53)', 'inbox', 'Orders',

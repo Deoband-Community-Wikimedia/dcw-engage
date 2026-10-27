@@ -10,8 +10,9 @@ require_once __DIR__ . '/../../models/PointsModel.php';
  * DCW Engage - goodies, reviewer side (/admin/goodies).
  * support_reviewer and owner only (the same roles as internet_review.php).
  *
- * Three tabs, kept in the address as ?tab=:
+ * Four tabs, kept in the address as ?tab=:
  *   award        award points for an activity, approve large awards, take points back
+ *   activities   what can earn points and how many; changing points revises awards already made (#208)
  *   catalogue    add and edit goodies and their point costs
  *   redemptions  the order queue: Requested > Ordered > Shipped > Delivered (or Cancelled, which refunds)
  *
@@ -43,7 +44,7 @@ $model = new PointsModel();
 $ownIds = [];
 try { $ownIds = array_column((new MemberModel())->membershipsForEmail($actor), 'member_id'); } catch (Throwable $e) { app_log_ignored('goodies.php:own', $e); }
 
-const GOODIES_TABS = ['award' => 'Award points', 'catalogue' => 'Catalogue', 'redemptions' => 'Orders'];
+const GOODIES_TABS = ['award' => 'Award points', 'activities' => 'Activities and points', 'catalogue' => 'Catalogue', 'redemptions' => 'Orders'];
 $tab = isset(GOODIES_TABS[$_GET['tab'] ?? '']) ? (string) $_GET['tab'] : 'award';
 
 function goodies_flash(string $kind, string $text): void
@@ -162,6 +163,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $back = 'award';
             $model->removeChHost((int) ($_POST['session_id'] ?? 0), (string) ($_POST['member_id'] ?? ''), $actor);
             goodies_flash('ok', 'Host removed. Points already awarded stay; take them back below if needed.');
+        } elseif ($do === 'activity_save') {
+            $back = 'activities';
+            $r = $model->saveActivity(((int) ($_POST['id'] ?? 0)) ?: null, $_POST, $actor);
+            if (!$r['ok']) {
+                goodies_flash('error', $r['error']);
+            } elseif ($r['revised'] > 0) {
+                goodies_flash('ok', 'Saved. ' . $r['revised'] . ' award(s) revised to the new points'
+                    . ($r['members'] ? ', changing ' . $r['members'] . ' member(s)\' balance by ' . sprintf('%+d', $r['change']) . ' points in total' : '') . '.');
+            } else {
+                goodies_flash('ok', 'Saved.');
+            }
+        } elseif ($do === 'activity_delete') {
+            $back = 'activities';
+            $r = $model->deleteActivity((int) ($_POST['id'] ?? 0), $actor);
+            goodies_flash($r['ok'] ? 'ok' : 'error', $r['ok'] ? 'Activity deleted.' : $r['error']);
         } elseif ($do === 'save_goody') {
             $back = 'catalogue';
             $r = $model->saveGoody(((int) ($_POST['id'] ?? 0)) ?: null, (string) ($_POST['name'] ?? ''), (string) ($_POST['description'] ?? ''),
@@ -197,6 +213,15 @@ try {
 } catch (Throwable $e) {
     app_log('Goodies admin: load failed: ' . $e->getMessage());
     $flash = ['error', 'The goodies tables are not set up yet. Run database_goodies.sql first.'];
+}
+
+// Every activity, switched on or off, with how often each has been awarded (activities tab).
+$allTypes = $usage = [];
+if ($tab === 'activities') {
+    try {
+        $allTypes = $model->activityTypes(false);
+        $usage    = $model->activityUsage();
+    } catch (Throwable $e) { app_log_ignored('goodies.php:activities', $e); }
 }
 
 // Type-ahead for the member fields (award tab): every member's name, verified username and Member ID.
@@ -393,6 +418,76 @@ engage_header([
             <div><button type="submit" class="gd-btn red">Take back</button></div>
         </form>
     </section>
+
+<?php elseif ($tab === 'activities'): ?>
+
+    <section class="gd-card">
+        <h3>Add an activity</h3>
+        <form method="POST" action="/admin/goodies?tab=activities" class="gd-form">
+            <?= CSRF::getInputField() ?>
+            <input type="hidden" name="do" value="activity_save">
+            <label>Name<input type="text" name="name" required maxlength="160" placeholder="Attend a Wiki Loves Monuments walk"></label>
+            <label>Category
+                <select name="category" required>
+                    <?php foreach (PointsModel::CATEGORIES as $key => $label): ?><option value="<?= $key ?>"><?= htmlspecialchars($label) ?></option><?php endforeach; ?>
+                </select>
+            </label>
+            <label>Points<input type="number" name="points" min="1" max="10000" required></label>
+            <label><input type="checkbox" name="needs_evidence" value="1"> Needs an evidence link</label>
+            <label><input type="checkbox" name="one_time" value="1"> Only once per member</label>
+            <label><input type="checkbox" name="is_active" value="1" checked> Can be awarded</label>
+            <div><button type="submit" class="gd-btn">Add</button></div>
+        </form>
+    </section>
+
+    <section class="gd-card">
+        <h3>Activities (<?= count($allTypes) ?>)</h3>
+        <p class="gd-note">Changing an activity's points <strong>revises every award already made for it</strong>: each member's balance moves by the difference, and the change shows in their points history. Awards of <?= PointsModel::SECOND_APPROVAL_AT ?> points or more need a second reviewer. Minimum attendance is for hosting: under it, the host earns the lower points. An activity that has been awarded can be switched off but not deleted.</p>
+        <?php foreach ($allTypes as $t): $used = (int) ($usage[(int) $t['id']] ?? 0); $builtIn = in_array((string) $t['code'], PointsModel::BUILT_IN_CODES, true); ?>
+            <form method="POST" action="/admin/goodies?tab=activities" class="gd-form gd-row gd-activity" style="display:grid"
+                  data-used="<?= $used ?>" data-points="<?= (int) $t['points'] ?>" data-below="<?= $t['below_min_points'] === null ? '' : (int) $t['below_min_points'] ?>">
+                <?= CSRF::getInputField() ?>
+                <input type="hidden" name="do" value="activity_save">
+                <input type="hidden" name="id" value="<?= (int) $t['id'] ?>">
+                <label class="wide">Name<input type="text" name="name" value="<?= htmlspecialchars((string) $t['name']) ?>" required maxlength="160"></label>
+                <label>Category
+                    <select name="category" required>
+                        <?php foreach (PointsModel::CATEGORIES as $key => $label): ?><option value="<?= $key ?>"<?= $t['category'] === $key ? ' selected' : '' ?>><?= htmlspecialchars($label) ?></option><?php endforeach; ?>
+                    </select>
+                </label>
+                <label>Points<input type="number" name="points" value="<?= (int) $t['points'] ?>" min="1" max="10000" required></label>
+                <label>Minimum attendance (optional)<input type="number" name="min_attendees" value="<?= $t['min_attendees'] === null ? '' : (int) $t['min_attendees'] ?>" min="1" max="1000"></label>
+                <label>Points under the minimum<input type="number" name="below_min_points" value="<?= $t['below_min_points'] === null ? '' : (int) $t['below_min_points'] ?>" min="0" max="10000"></label>
+                <label><input type="checkbox" name="needs_evidence" value="1"<?= (int) $t['needs_evidence'] ? ' checked' : '' ?>> Needs an evidence link</label>
+                <label><input type="checkbox" name="one_time" value="1"<?= (int) ($t['one_time'] ?? 0) ? ' checked' : '' ?>> Only once per member</label>
+                <label><input type="checkbox" name="is_active" value="1"<?= (int) $t['is_active'] ? ' checked' : '' ?>> Can be awarded</label>
+                <div>
+                    <button type="submit" class="gd-btn line">Save</button>
+                    <span class="gd-note" style="margin-left:8px"><?= $used ? 'Awarded ' . $used . ' time' . ($used === 1 ? '' : 's') : 'Not awarded yet' ?><?= $builtIn ? ' · used by the app' : '' ?></span>
+                </div>
+            </form>
+            <?php if (!$used && !$builtIn): ?>
+                <form method="POST" action="/admin/goodies?tab=activities" style="margin:-6px 0 8px"
+                      onsubmit="return confirm('Delete this activity? It has never been awarded.')">
+                    <?= CSRF::getInputField() ?>
+                    <input type="hidden" name="do" value="activity_delete"><input type="hidden" name="id" value="<?= (int) $t['id'] ?>">
+                    <button type="submit" class="gd-btn red" style="padding:4px 12px;font-size:13px">Delete <?= htmlspecialchars((string) $t['name']) ?></button>
+                </form>
+            <?php endif; ?>
+        <?php endforeach; ?>
+    </section>
+    <script>
+    // Changing the points of an activity that has been awarded revises those awards: say so before saving.
+    document.querySelectorAll('form.gd-activity').forEach(function (f) {
+        f.addEventListener('submit', function (ev) {
+            var used = +f.dataset.used, p = f.elements.points.value, b = f.elements.below_min_points.value;
+            if (used > 0 && (p !== f.dataset.points || b !== f.dataset.below)
+                && !confirm('This activity has been awarded ' + used + ' time(s). Saving new points revises all of those awards, and members\' balances move by the difference. Continue?')) {
+                ev.preventDefault();
+            }
+        });
+    });
+    </script>
 
 <?php elseif ($tab === 'catalogue'): ?>
 
