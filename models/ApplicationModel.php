@@ -94,6 +94,22 @@ class ApplicationModel {
         }
     }
 
+    /** True when this application is a Draft that staff sent back for more information. */
+    public function isSentBackDraft(int $appId): bool {
+        $stmt = $this->db->prepare("SELECT 1 FROM applications WHERE id = :id AND status = 'Draft' AND sent_back_at IS NOT NULL");
+        $stmt->execute(['id' => $appId]);
+        return (bool) $stmt->fetchColumn();
+    }
+
+    /**
+     * "Needs information": return the application to the applicant as a Draft and remember that staff sent it
+     * back, so it can still be resubmitted after the form's deadline (see saveApplication()).
+     */
+    public function sendBack(int $appId): void {
+        $stmt = $this->db->prepare("UPDATE applications SET status = 'Draft', sent_back_at = UTC_TIMESTAMP() WHERE id = :id");
+        $stmt->execute(['id' => $appId]);
+    }
+
     /**
      * Save or update an application
      */
@@ -102,11 +118,13 @@ class ApplicationModel {
         // and no final submissions (a new application, or any save that is not
         // a Draft, is refused). Saving an existing draft as a draft still works.
         //
-        // Looser option: apply this only to brand-new applications, so existing
-        // ones stay fully editable after the deadline:  if (!$appId) { ... }
-        // Strictest option: call it unconditionally.
+        // Exception: an application staff SENT BACK for more information (sent_back_at is set and it is a
+        // Draft) can always be resubmitted. Staff asked for it, usually after the deadline, and without this
+        // the applicant could never answer.
         if (!$appId || $status !== 'Draft') {
-            $this->assertFormOpen($formId);
+            if (!($appId && $this->isSentBackDraft((int) $appId))) {
+                $this->assertFormOpen($formId);
+            }
         }
 
         // Renewals must carry a valid Membership ID before they can be submitted.

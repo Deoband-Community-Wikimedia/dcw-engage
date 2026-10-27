@@ -135,9 +135,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked) {
                 $status = $newStatus;
                 $wasDraft = $staysDraft;
             } catch (Exception $e) {
-                // Log the real reason server-side; show a generic message.
-                app_log("Application update failed for application #{$application['id']} <{$application['email']}>: " . $e->getMessage());
-                $errors['system'] = "An error occurred saving your application.";
+                // Reasons written for the applicant ("Applications for this form closed on ...", "locked") are
+                // shown; system failures are logged with a reference and replaced by a generic message.
+                $errors['system'] = engage_user_message($e, 'Application update #' . (int) $application['id']);
             }
         }
     }

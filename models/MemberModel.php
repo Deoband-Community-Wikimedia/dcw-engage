@@ -459,6 +459,9 @@ class MemberModel {
      */
     public function requestInfo(array $app, string $message, string $by): string {
         $this->decide($app, 'Draft', 'info_requested', $message, $by);
+        // Remember it was sent back, so the applicant can resubmit even after the form's deadline.
+        $this->db->prepare("UPDATE applications SET sent_back_at = UTC_TIMESTAMP() WHERE id = :id")
+                 ->execute(['id' => (int) $app['id']]);
         return $this->newResumeToken((int) $app['id']);
     }
 
