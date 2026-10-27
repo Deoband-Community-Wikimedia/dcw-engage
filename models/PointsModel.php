@@ -17,6 +17,7 @@
  */
 require_once __DIR__ . '/../includes/app_log.php';
 require_once __DIR__ . '/../includes/audit.php';
+require_once __DIR__ . '/MemberStrikeModel.php';
 
 class PointsModel
 {
@@ -32,7 +33,15 @@ class PointsModel
         'Cancelled' => [],
     ];
 
+    /** Activities a member can be awarded only once, ever (a rejected award doesn't count). */
+    public const ONE_TIME_CODES = ['first_edit'];
+
     private PDO $pdo;
+
+    /** Per-request lookups for Conversation Hour awards, built on first use. Matching is done in PHP. */
+    private ?array $knownMembers = null;     // MEMBER ID => true
+    private ?array $verifiedUsers = null;    // lower-case verified Wikimedia username => MEMBER ID
+    private ?array $struckMembers = null;    // MEMBER ID => strike row
 
     public function __construct(?PDO $pdo = null)
     {
@@ -69,6 +78,13 @@ class PointsModel
     {
         $st = $this->pdo->prepare('SELECT * FROM activity_types WHERE id = :id');
         $st->execute([':id' => $id]);
+        return $st->fetch(PDO::FETCH_ASSOC) ?: null;
+    }
+
+    public function activityTypeByCode(string $code): ?array
+    {
+        $st = $this->pdo->prepare('SELECT * FROM activity_types WHERE code = :c');
+        $st->execute([':c' => $code]);
         return $st->fetch(PDO::FETCH_ASSOC) ?: null;
     }
 
@@ -116,6 +132,11 @@ class PointsModel
         if (!$type || !(int) $type['is_active']) return ['ok' => false, 'error' => 'That activity is not available.'];
         if ($evidence !== '' && !preg_match('#^https?://\S+$#i', $evidence)) return ['ok' => false, 'error' => 'Evidence must be a link starting with http:// or https://.'];
         if ((int) $type['needs_evidence'] && $evidence === '') return ['ok' => false, 'error' => 'This activity needs an evidence link (a diff or page).'];
+        if (in_array((string) $type['code'], self::ONE_TIME_CODES, true)) {
+            $st = $this->pdo->prepare("SELECT 1 FROM point_awards WHERE member_id = :m AND activity_type_id = :t AND status <> 'Rejected' LIMIT 1");
+            $st->execute([':m' => $memberId, ':t' => $typeId]);
+            if ($st->fetchColumn()) return ['ok' => false, 'error' => '"' . $type['name'] . '" can only be awarded once, and this member already has it.'];
+        }
 
         $points = (int) $type['points'];
         $needsSecond = $points >= self::SECOND_APPROVAL_AT;
@@ -125,12 +146,13 @@ class PointsModel
         try {
             $st = $this->pdo->prepare(
                 'INSERT INTO point_awards (member_id, activity_type_id, points, evidence_url, note, status, created_by_email, first_reviewer_email, decided_at)
-                 VALUES (:m, :t, :p, :e, :n, :s, :a, :a, :d)'
+                 VALUES (:m, :t, :p, :e, :n, :s, :a, :a2, :d)'
             );
+            // :a and :a2 carry the same email: with native prepared statements a placeholder can't be used twice.
             $st->execute([
                 ':m' => $memberId, ':t' => $typeId, ':p' => $points,
                 ':e' => $evidence !== '' ? $evidence : null, ':n' => $note !== '' ? mb_substr($note, 0, 500) : null,
-                ':s' => $status, ':a' => $actorEmail, ':d' => $needsSecond ? null : gmdate('Y-m-d H:i:s'),
+                ':s' => $status, ':a' => $actorEmail, ':a2' => $actorEmail, ':d' => $needsSecond ? null : gmdate('Y-m-d H:i:s'),
             ]);
             $awardId = (int) $this->pdo->lastInsertId();
             if (!$needsSecond) $this->writeAwardLedger($awardId, $memberId, $points, (string) $type['name'], $actorEmail);
@@ -199,6 +221,242 @@ class PointsModel
     {
         $st = $this->pdo->prepare("INSERT INTO points_ledger (member_id, points, entry_type, award_id, reason, actor_email) VALUES (:m, :p, 'award', :aw, :r, :a)");
         $st->execute([':m' => $memberId, ':p' => $points, ':aw' => $awardId, ':r' => mb_substr('Award: ' . $label, 0, 255), ':a' => $actorEmail]);
+    }
+
+    // ---- Conversation Hour awards ----------------------------------------------------------------
+    //
+    // Attendance is logged in Community records (ch_sessions, ch_attendance). Awarding reads it and never
+    // changes it. For a session, "Award now" gives:
+    //   - each member logged PRESENT (excused rows earn nothing) the ch_attend points, and
+    //   - each host (ch_session_hosts) the ch_host points, or below_min_points when fewer than
+    //     min_attendees others were present. A host gets the host award instead of the attend award.
+    // A row is matched to a member by its Member ID, else by the member's VERIFIED Wikimedia username, the
+    // same rule as CommunityRecordsModel. Rows that match nobody are listed, never guessed.
+    // Each award carries source_ref = chRef(session); the unique key (member, activity, source_ref) means a
+    // second run only adds people logged since, and a double click cannot award twice.
+    // Skipped: the reviewer's own Member IDs (another reviewer runs it for them) and struck-off members.
+
+    /** source_ref for the awards of one Conversation Hour session. */
+    public static function chRef(int $sessionId): string
+    {
+        return 'ch-session-' . $sessionId;
+    }
+
+    /** The most recent Conversation Hour sessions, newest first. */
+    public function chSessions(int $limit = 12): array
+    {
+        return $this->pdo->query('SELECT id, title, held_on FROM ch_sessions ORDER BY held_on DESC, id DESC LIMIT ' . max(1, (int) $limit))
+            ->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    /** Member IDs set as hosts of a session. */
+    public function chHosts(int $sessionId): array
+    {
+        $st = $this->pdo->prepare('SELECT member_id FROM ch_session_hosts WHERE session_id = :s ORDER BY id');
+        $st->execute([':s' => $sessionId]);
+        return array_map('strval', $st->fetchAll(PDO::FETCH_COLUMN));
+    }
+
+    public function addChHost(int $sessionId, string $memberId, string $actorEmail): array
+    {
+        $memberId = strtoupper(trim($memberId));
+        if (!$this->chSession($sessionId)) return ['ok' => false, 'error' => 'That session no longer exists.'];
+        if (!isset($this->knownMembers()[$memberId])) return ['ok' => false, 'error' => 'No member was found with that Member ID.'];
+        $st = $this->pdo->prepare('INSERT IGNORE INTO ch_session_hosts (session_id, member_id, added_by) VALUES (:s, :m, :a)');
+        $st->execute([':s' => $sessionId, ':m' => $memberId, ':a' => $actorEmail]);
+        if ($st->rowCount() > 0) $this->audit($actorEmail, 'goodies.ch_host_add', 'CH session #' . $sessionId, $memberId);
+        return ['ok' => true];
+    }
+
+    /** Removing a host never takes back points already awarded; use "Take points back" for that. */
+    public function removeChHost(int $sessionId, string $memberId, string $actorEmail): void
+    {
+        $st = $this->pdo->prepare('DELETE FROM ch_session_hosts WHERE session_id = :s AND member_id = :m');
+        $st->execute([':s' => $sessionId, ':m' => strtoupper(trim($memberId))]);
+        if ($st->rowCount() > 0) $this->audit($actorEmail, 'goodies.ch_host_remove', 'CH session #' . $sessionId, strtoupper(trim($memberId)));
+    }
+
+    /**
+     * What "Award now" would do for a session, without doing it. $ownIds are the reviewer's own Member IDs.
+     * @return array{present:int, award:list<array{member_id:string, code:string, points:int}>, done:int,
+     *               own:list<string>, struck:list<string>, unresolved:list<string>, gone:list<string>,
+     *               hosts:list<string>, host_points:int, missing:list<string>}
+     *   present     rows logged present for the session (matched or not)
+     *   award       awards to make now
+     *   done        awards already made for this session
+     *   own         the reviewer's own Member IDs, left for another reviewer
+     *   struck      struck-off members, skipped
+     *   unresolved  present rows that match no member (no Member ID and no verified username)
+     *   gone        awarded for attending, but no longer logged present: take the points back by hand if wrong
+     *   missing     activity codes (ch_attend, ch_host) that are switched off or missing, so nothing is awarded for them
+     */
+    public function chPlan(int $sessionId, array $ownIds = []): array
+    {
+        $own = array_fill_keys(array_map(fn($m) => strtoupper(trim((string) $m)), $ownIds), true);
+        $plan = ['present' => 0, 'award' => [], 'done' => 0, 'own' => [], 'struck' => [], 'unresolved' => [],
+                 'gone' => [], 'hosts' => $this->chHosts($sessionId), 'host_points' => 0, 'missing' => []];
+
+        $st = $this->pdo->prepare("SELECT member_id, wikimedia_username FROM ch_attendance WHERE session_id = :s AND status = 'present'");
+        $st->execute([':s' => $sessionId]);
+        $attending = [];   // MEMBER ID => true
+        foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $plan['present']++;
+            $mid = $this->resolveMember((string) $row['member_id'], (string) $row['wikimedia_username']);
+            if ($mid === null) {
+                $plan['unresolved'][] = trim((string) $row['member_id']) !== '' ? trim((string) $row['member_id']) : trim((string) $row['wikimedia_username']);
+            } else {
+                $attending[$mid] = true;
+            }
+        }
+        $hosts = array_fill_keys($plan['hosts'], true);
+        $attendees = array_diff_key($attending, $hosts);   // a host is awarded as host, not as attendee
+
+        $types = [];
+        foreach (['ch_attend', 'ch_host'] as $code) {
+            $t = $this->activityTypeByCode($code);
+            if ($t && (int) $t['is_active']) $types[$code] = $t; else $plan['missing'][] = $code;
+        }
+        if (isset($types['ch_host'])) {
+            $t = $types['ch_host'];
+            $others = $plan['present'] - count(array_intersect_key($attending, $hosts));
+            $short = $t['min_attendees'] !== null && $others < (int) $t['min_attendees'] && $t['below_min_points'] !== null;
+            $plan['host_points'] = $short ? (int) $t['below_min_points'] : (int) $t['points'];
+        }
+
+        // Awards already made for this session: [activity_type_id][MEMBER ID] => true (any status: the unique key covers all).
+        $st = $this->pdo->prepare('SELECT member_id, activity_type_id FROM point_awards WHERE source_ref = :r');
+        $st->execute([':r' => self::chRef($sessionId)]);
+        $made = [];
+        foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $r) $made[(int) $r['activity_type_id']][strtoupper((string) $r['member_id'])] = true;
+
+        $struck = $this->struckMembers();
+        $want = [];
+        if (isset($types['ch_attend'])) foreach (array_keys($attendees) as $m) $want[] = [$m, 'ch_attend', (int) $types['ch_attend']['points']];
+        if (isset($types['ch_host'])) foreach (array_keys($hosts) as $m) $want[] = [$m, 'ch_host', $plan['host_points']];
+        foreach ($want as [$m, $code, $points]) {
+            if (isset($made[(int) $types[$code]['id']][$m])) $plan['done']++;
+            elseif (isset($own[$m])) $plan['own'][] = $m;
+            elseif (isset($struck[$m])) $plan['struck'][] = $m;
+            elseif ($points > 0) $plan['award'][] = ['member_id' => $m, 'code' => $code, 'points' => $points];
+        }
+        if (isset($types['ch_attend'])) {
+            foreach (array_keys($made[(int) $types['ch_attend']['id']] ?? []) as $m) {
+                if (!isset($attendees[$m])) $plan['gone'][] = $m;
+            }
+        }
+        return $plan;
+    }
+
+    /**
+     * Award everything chPlan() lists for a session. Safe to repeat: each award is unique per member,
+     * activity and session, so a second run (or a double click) only adds what is new.
+     * @return array{ok:bool, error?:string, awarded?:int, plan?:array}
+     */
+    public function awardForSession(int $sessionId, string $actorEmail, array $ownIds = []): array
+    {
+        $session = $this->chSession($sessionId);
+        if (!$session) return ['ok' => false, 'error' => 'That session no longer exists.'];
+
+        $lock = 'dcw_ch_award_' . $sessionId;
+        $got = $this->pdo->prepare('SELECT GET_LOCK(:l, 10)');
+        $got->execute([':l' => $lock]);
+        if ((int) $got->fetchColumn() !== 1) return ['ok' => false, 'error' => 'Another reviewer is awarding this session right now. Try again in a moment.'];
+
+        try {
+            $plan = $this->chPlan($sessionId, $ownIds);
+            $label = ' (' . $session['title'] . ', ' . date('j M Y', strtotime((string) $session['held_on'])) . ')';
+            $awarded = 0;
+            foreach ($plan['award'] as $a) {
+                $type = $this->activityTypeByCode($a['code']);
+                if ($type && $this->insertSourceAward($a['member_id'], $type, $a['points'], self::chRef($sessionId), $label, $actorEmail)) $awarded++;
+            }
+        } finally {
+            $rel = $this->pdo->prepare('SELECT RELEASE_LOCK(:l)');
+            $rel->execute([':l' => $lock]);
+        }
+
+        if ($awarded > 0) {
+            $this->audit($actorEmail, 'goodies.ch_award', 'CH session #' . $sessionId, $awarded . ' award(s): ' . $session['title']);
+        }
+        return ['ok' => true, 'awarded' => $awarded, 'plan' => $plan];
+    }
+
+    /** One automatic award and, when it needs no second reviewer, its ledger row. False if it already exists. */
+    private function insertSourceAward(string $memberId, array $type, int $points, string $sourceRef, string $label, string $actorEmail): bool
+    {
+        $needsSecond = $points >= self::SECOND_APPROVAL_AT;
+        $this->pdo->beginTransaction();
+        try {
+            $st = $this->pdo->prepare(
+                'INSERT INTO point_awards (member_id, activity_type_id, source_ref, points, note, status, created_by_email, first_reviewer_email, decided_at)
+                 VALUES (:m, :t, :r, :p, :n, :s, :a, :a2, :d)'
+            );
+            $st->execute([
+                ':m' => $memberId, ':t' => (int) $type['id'], ':r' => $sourceRef, ':p' => $points,
+                ':n' => mb_substr(ltrim($label, ' '), 0, 500), ':s' => $needsSecond ? 'Needs Second Approval' : 'Approved',
+                ':a' => $actorEmail, ':a2' => $actorEmail, ':d' => $needsSecond ? null : gmdate('Y-m-d H:i:s'),
+            ]);
+            if (!$needsSecond) {
+                $this->writeAwardLedger((int) $this->pdo->lastInsertId(), $memberId, $points, $type['name'] . $label, $actorEmail);
+            }
+            $this->pdo->commit();
+            return true;
+        } catch (PDOException $e) {
+            if ($this->pdo->inTransaction()) $this->pdo->rollBack();
+            if (($e->errorInfo[1] ?? 0) === 1062) return false;   // already awarded (another run got there first)
+            throw $e;
+        }
+    }
+
+    private function chSession(int $sessionId): ?array
+    {
+        $st = $this->pdo->prepare('SELECT id, title, held_on FROM ch_sessions WHERE id = :id');
+        $st->execute([':id' => $sessionId]);
+        return $st->fetch(PDO::FETCH_ASSOC) ?: null;
+    }
+
+    /** The Member ID an attendance row belongs to, or null. Same rule as CommunityRecordsModel. */
+    private function resolveMember(string $memberId, string $username): ?string
+    {
+        $memberId = strtoupper(trim($memberId));
+        if ($memberId !== '' && isset($this->knownMembers()[$memberId])) return $memberId;
+        $username = mb_strtolower(trim($username));
+        if ($username !== '') return $this->verifiedUsers()[$username] ?? null;
+        return null;
+    }
+
+    private function knownMembers(): array
+    {
+        if ($this->knownMembers === null) {
+            $this->knownMembers = [];
+            foreach ($this->pdo->query('SELECT DISTINCT member_id FROM members')->fetchAll(PDO::FETCH_COLUMN) as $m) {
+                $this->knownMembers[strtoupper((string) $m)] = true;
+            }
+        }
+        return $this->knownMembers;
+    }
+
+    private function verifiedUsers(): array
+    {
+        if ($this->verifiedUsers === null) {
+            $this->verifiedUsers = [];
+            $rows = $this->pdo->query('SELECT member_id, wikimedia_username FROM member_profile WHERE username_verified_at IS NOT NULL ORDER BY member_id')
+                ->fetchAll(PDO::FETCH_ASSOC);
+            foreach ($rows as $r) {
+                $u = mb_strtolower(trim((string) $r['wikimedia_username']));
+                if ($u !== '' && !isset($this->verifiedUsers[$u])) $this->verifiedUsers[$u] = strtoupper((string) $r['member_id']);
+            }
+        }
+        return $this->verifiedUsers;
+    }
+
+    private function struckMembers(): array
+    {
+        if ($this->struckMembers === null) {
+            $this->struckMembers = [];
+            foreach ((new MemberStrikeModel($this->pdo))->activeMap() as $m => $row) $this->struckMembers[strtoupper((string) $m)] = $row;
+        }
+        return $this->struckMembers;
     }
 
     // ---- Catalogue -----------------------------------------------------------------------------
@@ -276,6 +534,8 @@ class PointsModel
                 $this->log('redeem failed: ' . $e->getMessage());
                 return ['ok' => false, 'error' => 'Could not place the order. Your points have not been spent.'];
             }
+            // The member's own action, so the actor is the member (no staff account is involved).
+            $this->audit('member ' . $memberId, 'goodies.redeem', $tracking, $g['name'] . ($variant !== '' ? ' (' . $variant . ')' : '') . ', ' . $cost . ' pts');
             return ['ok' => true, 'tracking_id' => $tracking];
         } finally {
             $rel = $this->pdo->prepare('SELECT RELEASE_LOCK(:l)');
