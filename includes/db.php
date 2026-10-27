@@ -19,6 +19,10 @@ class DB {
             PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION, // Fail hard on SQL errors
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
             PDO::ATTR_EMULATE_PREPARES   => false, // Strictly use real prepared statements
+            // PHP runs in UTC (see init.php). Make the connection UTC too, so NOW() / CURRENT_TIMESTAMP and the
+            // TIMESTAMP values read back are in the same time zone PHP assumes, whatever the host's MySQL default is.
+            // A fixed offset, because named zones need time zone tables loaded on the server.
+            PDO::MYSQL_ATTR_INIT_COMMAND => "SET time_zone = '+00:00'",
             // Deliberately NOT persistent. A persistent connection is reused
             // across unrelated requests by the same PHP worker, so if it gets
             // killed mid-transaction by the host's MySQL connection-rate
