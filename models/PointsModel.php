@@ -34,7 +34,13 @@ class PointsModel
     ];
 
     /** Activities a member can be awarded only once, ever (a rejected award doesn't count). */
-    public const ONE_TIME_CODES = ['first_edit'];
+    public const ONE_TIME_CODES = ['first_edit', 'taw_graduate'];
+
+    /**
+     * Train a Wikipedian: one award for graduating from the whole programme, and only from the April 2026
+     * TaW onwards (earlier editions don't count). The evidence must be that TaW's page on dcwwiki.org.
+     */
+    public const TAW_FIRST_EDITION = '2026-04';
 
     private PDO $pdo;
 
@@ -132,6 +138,15 @@ class PointsModel
         if (!$type || !(int) $type['is_active']) return ['ok' => false, 'error' => 'That activity is not available.'];
         if ($evidence !== '' && !preg_match('#^https?://\S+$#i', $evidence)) return ['ok' => false, 'error' => 'Evidence must be a link starting with http:// or https://.'];
         if ((int) $type['needs_evidence'] && $evidence === '') return ['ok' => false, 'error' => 'This activity needs an evidence link (a diff or page).'];
+        if ((string) $type['code'] === 'taw_graduate') {
+            $edition = self::tawEdition($evidence);
+            if ($edition === null) {
+                return ['ok' => false, 'error' => 'Link the page of the TaW they graduated from, for example https://dcwwiki.org/Train_a_Wikipedian,_April_2026'];
+            }
+            if ($edition < self::TAW_FIRST_EDITION) {
+                return ['ok' => false, 'error' => 'Only TaW April 2026 and later count. Earlier editions are not awarded.'];
+            }
+        }
         if (in_array((string) $type['code'], self::ONE_TIME_CODES, true)) {
             $st = $this->pdo->prepare("SELECT 1 FROM point_awards WHERE member_id = :m AND activity_type_id = :t AND status <> 'Rejected' LIMIT 1");
             $st->execute([':m' => $memberId, ':t' => $typeId]);
@@ -196,6 +211,22 @@ class PointsModel
         }
         $this->audit($actorEmail, 'goodies.approve', (string) $a['member_id'], $a['activity_name'] . ' (' . $a['points'] . ' pts)');
         return ['ok' => true];
+    }
+
+    /**
+     * The TaW edition ('YYYY-MM') a dcwwiki.org Train a Wikipedian page link points to, or null.
+     * Accepts https://dcwwiki.org/Train_a_Wikipedian,_April_2026 and the same with spaces or %2C.
+     */
+    public static function tawEdition(string $url): ?string
+    {
+        $parts = parse_url(trim($url));
+        $host = strtolower((string) ($parts['host'] ?? ''));
+        if ($host !== 'dcwwiki.org' && $host !== 'www.dcwwiki.org') return null;
+        $page = rawurldecode((string) ($parts['path'] ?? '') . (isset($parts['query']) ? '?' . $parts['query'] : ''));
+        if (!preg_match('/Train[ _]a[ _]Wikipedian,?[ _]+([A-Za-z]+)[ _]+(\d{4})/i', $page, $m)) return null;
+        $month = DateTimeImmutable::createFromFormat('!F Y', ucfirst(strtolower($m[1])) . ' ' . $m[2])
+              ?: DateTimeImmutable::createFromFormat('!M Y', ucfirst(strtolower($m[1])) . ' ' . $m[2]);
+        return $month ? $month->format('Y-m') : null;
     }
 
     public function rejectAward(int $awardId, string $actorEmail): bool

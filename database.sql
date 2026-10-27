@@ -929,7 +929,7 @@ INSERT IGNORE INTO `activity_types` (`code`,`name`,`category`,`points`,`needs_ev
   ('ch_host',              'Host a Conversation Hour',                  'community',  100, 0, 3,    50),
   ('mehfil_attend',        'Attend a Mehfil-e-Wiki',                    'learn',      30,  0, 6,    15),
   ('mehfil_host',          'Host a Mehfil-e-Wiki',                      'community',  120, 0, 6,    60),
-  ('taw_day',              'Train a Wikipedian: one day attended',      'learn',      100, 0, NULL, NULL),
+  ('taw_graduate',         'Train a Wikipedian: graduated (April 2026 onwards)', 'learn', 140, 1, NULL, NULL),
   ('first_edit',           'First verified edit (one-time)',            'contribute', 30,  1, NULL, NULL),
   ('mentor_first_edit',    'Mentor a newcomer to their first edit',     'community',  100, 1, NULL, NULL),
   ('mentor_first_article', 'Mentor a newcomer to their first article',  'community',  150, 1, NULL, NULL);
