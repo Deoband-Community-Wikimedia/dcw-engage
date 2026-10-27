@@ -17,6 +17,9 @@ require_once __DIR__ . '/../../models/PointsModel.php';
  *
  * An award under PointsModel::SECOND_APPROVAL_AT is approved when it is created. A larger one waits for
  * a different reviewer. Every state-changing action is a CSRF-checked POST and is written to audit_log.
+ *
+ * Conversation Hour (award tab): attendance logged in Community records is awarded per session with
+ * "Award now" (PointsModel::awardForSession), and hosts are set here. Re-running only adds what is new.
  */
 Auth::requireLogin();
 // Signed in but not a support reviewer or owner: 403, the same way Auth::requireOwner() treats a non-owner.
@@ -35,6 +38,10 @@ if (!Auth::hasAnyRole(['support_reviewer', 'owner'])) {
 
 $actor = strtolower((string) Auth::email());
 $model = new PointsModel();
+
+// The reviewer's own Member IDs: Conversation Hour awards for these are left for another reviewer.
+$ownIds = [];
+try { $ownIds = array_column((new MemberModel())->membershipsForEmail($actor), 'member_id'); } catch (Throwable $e) { app_log_ignored('goodies.php:own', $e); }
 
 const GOODIES_TABS = ['award' => 'Award points', 'catalogue' => 'Catalogue', 'redemptions' => 'Orders'];
 $tab = isset(GOODIES_TABS[$_GET['tab'] ?? '']) ? (string) $_GET['tab'] : 'award';
@@ -110,6 +117,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             } else {
                 goodies_flash($model->rejectAward($awardId, $actor) ? 'ok' : 'error', 'Award rejected.');
             }
+        } elseif ($do === 'ch_award') {
+            $back = 'award';
+            $r = $model->awardForSession((int) ($_POST['session_id'] ?? 0), $actor, $ownIds);
+            if (!$r['ok']) {
+                goodies_flash('error', $r['error']);
+            } else {
+                $p = $r['plan'];
+                $msg = $r['awarded'] === 1 ? '1 award made.' : $r['awarded'] . ' awards made.';
+                if ($p['own'])        $msg .= ' Your own award is left for another reviewer.';
+                if ($p['struck'])     $msg .= ' Skipped ' . count($p['struck']) . ' struck-off member(s).';
+                if ($p['unresolved']) $msg .= ' ' . count($p['unresolved']) . ' attendee(s) could not be matched to a member.';
+                goodies_flash('ok', $msg);
+            }
+        } elseif ($do === 'ch_host_add') {
+            $back = 'award';
+            $r = $model->addChHost((int) ($_POST['session_id'] ?? 0), (string) ($_POST['member_id'] ?? ''), $actor);
+            goodies_flash($r['ok'] ? 'ok' : 'error', $r['ok'] ? 'Host saved. Use Award now to award them.' : $r['error']);
+        } elseif ($do === 'ch_host_remove') {
+            $back = 'award';
+            $model->removeChHost((int) ($_POST['session_id'] ?? 0), (string) ($_POST['member_id'] ?? ''), $actor);
+            goodies_flash('ok', 'Host removed. Points already awarded stay; take them back below if needed.');
         } elseif ($do === 'save_goody') {
             $back = 'catalogue';
             $r = $model->saveGoody(((int) ($_POST['id'] ?? 0)) ?: null, (string) ($_POST['name'] ?? ''), (string) ($_POST['description'] ?? ''),
@@ -145,6 +173,20 @@ try {
 } catch (Throwable $e) {
     app_log('Goodies admin: load failed: ' . $e->getMessage());
     $flash = ['error', 'The goodies tables are not set up yet. Run database_goodies.sql first.'];
+}
+
+// Conversation Hour sessions with what "Award now" would do for each (award tab only).
+$chRows = [];
+$chError = '';
+if ($tab === 'award') {
+    try {
+        foreach ($model->chSessions(12) as $sess) {
+            $chRows[] = ['session' => $sess, 'plan' => $model->chPlan((int) $sess['id'], $ownIds)];
+        }
+    } catch (Throwable $e) {
+        app_log_ignored('goodies.php:ch', $e);
+        $chError = 'Conversation Hour awards need the migration 2026_10_27_goodies_ch_awards.sql.';
+    }
 }
 
 $ist = new DateTimeZone('Asia/Kolkata');
@@ -183,6 +225,14 @@ engage_header([
     .gd-row p { margin: 2px 0 0; color: var(--muted); font-size: 13.5px; overflow-wrap: anywhere; }
     .gd-row form { display: inline; margin: 0; }
     .gd-empty { padding: 18px; text-align: center; color: var(--muted); }
+    .gd-note { margin: 0 0 10px; color: var(--muted); font-size: 13.5px; }
+    .gd-warn { color: #b45309; }
+    .gd-hosts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; }
+    .gd-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px 2px 10px; border: 1px solid var(--border); border-radius: 999px; font-size: 13px; }
+    .gd-chip button { border: 0; background: none; color: #97161b; font: inherit; font-weight: 700; cursor: pointer; padding: 0 6px; }
+    .gd-inline { display: inline-flex !important; gap: 6px; align-items: center; }
+    .gd-inline input[type=text] { width: 9.5em; padding: 5px 8px; font: inherit; font-size: 13px; border: 1px solid var(--border); border-radius: 8px; }
+    .gd-inline .gd-btn { padding: 5px 12px; font-size: 13px; }
 </style>
 
 <?php if ($flash): ?>
@@ -223,6 +273,49 @@ engage_header([
             <label>Note (optional)<input type="text" name="note" maxlength="500"></label>
             <div><button type="submit" class="gd-btn">Award</button></div>
         </form>
+    </section>
+
+    <section class="gd-card">
+        <h3>Conversation Hour</h3>
+        <p class="gd-note">Points for attendance logged in <a href="/admin/community-records">Community records</a>. Members logged present earn the attend points; each host earns the host points instead (fewer if under the minimum attendance). Award now can be run again later: it only adds people logged since.</p>
+        <?php if ($chError !== ''): ?>
+            <div class="gd-empty"><?= htmlspecialchars($chError) ?></div>
+        <?php elseif (!$chRows): ?>
+            <div class="gd-empty">No sessions logged yet.</div>
+        <?php else: foreach ($chRows as $row): $sess = $row['session']; $p = $row['plan']; $sid = (int) $sess['id']; $todo = count($p['award']); ?>
+            <div class="gd-row">
+                <div>
+                    <strong><?= htmlspecialchars((string) $sess['title']) ?> · <?= htmlspecialchars(date('j M Y', strtotime((string) $sess['held_on']))) ?></strong>
+                    <p><?= (int) $p['present'] ?> present · <?= (int) $p['done'] ?> awarded · <strong><?= $todo ?> to award</strong>
+                        <?php if ($p['hosts'] && $p['host_points']): ?> · host <?= (int) $p['host_points'] ?> pts<?php endif; ?></p>
+                    <?php if ($p['missing']): ?><p class="gd-warn">Switched off or missing activity: <?= htmlspecialchars(implode(', ', $p['missing'])) ?>. Nothing is awarded for it.</p><?php endif; ?>
+                    <?php if ($p['own']): ?><p class="gd-warn">Your own award (<?= htmlspecialchars(implode(', ', $p['own'])) ?>) is left for another reviewer.</p><?php endif; ?>
+                    <?php if ($p['struck']): ?><p class="gd-warn">Struck off, not awarded: <?= htmlspecialchars(implode(', ', $p['struck'])) ?></p><?php endif; ?>
+                    <?php if ($p['unresolved']): ?><p class="gd-warn">Not matched to a member (no Member ID or verified username): <?= htmlspecialchars(implode(', ', $p['unresolved'])) ?></p><?php endif; ?>
+                    <?php if ($p['gone']): ?><p class="gd-warn">Awarded, but no longer logged present: <?= htmlspecialchars(implode(', ', $p['gone'])) ?>. If that was a mistake, take the points back below.</p><?php endif; ?>
+                    <div class="gd-hosts">
+                        <span style="font-size:13px;color:var(--muted)">Hosts:</span>
+                        <?php foreach ($p['hosts'] as $h): ?>
+                            <form method="POST" action="/admin/goodies?tab=award" class="gd-chip"><?= CSRF::getInputField() ?>
+                                <input type="hidden" name="do" value="ch_host_remove"><input type="hidden" name="session_id" value="<?= $sid ?>"><input type="hidden" name="member_id" value="<?= htmlspecialchars($h) ?>">
+                                <?= htmlspecialchars($h) ?><button type="submit" aria-label="Remove host <?= htmlspecialchars($h) ?>" title="Remove host">×</button>
+                            </form>
+                        <?php endforeach; ?>
+                        <form method="POST" action="/admin/goodies?tab=award" class="gd-inline"><?= CSRF::getInputField() ?>
+                            <input type="hidden" name="do" value="ch_host_add"><input type="hidden" name="session_id" value="<?= $sid ?>">
+                            <input type="text" name="member_id" required maxlength="20" placeholder="Host Member ID" aria-label="Host Member ID for <?= htmlspecialchars((string) $sess['title']) ?>" autocomplete="off">
+                            <button type="submit" class="gd-btn line">Add host</button>
+                        </form>
+                    </div>
+                </div>
+                <div>
+                    <form method="POST" action="/admin/goodies?tab=award"><?= CSRF::getInputField() ?>
+                        <input type="hidden" name="do" value="ch_award"><input type="hidden" name="session_id" value="<?= $sid ?>">
+                        <button type="submit" class="gd-btn"<?= $todo ? '' : ' disabled' ?>>Award now<?= $todo ? ' (' . $todo . ')' : '' ?></button>
+                    </form>
+                </div>
+            </div>
+        <?php endforeach; endif; ?>
     </section>
 
     <section class="gd-card">

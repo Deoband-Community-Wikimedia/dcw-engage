@@ -48,7 +48,7 @@
 --  10. Goodies (member points)                  activity_types, events,
 --                                               event_attendance, point_awards,
 --                                               goodies, redemptions,
---                                               points_ledger
+--                                               points_ledger, ch_session_hosts
 --
 -- Tables are ordered so that every foreign key points at a table created
 -- earlier in the file.
@@ -818,6 +818,7 @@ CREATE TABLE IF NOT EXISTS `point_awards` (
   `member_id` varchar(40) NOT NULL,
   `activity_type_id` int(11) NOT NULL,
   `event_id` int(11) DEFAULT NULL,
+  `source_ref` varchar(60) DEFAULT NULL,         -- where an automatic award came from, e.g. 'ch-session-14'
   `points` int(10) UNSIGNED NOT NULL,               -- snapshot of the activity's points at creation
   `evidence_url` varchar(500) DEFAULT NULL,
   `note` varchar(500) DEFAULT NULL,
@@ -830,6 +831,8 @@ CREATE TABLE IF NOT EXISTS `point_awards` (
   PRIMARY KEY (`id`),
   -- Event awards can't be doubled up. (Manual awards have a NULL event_id, which MySQL treats as distinct.)
   UNIQUE KEY `uniq_award_event` (`member_id`,`activity_type_id`,`event_id`),
+  -- One award per member, activity and source, so "Award now" for a session can be re-run safely.
+  UNIQUE KEY `uniq_award_source` (`member_id`,`activity_type_id`,`source_ref`),
   KEY `idx_award_status` (`status`),
   KEY `activity_type_id` (`activity_type_id`),
   KEY `event_id` (`event_id`),
@@ -885,6 +888,19 @@ CREATE TABLE IF NOT EXISTS `points_ledger` (
   KEY `idx_ledger_member` (`member_id`),
   CONSTRAINT `fk_points_ledger_award` FOREIGN KEY (`award_id`) REFERENCES `point_awards` (`id`),
   CONSTRAINT `fk_points_ledger_redemption` FOREIGN KEY (`redemption_id`) REFERENCES `redemptions` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Who hosted each Conversation Hour session (ch_sessions has no host), so hosts can be awarded points.
+-- Kept apart from the Community records tables: logging attendance and awarding points are different roles.
+CREATE TABLE IF NOT EXISTS `ch_session_hosts` (
+  `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT,
+  `session_id` int(10) UNSIGNED NOT NULL,
+  `member_id` varchar(20) NOT NULL,
+  `added_by` varchar(255) NOT NULL,
+  `added_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_session_host` (`session_id`,`member_id`),
+  CONSTRAINT `fk_ch_host_session` FOREIGN KEY (`session_id`) REFERENCES `ch_sessions` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================
