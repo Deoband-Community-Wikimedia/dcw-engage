@@ -529,7 +529,7 @@ if (!$id && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') ==
             try {
                 if ($bulkAct === 'info') {
                     $token = $model->generateMagicLink((int) $row['id'], true);
-                    $model->updateStatus((int) $row['id'], 'Draft');
+                    $model->sendBack((int) $row['id']);
                     if (!$emailSentBack($row, $note, $token)) {
                         // Email failed: keep the link so the organizer can pass it on by hand.
                         $result['links'][] = ['who' => $who, 'email' => $row['email'], 'url' => $resumeUrl($token)];
@@ -608,7 +608,7 @@ if ($app && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 $msg = trim((string) ($_POST['message'] ?? ''));
                 if ($msg === '') throw new Exception('Say what you need from the applicant.');
                 $token = $model->generateMagicLink((int) $app['id'], true);
-                $model->updateStatus((int) $app['id'], 'Draft');
+                $model->sendBack((int) $app['id']);
                 if (!$emailSentBack($app, $msg, $token)) {
                     // Email failed: show the link and message so the decision is not wasted.
                     $_SESSION['application_link'] = ['who' => $app['applicant_name'] ?: $app['email'], 'email' => $app['email'],

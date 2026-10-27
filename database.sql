@@ -182,6 +182,7 @@ CREATE TABLE IF NOT EXISTS `applications` (
   `form_data` JSON DEFAULT NULL,
   `letter_sent_at` datetime DEFAULT NULL,
   `letter_failed` tinyint(1) NOT NULL DEFAULT 0,
+  `sent_back_at` datetime DEFAULT NULL,           -- staff asked for more information; may be resubmitted after the deadline
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
