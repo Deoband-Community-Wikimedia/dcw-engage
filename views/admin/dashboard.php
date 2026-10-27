@@ -7,6 +7,7 @@ require_once __DIR__ . '/../../models/FeedbackModel.php';
 require_once __DIR__ . '/../../models/ApplicationModel.php';
 require_once __DIR__ . '/../../models/MemberModel.php';
 require_once __DIR__ . '/../../models/TechIssueModel.php';
+require_once __DIR__ . '/../../models/PointsModel.php';
 
 Auth::requireLogin();
 
@@ -16,6 +17,7 @@ Auth::requireLogin();
 //   feedback_review.php      -> requireRole(['owner', 'organizer'])   (responses to feedback forms; has its own Feedback tab here)
 //   reimbursement_review.php -> requireRole(['support_reviewer', 'owner'])
 //   internet_review.php      -> requireRole(['support_reviewer', 'owner'])
+//   goodies.php              -> support_reviewer or owner (checked with Auth::hasAnyRole inside the view)
 //   finance/queue.php        -> requireRole(['finance', 'owner'])   (combined: reimbursements + internet support)
 //   finance/closed.php       -> requireRole(['finance', 'owner'])
 //   membership_review.php    -> requireRole(['membership_coordinator', 'membership_reviewer', 'owner'])   (organizers: forms only)
@@ -31,6 +33,7 @@ $canReviewApplications   = Auth::hasAnyRole(['organizer', 'owner']);
 $canReadFeedback         = Auth::hasAnyRole(['organizer', 'owner']);   // mirrors feedback_review.php
 $canReviewReimbursements = Auth::hasAnyRole(['support_reviewer', 'owner']);
 $canReviewInternet       = Auth::hasAnyRole(['support_reviewer', 'owner']);
+$canManageGoodies        = Auth::hasAnyRole(['support_reviewer', 'owner']);   // mirrors goodies.php
 $canProcessFinance       = Auth::hasAnyRole(['finance', 'owner']);
 $canReviewMembership     = Auth::hasAnyRole(['membership_coordinator', 'membership_reviewer', 'owner']);
 $canManageTeam           = Auth::isOwner();
@@ -45,6 +48,16 @@ try {
     if ($canWorkTech) $techOpen = $techModel->openCount();
     $techWaiting = $techModel->awaitingReporter('team', strtolower((string) Auth::email()));
 } catch (Throwable $e) { app_log_ignored('dashboard.php:47', $e); /* tables not created yet */ }
+
+// Goodies: awards waiting for a second reviewer plus new orders, shown as the badge on the Goodies tab.
+// If the goodies tables have not been created yet, the badge is simply left out.
+$goodiesWaiting = 0;
+if ($canManageGoodies) {
+    try {
+        $goodiesTotals  = (new PointsModel())->totals();
+        $goodiesWaiting = (int) $goodiesTotals['awaiting_second'] + (int) $goodiesTotals['requested'];
+    } catch (Throwable $e) { app_log_ignored('dashboard.php:goodies', $e); /* tables not created yet */ }
+}
 
 // Who gets the forms grid, and which forms they see. Mirrors
 // FormModel::userCanOpen(), which form_manager.php enforces:
@@ -174,6 +187,7 @@ $icons = [
 $vtabs = [];
 if ($showReviewPanel) $vtabs[] = ['review',   'Review',               'inbox', (int) $appsWaiting + (int) $membershipWaiting];
 if ($canSeeSupport)   $vtabs[] = ['support',  'Volunteer support',    'card',  0];
+if ($canManageGoodies) $vtabs[] = ['goodies', 'Goodies',              'star',  (int) $goodiesWaiting];
 if ($showFormsGrid)   $vtabs[] = ['forms',    'Forms',                'doc',   0];
 if ($canReadFeedback) $vtabs[] = ['feedback', 'Feedback',             'star',  0];   // no badge: feedback has nothing "waiting"
 if ($showSupportTech) $vtabs[] = ['tech',     'Support & technical',  'chat',  (int) $techOpen];
@@ -340,6 +354,25 @@ engage_header([
                             lrow($icons, '#C96A12', 'archive', 'Closed requests',
                                 'Paid and closed requests, with a receipt PDF for each.', '/finance/closed');
                         }
+                        ?>
+                    </div>
+                </section>
+                <?php endif; ?>
+
+                <?php if ($canManageGoodies): ?>
+                <section class="vpanel" id="p-goodies" role="tabpanel" aria-labelledby="t-goodies" hidden>
+                    <div class="panel-head">
+                        <h2>Goodies</h2>
+                        <p>Award points to members, manage the catalogue and fulfil orders.</p>
+                    </div>
+                    <div class="lrows">
+                        <?php
+                        lrow($icons, 'var(--primary)', 'star', 'Award points',
+                            'Award points for activities, approve large awards, or take points back.', '/admin/goodies?tab=award');
+                        lrow($icons, 'var(--primary)', 'doc', 'Catalogue',
+                            'The goodies members can redeem, and what each costs in points.', '/admin/goodies?tab=catalogue');
+                        lrow($icons, 'var(--leaf-dark, #3E7A53)', 'inbox', 'Orders',
+                            'Order, ship and deliver what members have redeemed.', '/admin/goodies?tab=redemptions');
                         ?>
                     </div>
                 </section>
