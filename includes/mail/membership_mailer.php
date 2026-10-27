@@ -24,7 +24,8 @@
 //
 // Join-form verification: sendExistingAccount() carries the one-time verification CODE (OTP),
 // not a link, when the address already belongs to a member joining another chapter. It names the
-// form's event only (CoreMail::eventTitle()), not the full form title.
+// form's event only (CoreMail::eventTitle()), not the full form title. It greets the person by the
+// name they typed on the verification gate ($applicantName), falling back to the name on file.
 //
 // Sign-off examples:
 //   Best regards,                       Best regards,
@@ -373,21 +374,24 @@ class MembershipMailer {
 
     /**
      * Sent from the join-form verification step when the address already belongs to a member.
-     * $held = MemberModel::membershipsForEmail($email) (must include full_name).
+     * $held = MemberModel::membershipsForEmail($email).
      * $code is null when they already hold THIS chapter (no application is needed), and set
      * when they are joining another chapter: then the one-time verification code (OTP, the raw
      * 8-character value from EmailVerificationModel::request()) is included, to be typed into the
      * page they have open. There is no link.
      * $expiresAt is the code's expiry as stored (UTC); it is shown to the member in IST.
      * $formTitle is shown as the event name only (CoreMail::eventTitle()).
+     * $applicantName is the name typed on the verification gate. The greeting uses it (with any age
+     * typed after it removed); when empty it falls back to the name on file, then to "there".
      */
-    public static function sendExistingAccount($email, array $held, $chapter, $formTitle, $code = null, $expiresAt = null) {
+    public static function sendExistingAccount($email, array $held, $chapter, $formTitle, $code = null, $expiresAt = null, $applicantName = '') {
         $base  = CoreMail::appUrl();
         $login = $base . '/member/login';
         $renew = $base . '/membership?type=renewal';
         $e     = fn($s) => htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8');
 
-        $name = (string) ($held[0]['full_name'] ?? '');
+        $name = CoreMail::cleanName($applicantName);
+        if ($name === '') $name = (string) ($held[0]['full_name'] ?? '');
         if ($name === '') $name = 'there';
         $formTitle = CoreMail::eventTitle($formTitle);   // event name only, no form-type prefix or edition/date
         $ids  = array_values(array_unique(array_map(fn($r) => (string) $r['member_id'], $held)));
