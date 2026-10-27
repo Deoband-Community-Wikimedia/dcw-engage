@@ -256,8 +256,10 @@ if (isset($_GET['action']) && $_GET['action'] === 'export') {
 
     $output = fopen('php://output', 'w');
 
-    // Dynamic headers based on Schema + default ones
-    $headers = ['Tracking ID', 'Status', 'Date Submitted'];
+    // Dynamic headers based on Schema + default ones.
+    // "Applicant name" comes from the applications table (the name given when the email was verified),
+    // so it is present even on forms that no longer have a name question of their own.
+    $headers = ['Tracking ID', 'Applicant name', 'Status', 'Date Submitted'];
     $fields = [];
     foreach (FormModel::schemaFields($form['schema']) as $f) {
         $headers[] = $f['label'] ?? $f['name'];
@@ -268,6 +270,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'export') {
     foreach ($applications as $app) {
         $row = [
             $app['tracking_id'] ?? 'N/A',
+            $app['applicant_name'] ?? '',
             $app['status'],
             date('Y-m-d H:i', strtotime($app['created_at']))
         ];

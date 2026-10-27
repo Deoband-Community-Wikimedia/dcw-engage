@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../../includes/init.php';
 require_once __DIR__ . '/../../includes/app_log.php';
 require_once __DIR__ . '/../../includes/engage_page.php';
+require_once __DIR__ . '/../../includes/applicant_name.php';
 require_once __DIR__ . '/../../models/ApplicationModel.php';
 require_once __DIR__ . '/../../includes/wikitext.php';
 
@@ -35,11 +36,23 @@ $status = $application['status'];
 $isLocked = in_array($status, ['Under Review', 'Accepted', 'Rejected']);
 $wasDraft = $status === 'Draft';
 
+// The name was given when the email was verified, so it is not asked again here: the form's own
+// name field is taken out, and the stored name is written back into the answers on save.
+// Older drafts that were saved with the placeholder "Applicant" keep showing the field.
+$nameFieldKey = null;
+$storedName = trim((string) ($application['applicant_name'] ?? ''));
+if ($storedName !== '' && $storedName !== 'Applicant') {
+    $nameFieldKey = applicantNameField($schema);
+    if ($nameFieldKey !== null) {
+        [$schema, $schemaSections] = schemaWithoutField($schema, $schemaSections, $nameFieldKey);
+    }
+}
+
 $errors = [];
 $success = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked) {
-    if (!CSRF::validate($_POST['csrf_token'])) {
+    if (!CSRF::validate($_POST['csrf_token'] ?? '')) {
         die("Invalid CSRF token.");
     }
 
@@ -53,11 +66,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked) {
     $errors = $formModel->validateSubmission($schema, $_POST, $staysDraft);
 
     if (empty($errors)) {
-        $email = $_POST['email'] ?? $application['email'];
+        // The address was verified when the application was started. It is never taken from the request,
+        // so a magic link cannot be used to move an application to an address nobody has verified.
+        $email = $application['email'];
         $name = resolveApplicantName($_POST, $schema, $application['applicant_name'] ?? 'Applicant');
 
         $postData = $_POST;
         unset($postData['csrf_token']);
+        unset($postData['email']);   // not an answer; the verified address stays as it is
+
+        // Keep the verified name in the answers as well.
+        if ($nameFieldKey !== null) {
+            $postData[$nameFieldKey] = $formData[$nameFieldKey] ?? $storedName;
+        }
 
         // Process File Uploads
         require_once __DIR__ . '/../../models/FileUploader.php';
@@ -180,10 +201,17 @@ engage_header([
 
         <fieldset class="group">
             <legend>Contact</legend>
+            <?php if ($nameFieldKey !== null): ?>
+                <div class="field">
+                    <label for="applicant_name_shown">Name</label>
+                    <input type="text" id="applicant_name_shown" value="<?= $e($storedName) ?>" readonly>
+                </div>
+            <?php endif; ?>
             <div class="field">
-                <label for="email">Email address <span class="req-star">*</span></label>
-                <input type="email" name="email" id="email"
-                    value="<?= $e($_POST['email'] ?? $application['email']) ?>" required <?= $isLocked ? 'disabled' : '' ?>>
+                <label for="email">Email address</label>
+                <?php /* No name attribute: the address is the one verified at the start and is never posted. */ ?>
+                <input type="email" id="email" value="<?= $e($application['email']) ?>" readonly>
+                <span class="hint">This is the address you verified. It cannot be changed here.</span>
             </div>
         </fieldset>
 

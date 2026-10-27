@@ -197,7 +197,7 @@ if ($action === 'submit_reimbursement' && $type === 'reimbursement') {
         die("Invalid CSRF token.");
     }
 
-    $eventName = trim($_POST['event_name'] ?? '');
+    $eventName = ReimbursementModel::normalizeEventName($_POST['event_name'] ?? '');
     $eventDate = trim($_POST['event_date'] ?? '');
     $dcwEvent  = $_POST['dcw_event'] ?? '';
 
@@ -760,6 +760,26 @@ engage_header([
                 document.querySelectorAll('input[name="payment_method"]').forEach(el => el.addEventListener('change', togglePaymentFields));
                 document.getElementById('dcw-event').addEventListener('change', toggleDcwNotice);
                 document.getElementById('reimbursement-form').addEventListener('submit', renumberReceipts);
+
+                // One click, one request: a second click or Enter press while the first is in flight would
+                // file the claim twice. The page reloads on any answer; pageshow re-arms it for the back button.
+                var reimbursementForm = document.getElementById('reimbursement-form');
+                var reimbursementSending = false;
+                reimbursementForm.addEventListener('submit', function (ev) {
+                    if (reimbursementSending) { ev.preventDefault(); return; }
+                    reimbursementSending = true;
+                    var btn = document.getElementById('submit-btn');
+                    btn.textContent = 'Submitting\u2026';
+                    setTimeout(function () { btn.disabled = true; }, 0);   // after the browser has read the button
+                });
+                window.addEventListener('pageshow', function (ev) {
+                    if (ev.persisted) {
+                        reimbursementSending = false;
+                        var btn = document.getElementById('submit-btn');
+                        btn.textContent = 'Submit reimbursement request';
+                        toggleDcwNotice();
+                    }
+                });
 
                 // Start with one line item row.
                 addLineItem();
