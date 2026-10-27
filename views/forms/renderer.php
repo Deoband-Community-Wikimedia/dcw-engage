@@ -173,11 +173,12 @@ if (empty($previewSchema)) {
 // The name that goes forward: the member's own name when signed in, otherwise the one typed at the gate.
 // When we have one, the form's own name field is removed (not shown, not required), and the value is
 // written into the answers again on save, so reviewers, exports and emails still see it.
+// The admin preview (no session, no name yet) hides it as well, so organizers see what applicants will see.
 $carriedName = $memberAutoVerified
     ? trim((string) ($loggedMember['full_name'] ?? ''))
     : trim($verifiedName);
 $nameFieldKey = null;
-if ($carriedName !== '' && empty($previewSchema)) {
+if ($carriedName !== '' || !empty($previewSchema)) {
     $nameFieldKey = applicantNameField($schema);
     if ($nameFieldKey !== null) {
         [$schema, $schemaSections] = schemaWithoutField($schema, $schemaSections, $nameFieldKey);
