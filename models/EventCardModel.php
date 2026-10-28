@@ -180,17 +180,16 @@ class EventCardModel
     // ---- Importing mentees from a scholarship form -----------------------------------------------
 
     /**
-     * Applications that could become mentees: on the chosen form, not yet in this event.
+     * Applications that could become mentees: awardees who CONFIRMED their scholarship (the /confirm/<token>
+     * step, award_confirmations.response = 'confirmed') on the chosen form, not yet in this event.
      * Only the three columns the screen needs are read; no email, answers or documents.
-     *
-     * TODO: this lists status 'Accepted'. The portal also has an award confirmation step (the /confirm/<token>
-     * link, AwardConfirmationModel). Once that model is shared, narrow this to awardees who have CONFIRMED.
      */
     public function candidates(int $formId, int $eventId): array
     {
         $st = $this->db->prepare(
             "SELECT a.id, a.tracking_id, a.applicant_name
              FROM applications a
+             JOIN award_confirmations ac ON ac.application_id = a.id AND ac.response = 'confirmed'
              WHERE a.form_id = ? AND a.status = 'Accepted'
                AND NOT EXISTS (SELECT 1 FROM card_participants p WHERE p.event_id = ? AND p.application_id = a.id)
              ORDER BY a.applicant_name"
@@ -202,8 +201,8 @@ class EventCardModel
     /**
      * Import the chosen applications as Mentees. Returns ['added' => n, 'skipped' => n].
      * The name is copied from the application with anything outside English letters, spaces, dots, hyphens
-     * and apostrophes removed; an organiser can edit it afterwards. Anything not Accepted, or not on this
-     * form, is ignored even if its id was posted.
+     * and apostrophes removed; an organiser can edit it afterwards. Anything that is not Accepted AND confirmed,
+     * or not on this form, is ignored even if its id was posted.
      */
     public function importApplications(int $eventId, int $formId, array $ids, string $by): array
     {
@@ -213,7 +212,11 @@ class EventCardModel
             return ['added' => 0, 'skipped' => 0];
         }
         $in = implode(',', array_fill(0, count($ids), '?'));
-        $st = $this->db->prepare("SELECT id, applicant_name FROM applications WHERE form_id = ? AND status = 'Accepted' AND id IN ($in)");
+        $st = $this->db->prepare(
+            "SELECT a.id, a.applicant_name FROM applications a
+             JOIN award_confirmations ac ON ac.application_id = a.id AND ac.response = 'confirmed'
+             WHERE a.form_id = ? AND a.status = 'Accepted' AND a.id IN ($in)"
+        );
         $st->execute(array_merge([$formId], $ids));
 
         $ins = $this->db->prepare(
