@@ -49,6 +49,8 @@
 --                                               event_attendance, point_awards,
 --                                               goodies, redemptions,
 --                                               points_ledger, ch_session_hosts
+--  11. Event cards (printed participation       card_events,
+--      cards, e.g. Train a Wikipedian)          card_participants
 --
 -- Tables are ordered so that every foreign key points at a table created
 -- earlier in the file.
@@ -901,6 +903,60 @@ CREATE TABLE IF NOT EXISTS `ch_session_hosts` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_session_host` (`session_id`,`member_id`),
   CONSTRAINT `fk_ch_host_session` FOREIGN KEY (`session_id`) REFERENCES `ch_sessions` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================
+-- Event cards (printed participation cards, e.g. Train a Wikipedian)
+--
+-- An organizer or owner creates an event, adds its people (mentees imported
+-- from CONFIRMED scholarship awardees, organisers and facilitators added by
+-- hand or by CSV) and downloads a print file. See EventCardModel.
+--
+-- Separate from the Goodies "events" table above on purpose: that one records
+-- who attended for points; these tables exist only to print and verify cards.
+-- The card_ prefix keeps the two apart.
+--
+--   card_participants.token           random 32 characters; the QR code on the back opens
+--                                     /event-card/<token>. The token says nothing about the person.
+--                                     Re-issuing a card overwrites it, so the old QR stops working;
+--                                     removing a person deletes the row, which does the same.
+--   card_participants.application_id  the scholarship application a mentee was imported from. The UNIQUE
+--                                     key stops one application being imported twice into one event.
+--                                     NULL for organisers and facilitators (several NULLs are allowed).
+--   card_participants.name            the name exactly as printed; editable before printing
+--   card_participants.affiliation     empty means "Deoband Community Wikimedia" on the card
+--   card_events.logo_key              file name without extension in assets/chapters/ (png or svg)
+--
+-- Deleting an event deletes its participants (ON DELETE CASCADE), which is the retention rule:
+-- delete the event once the cards are no longer needed.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS `card_events` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `name` varchar(120) NOT NULL,
+  `edition` varchar(80) NOT NULL DEFAULT '',
+  `logo_key` varchar(60) DEFAULT NULL,
+  `created_by` varchar(255) NOT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `card_participants` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `event_id` int(11) NOT NULL,
+  `application_id` int(11) DEFAULT NULL,
+  `name` varchar(120) NOT NULL,
+  `role` varchar(32) NOT NULL,                      -- Mentee, Organiser, Facilitator (see EventCardModel::ROLES)
+  `affiliation` varchar(120) NOT NULL DEFAULT '',
+  `token` char(32) NOT NULL,
+  `added_by` varchar(255) NOT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_card_participants_token` (`token`),
+  UNIQUE KEY `uq_card_participants_event_app` (`event_id`,`application_id`),
+  KEY `idx_card_participants_event` (`event_id`),
+  CONSTRAINT `fk_card_participants_event` FOREIGN KEY (`event_id`) REFERENCES `card_events` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_card_participants_application` FOREIGN KEY (`application_id`) REFERENCES `applications` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================
