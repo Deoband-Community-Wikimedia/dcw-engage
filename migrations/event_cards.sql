@@ -1,41 +1,43 @@
--- DCW Engage - event participation cards
+-- ============================================================================
+-- Migration: event cards (printed participation cards, e.g. Train a Wikipedian)
+-- ============================================================================
 --
--- Run once on a fresh or existing database. Table names carry a card_ prefix so they cannot clash with any
--- events table the portal may already have.
+-- For an install that was set up BEFORE these tables existed. A fresh install
+-- gets them from database.sql; do not run this on a database just created from it.
 --
--- card_events        one row per event edition ("Train-a-Wikipedian", "November 2026")
--- card_participants  one row per person who gets a card. The token is random and says nothing about the
---                    person; the QR code on the back points at /event-card/<token>. Re-issuing a card
---                    overwrites the token, so the old QR code stops working at once. Removing a person
---                    deletes the row, which kills the token the same way.
+--     mysql -u root -p your_database_name < migrations/event_cards.sql
 --
--- application_id links a mentee back to the scholarship application they were imported from, and the
--- UNIQUE key stops the same application being imported twice into one event. Organisers and facilitators
--- have no application, so it stays NULL for them (several NULLs do not violate a UNIQUE key).
---
--- Retention: delete an event and its participants go with it (ON DELETE CASCADE).
+-- Safe to re-run (CREATE TABLE IF NOT EXISTS). Needs the applications table, which
+-- every install already has. The column notes are in the "Event cards" section of
+-- database.sql.
+-- ============================================================================
 
-CREATE TABLE `card_events` (
-    `id`         INT AUTO_INCREMENT PRIMARY KEY,
-    `name`       VARCHAR(120) NOT NULL,
-    `edition`    VARCHAR(80)  NOT NULL DEFAULT '',
-    `logo_key`   VARCHAR(60)  NULL,          -- file name without extension in assets/chapters/ (png or svg), e.g. 'taw'
-    `created_by` VARCHAR(255) NOT NULL,
-    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
+SET NAMES utf8mb4;
 
-CREATE TABLE `card_participants` (
-    `id`             INT AUTO_INCREMENT PRIMARY KEY,
-    `event_id`       INT NOT NULL,
-    `application_id` INT NULL,
-    `name`           VARCHAR(120) NOT NULL,   -- the name exactly as printed on the card
-    `role`           VARCHAR(32)  NOT NULL,   -- Mentee, Organiser, Facilitator (see EventCardModel::ROLES)
-    `affiliation`    VARCHAR(120) NOT NULL DEFAULT '',   -- empty = "Deoband Community Wikimedia"
-    `token`          CHAR(32) NOT NULL UNIQUE,
-    `added_by`       VARCHAR(255) NOT NULL,
-    `created_at`     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE KEY `uniq_event_application` (`event_id`, `application_id`),
-    KEY `idx_event` (`event_id`),
-    FOREIGN KEY (`event_id`)       REFERENCES `card_events`(`id`)   ON DELETE CASCADE,
-    FOREIGN KEY (`application_id`) REFERENCES `applications`(`id`)  ON DELETE SET NULL
-);
+CREATE TABLE IF NOT EXISTS `card_events` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `name` varchar(120) NOT NULL,
+  `edition` varchar(80) NOT NULL DEFAULT '',
+  `logo_key` varchar(60) DEFAULT NULL,
+  `created_by` varchar(255) NOT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `card_participants` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `event_id` int(11) NOT NULL,
+  `application_id` int(11) DEFAULT NULL,
+  `name` varchar(120) NOT NULL,
+  `role` varchar(32) NOT NULL,                      -- Mentee, Organiser, Facilitator (see EventCardModel::ROLES)
+  `affiliation` varchar(120) NOT NULL DEFAULT '',
+  `token` char(32) NOT NULL,
+  `added_by` varchar(255) NOT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_card_participants_token` (`token`),
+  UNIQUE KEY `uq_card_participants_event_app` (`event_id`,`application_id`),
+  KEY `idx_card_participants_event` (`event_id`),
+  CONSTRAINT `fk_card_participants_event` FOREIGN KEY (`event_id`) REFERENCES `card_events` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_card_participants_application` FOREIGN KEY (`application_id`) REFERENCES `applications` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
