@@ -15,6 +15,7 @@ Auth::requireLogin();
 // a link only ever appears for someone who can actually get past its gate:
 //   application_review.php   -> requireRole(['organizer', 'owner'])   (program forms; membership and feedback forms are left out)
 //   feedback_review.php      -> requireRole(['owner', 'organizer'])   (responses to feedback forms; has its own Feedback tab here)
+//   event_cards.php          -> requireRole(['organizer', 'owner'])   (event participation cards; has its own Events tab here)
 //   reimbursement_review.php -> requireRole(['support_reviewer', 'owner'])
 //   internet_review.php      -> requireRole(['support_reviewer', 'owner'])
 //   goodies.php              -> support_reviewer or owner (checked with Auth::hasAnyRole inside the view)
@@ -31,6 +32,7 @@ Auth::requireLogin();
 // requireRole() grants access when ANY matches, so use hasAnyRole() here too.
 $canReviewApplications   = Auth::hasAnyRole(['organizer', 'owner']);
 $canReadFeedback         = Auth::hasAnyRole(['organizer', 'owner']);   // mirrors feedback_review.php
+$canManageEventCards     = Auth::hasAnyRole(['organizer', 'owner']);   // mirrors event_cards.php
 $canReviewReimbursements = Auth::hasAnyRole(['support_reviewer', 'owner']);
 $canReviewInternet       = Auth::hasAnyRole(['support_reviewer', 'owner']);
 $canManageGoodies        = Auth::hasAnyRole(['support_reviewer', 'owner']);   // mirrors goodies.php
@@ -181,6 +183,7 @@ $icons = [
     'alert'  => '<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>',
     'pulse'  => '<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>',
     'star'   => '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>',
+    'badge'  => '<rect x="5" y="2" width="14" height="20" rx="2"/><line x1="9" y1="6" x2="15" y2="6"/><circle cx="12" cy="12" r="2.5"/><line x1="8.5" y1="18" x2="15.5" y2="18"/>',
 ];
 
 // The vertical tabs, in order: [id, label, icon, number shown in a coral badge (0 = none)].
@@ -189,6 +192,7 @@ if ($showReviewPanel) $vtabs[] = ['review',   'Review',               'inbox', (
 if ($canSeeSupport)   $vtabs[] = ['support',  'Volunteer support',    'card',  0];
 if ($canManageGoodies) $vtabs[] = ['goodies', 'Goodies',              'star',  (int) $goodiesWaiting];
 if ($showFormsGrid)   $vtabs[] = ['forms',    'Forms',                'doc',   0];
+if ($canManageEventCards) $vtabs[] = ['events', 'Events',             'badge', 0];   // no badge: nothing "waiting"
 if ($canReadFeedback) $vtabs[] = ['feedback', 'Feedback',             'star',  0];   // no badge: feedback has nothing "waiting"
 if ($showSupportTech) $vtabs[] = ['tech',     'Support & technical',  'chat',  (int) $techOpen];
 
@@ -405,6 +409,22 @@ engage_header([
                             </div>
                         </details>
                     <?php endif; ?>
+                </section>
+                <?php endif; ?>
+
+                <?php if ($canManageEventCards): ?>
+                <section class="vpanel" id="p-events" role="tabpanel" aria-labelledby="t-events" hidden>
+                    <div class="panel-head">
+                        <h2>Events</h2>
+                        <p>Set up an event, add its people and print their cards.</p>
+                    </div>
+                    <div class="lrows">
+                        <?php
+                        lrow($icons, 'var(--primary)', 'badge', 'Event cards',
+                            'Pick an event, import confirmed scholarship awardees, add organisers and facilitators, and download the print file.',
+                            '/admin/event-cards');
+                        ?>
+                    </div>
                 </section>
                 <?php endif; ?>
 
