@@ -30,8 +30,8 @@ class EventCardModel
 
     public const MAX_CSV_ROWS = 500;
 
-    /** Where event logos live (png or svg), under the project root. */
-    private const LOGO_DIR = '/assets/events/';
+    /** Where logos live (png or svg), under the project root. Same folder as the chapter logos; the DCW logo is generic.svg. */
+    private const LOGO_DIR = '/assets/chapters/';
 
     private PDO $db;
 
@@ -77,13 +77,13 @@ class EventCardModel
 
     // ---- Logos -----------------------------------------------------------------------------------
 
-    /** Logo keys (file names without extension) found in assets/events/. */
+    /** Logo keys (file names without extension) found in assets/chapters/, for the "Event logo" dropdown. 'generic' (the DCW logo) is left out because it is always on the card. */
     public static function availableLogos(): array
     {
         $keys = [];
         foreach (glob(dirname(__DIR__) . self::LOGO_DIR . '*.{png,svg}', GLOB_BRACE) ?: [] as $file) {
             $key = pathinfo($file, PATHINFO_FILENAME);
-            if (preg_match('/^[A-Za-z0-9_-]+$/', $key)) {
+            if ($key !== 'generic' && preg_match('/^[A-Za-z0-9_-]+$/', $key)) {
                 $keys[$key] = true;
             }
         }
