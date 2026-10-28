@@ -162,6 +162,15 @@ if ($route === '/' || $route === '/index.php') {
     $cardToken = $matches[1];
     require __DIR__ . '/views/card_check.php';
 
+// Public event card check, opened by scanning the QR code on an event participation card (Train a Wikipedian
+// and other events). Same idea as /card/{token} above: no sign-in, and the 32-character token is what
+// identifies the card (see EventCardModel). Shows only first name and last initial, role and event.
+// A literal pattern, so it must come before the catch-all dynamic form route below.
+} elseif (preg_match('/^\/event-card\/([a-f0-9]{32})$/', $route, $matches)) {
+    global $eventCardToken;
+    $eventCardToken = $matches[1];
+    require __DIR__ . '/views/event_card_check.php';
+
 // Coordinator / reviewer queue for membership applications. Role check is
 // inside the view: requireRole(['membership_coordinator', 'membership_reviewer',
 // 'organizer', 'owner']); coordinators only ever see their assigned chapters.
@@ -188,6 +197,12 @@ if ($route === '/' || $route === '/index.php') {
 // Admin view for membership card management.
 } elseif ($route === '/admin/membership-card') {
     require __DIR__ . '/views/admin/membership_card.php';
+
+// Event participation cards: create an event, add its people (confirmed scholarship mentees, organisers,
+// facilitators) and download the print file. Role check is inside the view: requireRole(['organizer', 'owner']).
+// Under /admin so Auth::isSafeNext() lets the login redirect bring people back.
+} elseif ($route === '/admin/event-cards') {
+    require __DIR__ . '/views/admin/event_cards.php';
 
 // DCW Support queue for member complaints, suggestions and questions.
 // Role check is inside the view: requireRole(['member_support', 'owner']).
