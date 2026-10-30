@@ -89,25 +89,43 @@ class ApplicationMail {
      * Plain confirmation once an applicant finishes an application (a saved
      * draft gets the magic link instead). No edit token here: returning
      * applicants use the "Resend Magic Link" flow on the form page.
+     *
+     * $revised = true when staff sent the application back ("Needs information") and the
+     * applicant has now resubmitted it: the wording says the revised application was received.
      */
-    public static function received($email, $applicantName, $trackingId, $formTitle) {
+    public static function received($email, $applicantName, $trackingId, $formTitle, $revised = false) {
         $e = fn($s) => CoreMail::e($s);
         $applicantName = self::displayName($applicantName);
         $fullTitle = $formTitle;                         // for the dev log
         $formTitle = CoreMail::eventTitle($formTitle);   // what the applicant sees
+
+        if ($revised) {
+            $line      = "Thank you for resubmitting your application for <strong>" . $e($formTitle) . "</strong>. We have successfully received your revised application.";
+            $linePlain = "Thank you for resubmitting your application for $formTitle. We have successfully received your revised application.";
+            $closing   = "The reviewers will look at it again, and we will notify you via email once a decision has been taken.";
+            $subject   = "Revised Application Received - $formTitle";
+            $devLabel  = "Revised application confirmation";
+        } else {
+            $line      = "Thank you for submitting your application for <strong>" . $e($formTitle) . "</strong>. We have successfully received your details.";
+            $linePlain = "Thank you for submitting your application for $formTitle. We have successfully received your details.";
+            $closing   = "We will notify you via email once a decision has been taken. We appreciate your interest and participation.";
+            $subject   = "Application Received - $formTitle";
+            $devLabel  = "Confirmation email";
+        }
+
         $inner = "
             <p>Dear <strong>" . $e($applicantName) . "</strong>,</p>
-            <p>Thank you for submitting your application for <strong>" . $e($formTitle) . "</strong>. We have successfully received your details.</p>
+            <p>$line</p>
             <p><strong>Tracking ID:</strong> " . $e($trackingId) . "</p>
-            <p style='margin-bottom:0;'>We will notify you via email once a decision has been taken. We appreciate your interest and participation.</p>";
+            <p style='margin-bottom:0;'>$closing</p>";
 
-        $alt = "Dear $applicantName,\n\nThank you for submitting your application for $formTitle. We have successfully received your details.\nTracking ID: $trackingId\n\nWe will notify you via email once a decision has been taken.";
+        $alt = "Dear $applicantName,\n\n$linePlain\nTracking ID: $trackingId\n\n$closing";
 
         return CoreMail::send([
             'to' => $email, 'to_name' => $applicantName,
-            'subject' => "Application Received - $formTitle",
+            'subject' => $subject,
             'html' => $inner, 'alt' => $alt,
-            'dev_result' => true, 'dev_log' => "Confirmation email for $email ($trackingId, $fullTitle)",
+            'dev_result' => true, 'dev_log' => "$devLabel for $email ($trackingId, $fullTitle)",
         ]);
     }
 
@@ -400,8 +418,12 @@ class ApplicationMail {
      * arrived. notify_emails may be comma-separated. Returns true when there
      * is nobody to notify.
      * Keeps the full form title: organizers may run several forms for one event.
+     *
+     * $revised = true when the applicant resubmitted an application that staff sent back
+     * ("Needs information"): the subject and body then say a revised application arrived,
+     * so organizers can tell a resubmission from a brand-new application.
      */
-    public static function organizerAlert($form, $applicantEmail, $applicantName, $trackingId) {
+    public static function organizerAlert($form, $applicantEmail, $applicantName, $trackingId, $revised = false) {
         $e = fn($s) => CoreMail::e($s);
         $notifyEmails = trim($form['notify_emails'] ?? '');
         if ($notifyEmails === '') {
@@ -420,22 +442,34 @@ class ApplicationMail {
         $formTitle = $form['title'] ?? $form['form_type'];
         $manageUrl = CoreMail::appUrl() . '/admin/form_manager?id=' . $form['id'];
 
+        if ($revised) {
+            $lineHtml  = "A <strong>revised application</strong> has been resubmitted for <strong>" . $e($formTitle) . "</strong>, following the request for additional information.";
+            $linePlain = "A revised application has been resubmitted for $formTitle, following the request for additional information.";
+            $subject   = "Revised Application Received: $formTitle ($trackingId)";
+            $devLabel  = "Revised application alert";
+        } else {
+            $lineHtml  = "A new application has been submitted for <strong>" . $e($formTitle) . "</strong>.";
+            $linePlain = "A new application has been submitted for $formTitle.";
+            $subject   = "New Application Received: $formTitle ($trackingId)";
+            $devLabel  = "Organizer alert";
+        }
+
         $inner = "
             <p>Dear Organiser,</p>
-            <p>A new application has been submitted for <strong>" . $e($formTitle) . "</strong>.</p>
+            <p>$lineHtml</p>
             <p><strong>Tracking ID:</strong> " . $e($trackingId) . "<br>
             <strong>Applicant Name:</strong> " . $e($applicantName) . "<br>
             <strong>Email Address:</strong> " . $e($applicantEmail) . "</p>
             " . CoreMail::button($manageUrl, 'Review Application');
 
-        $alt = "Dear Organiser,\n\nA new application has been submitted for $formTitle.\nTracking ID: $trackingId\nApplicant Name: $applicantName ($applicantEmail)\n\nKindly review it here: $manageUrl";
+        $alt = "Dear Organiser,\n\n$linePlain\nTracking ID: $trackingId\nApplicant Name: $applicantName ($applicantEmail)\n\nKindly review it here: $manageUrl";
 
         return CoreMail::send([
             'to' => $recipients,
-            'subject' => "New Application Received: $formTitle ($trackingId)",
+            'subject' => $subject,
             'html' => $inner, 'alt' => $alt,
             'dev_result' => true,
-            'dev_log' => "Organizer alert for form '{$form['form_type']}' ($trackingId) would be sent to: " . implode(', ', $recipients),
+            'dev_log' => "$devLabel for form '{$form['form_type']}' ($trackingId) would be sent to: " . implode(', ', $recipients),
         ]);
     }
 }

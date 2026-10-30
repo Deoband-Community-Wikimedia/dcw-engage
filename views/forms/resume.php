@@ -112,20 +112,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked) {
                 // Draft stays Draft; anything else (including a Draft being
                 // finalized right now) becomes a real submission ('New').
                 $newStatus = $staysDraft ? 'Draft' : 'New';
+                // A revision is a Draft that staff sent back ("Needs information") being submitted again.
+                // This must be read BEFORE saving: saving as 'New' turns the Draft into a normal submission.
+                $revised = $wasDraft && !$staysDraft && $appModel->isSentBackDraft((int) $application['id']);
                 $appModel->saveApplication($application['form_id'], $email, $name, $newStatus, json_encode($postData), $application['id']);
 
                 // A Draft becoming a real submission earns the same emails a
-                // brand-new submission gets. Other edits stay silent.
+                // brand-new submission gets (worded as "revised" when it is a
+                // resubmission after staff asked for more information).
+                // Other edits stay silent.
                 if ($wasDraft && !$staysDraft) {
                     require_once __DIR__ . '/../../includes/mailer.php';
                     $trackingId = $application['tracking_id'];
                     $formTitle = $schema['title'] ?? $application['form_type'];
-                    Mailer::sendApplicationReceived($email, $name, $trackingId, $formTitle);
+                    Mailer::sendApplicationReceived($email, $name, $trackingId, $formTitle, $revised);
                     Mailer::sendOrganizerAlert(
                         ['id' => $application['form_id'], 'form_type' => $application['form_type'], 'title' => $formTitle, 'notify_emails' => $application['notify_emails'] ?? ''],
                         $email,
                         $name,
-                        $trackingId
+                        $trackingId,
+                        $revised
                     );
                 }
 
