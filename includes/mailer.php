@@ -39,12 +39,17 @@ class Mailer {
     // --- Applications -------------------------------------------------------
     public static function sendEmailVerification(...$a)   { return ApplicationMail::emailVerification(...$a); }
     public static function sendMagicLink(...$a)           { return ApplicationMail::magicLink(...$a); }
+    // ($email, $applicantName, $trackingId, $formTitle, $revised = false)
+    // $revised = true when staff sent the application back ("Needs information") and the applicant has
+    // resubmitted it: the email then says a revised application was received.
     public static function sendApplicationReceived(...$a) { return ApplicationMail::received(...$a); }
     public static function sendStatusUpdate(...$a)        { return ApplicationMail::statusUpdate(...$a); }
     // ($email, $applicantName, $trackingId, $formTitle, $message, $token)
     // "Needs information": what the organizer needs + the one-time /resume/<token> link.
     // Returns false when the email was not really sent, so the caller can show the link instead.
     public static function sendSentBack(...$a)            { return ApplicationMail::sentBack(...$a); }
+    // ($form, $applicantEmail, $applicantName, $trackingId, $revised = false)
+    // $revised = true tells organizers it is a resubmission of an application they sent back.
     public static function sendOrganizerAlert(...$a)      { return ApplicationMail::organizerAlert(...$a); }
     // Scholarship award confirmation (see models/AwardConfirmationModel.php). All three go out with the committee Reply-To.
     // ($email, $name, $formTitle, $deadlineLabel, $url, $replyTo, $replyToName = '')   first link or reminder; false = not sent
