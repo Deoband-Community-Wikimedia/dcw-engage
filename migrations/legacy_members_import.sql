@@ -13,8 +13,6 @@
 -- DCW Generic Community (includes Executive Board / Board / Programs rows: CHECK this mapping)
 INSERT IGNORE INTO legacy_members (username, chapter, added_at) VALUES
  ('Aafi', 'generic', UTC_TIMESTAMP()),
- ('AafiOnMobile', 'generic', UTC_TIMESTAMP()),
- ('Aafi (DCW)', 'generic', UTC_TIMESTAMP()),
  ('Alnitak-Alnilam-Mintaka', 'generic', UTC_TIMESTAMP()),
  ('Aqueel23', 'generic', UTC_TIMESTAMP()),
  ('Koshur', 'generic', UTC_TIMESTAMP()),
@@ -70,5 +68,4 @@ INSERT IGNORE INTO legacy_members (username, chapter, added_at) VALUES
  ('Numis Zuhair', '', UTC_TIMESTAMP()),
  ('SafdarQuddus', '', UTC_TIMESTAMP());
 
--- Expect 48 rows (45 template rows; Aafi has 3 usernames and Durre Shehvaar is in 2 clubs).
 -- SELECT COUNT(*) FROM legacy_members;
