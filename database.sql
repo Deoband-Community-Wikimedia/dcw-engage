@@ -26,7 +26,9 @@
 --                                               member_profile, member_strikes,
 --                                               membership_scopes,
 --                                               membership_decisions,
---                                               membership_id_links
+--                                               membership_id_links,
+--                                               member_directory_optout,
+--                                               legacy_members
 --   4. Membership cards                         member_cards, member_card_hits
 --   5. Member support                           member_tickets,
 --                                               member_ticket_messages,
@@ -408,6 +410,31 @@ CREATE TABLE IF NOT EXISTS `membership_id_links` (
   `linked_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`application_id`),
   KEY `idx_member` (`member_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Public members directory (/members). Everyone with a verified Wikimedia username is listed
+-- unless they opt out or are struck off.
+--   member_directory_optout  a row = this Member ID asked not to be listed (delete the row to list again).
+--                            Keyed on the Member ID, so the choice covers every chapter the person holds.
+--   legacy_members           people imported once from the old Meta-Wiki list (Template:DCW/Members).
+--                            Shown in "Listed before Engage" until the same username is on Engage; opt-outs
+--                            and strikes always win. chapter '' = club not known. The username is
+--                            utf8mb4_bin (case-sensitive) because Wikimedia usernames are.
+--                            The data itself is in migrations/legacy_members_import.sql, not here.
+CREATE TABLE IF NOT EXISTS `member_directory_optout` (
+  `member_id` varchar(32) NOT NULL,
+  `hidden_at` datetime NOT NULL,
+  `hidden_by` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`member_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `legacy_members` (
+  `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT,
+  `username` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  `chapter` varchar(20) NOT NULL DEFAULT '',
+  `added_at` datetime NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_legacy_user_chapter` (`username`,`chapter`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================
