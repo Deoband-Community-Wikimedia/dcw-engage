@@ -23,6 +23,7 @@ Auth::requireLogin();
 //   membership_review.php    -> requireRole(['membership_coordinator', 'membership_reviewer', 'owner'])   (organizers: forms only)
 //                               Member card PDFs are reached from there (Members tab, or inside an application).
 //   community_records.php    -> requireRole(['membership_reviewer', 'owner'])   (Conversation Hour attendance, technical contributors)
+//   public_directory.php     -> requireRole(['membership_reviewer', 'organizer', 'owner'])   (who is on the public /members page)
 //   team.php                 -> Auth::requireOwner()   (invites, roles and coordinator chapters)
 //   member_support.php       -> requireRole(['member_support', 'owner'])   (shown as "DCW Support")
 //   tech-issues.php, tech-diagnostics.php -> tech_require_staff()   (technical_manager, owner)
@@ -40,6 +41,7 @@ $canManageTeam           = Auth::isOwner();
 $canWorkMemberSupport    = Auth::hasAnyRole(['member_support', 'owner']);
 $canWorkTech             = Auth::hasAnyRole(TechIssueModel::STAFF_ROLES);
 $canManageRecords        = Auth::hasAnyRole(['membership_reviewer', 'owner']);   // mirrors community_records.php
+$canManageDirectory      = Auth::hasAnyRole(['membership_reviewer', 'organizer', 'owner']);   // mirrors public_directory.php
 
 // Technical: open count for the queue tile, and this person's own reports that have a new reply.
 $techOpen = 0; $techWaiting = [];
@@ -156,9 +158,9 @@ if ($canReviewMembership) {
     } catch (Throwable $e) { $membershipWaiting = null; }
 }
 
-// The "Review" tab holds the review queues: applications, membership and community records. Feedback is read,
-// not decided on, so it has its own tab. Everything else is its own tab too.
-$showReviewPanel = $canReviewApplications || $canReviewMembership || $canManageRecords;
+// The "Review" tab holds the review queues: applications, membership, community records and the public
+// members list. Feedback is read, not decided on, so it has its own tab. Everything else is its own tab too.
+$showReviewPanel = $canReviewApplications || $canReviewMembership || $canManageRecords || $canManageDirectory;
 $reviewIntro = ($canReviewApplications && $canReviewMembership)
     ? 'Decide on applications to our programs and on membership requests' . ($chapterLimited ? ' for your chapters' : '') . '.'
     : ($canReviewApplications
@@ -322,6 +324,11 @@ engage_header([
                             lrow($icons, 'var(--leaf-dark, #3E7A53)', 'check', 'Community records',
                                 'Log Conversation Hour attendance and keep the technical contributors list. Internet support reads from these.',
                                 '/admin/community-records');
+                        }
+                        if ($canManageDirectory) {
+                            lrow($icons, 'var(--leaf-dark, #3E7A53)', 'people', 'Public members list',
+                                'Who appears on the public members page: current members, alumni and earlier-list names. See opt-outs and remove entries.',
+                                '/admin/public-directory');
                         }
                         ?>
                     </div>

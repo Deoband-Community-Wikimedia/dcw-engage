@@ -83,6 +83,19 @@ if ($route === '/' || $route === '/index.php') {
 } elseif ($route === '/membership') {
     require __DIR__ . '/views/membership.php';
 
+// Public directory of DCW members: Wikimedia usernames and clubs only, current members and alumni.
+// No sign-in. Not indexed by search engines (the view sends X-Robots-Tag: noindex). Members can opt
+// out from /member/profile. A literal route, so it must come before the catch-all dynamic form route
+// below or 'members' would be treated as a form slug of its own.
+} elseif ($route === '/members') {
+    require __DIR__ . '/views/members.php';
+
+// Organisers' view of the public members list: counts, and who opted out. Read-only. Role check is
+// inside the view: requireRole(['membership_reviewer', 'organizer', 'owner']). Under /admin so
+// Auth::isSafeNext() lets the login redirect bring people back.
+} elseif ($route === '/admin/public-directory') {
+    require __DIR__ . '/views/admin/public_directory.php';
+
 // --- Member login (Member ID + password) -------------------------------
 // Public pages for members: sign in, sign out, and set or reset a password
 // from an emailed one-time link. Separate from /admin: members and organizers
