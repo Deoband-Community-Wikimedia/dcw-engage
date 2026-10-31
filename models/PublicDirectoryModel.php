@@ -149,6 +149,83 @@ class PublicDirectoryModel
         AuditLog::activity('member.directory_legacy_removed', (string) $name, null, $by);
     }
 
+    /**
+     * Change one legacy person: rename them and/or set exactly which clubs they show under.
+     * $id is any one of their legacy_members rows. Rows are matched by nameKey(), the same way
+     * build() merges them. A manual override: it lasts only until the same username appears on Engage.
+     *
+     * NOTE: the INSERT below sets only username and chapter. If legacy_members has other NOT NULL
+     * columns without a default, add them here.
+     */
+    public function updateLegacy(int $id, string $username, array $chapters, string $by): void
+    {
+        $new = self::nameKey($username);
+        if ($new === '' || mb_strlen($new) > 85) {
+            throw new InvalidArgumentException('Enter a valid username.');
+        }
+        $chapters = array_values(array_unique(array_filter(
+            $chapters, fn($c) => is_string($c) && in_array($c, MemberModel::CHAPTERS, true)
+        )));
+        if (!$chapters) {
+            throw new InvalidArgumentException('Pick at least one club, or use Remove.');
+        }
+
+        $all = $this->legacyRows();
+        $old = null;
+        foreach ($all as $r) {
+            if ((int) $r['id'] === $id) { $old = self::nameKey((string) $r['username']); break; }
+        }
+        if ($old === null) {
+            throw new InvalidArgumentException('That entry no longer exists.');
+        }
+
+        $mine = [];
+        foreach ($all as $r) {
+            $k = self::nameKey((string) $r['username']);
+            if ($k === $old) {
+                $mine[] = $r;
+            } elseif ($k === $new) {
+                throw new InvalidArgumentException('Another entry already uses that username.');
+            }
+        }
+
+        $before = [];
+        $kept   = [];
+        foreach ($mine as $r) $before[] = (string) $r['chapter'];
+
+        $this->db->beginTransaction();
+        try {
+            foreach ($mine as $r) {
+                $ch = (string) $r['chapter'];
+                if (in_array($ch, $chapters, true) && !isset($kept[$ch])) {
+                    $kept[$ch] = true;   // keep this row, just fix the name
+                    $this->db->prepare('UPDATE legacy_members SET username = ? WHERE id = ?')
+                             ->execute([$new, (int) $r['id']]);
+                } else {                 // unticked club, duplicate, or an unknown chapter value
+                    $this->db->prepare('DELETE FROM legacy_members WHERE id = ?')->execute([(int) $r['id']]);
+                }
+            }
+            foreach ($chapters as $ch) {
+                if (!isset($kept[$ch])) {
+                    $this->db->prepare('INSERT INTO legacy_members (username, chapter) VALUES (?, ?)')
+                             ->execute([$new, $ch]);
+                }
+            }
+            $this->db->commit();
+        } catch (Throwable $e) {
+            if ($this->db->inTransaction()) $this->db->rollBack();
+            throw $e;
+        }
+
+        PublicDirectoryCache::clear();
+        AuditLog::activity(
+            'member.directory_legacy_updated',
+            $new,
+            implode(',', $before) . ' -> ' . implode(',', $chapters) . ($new !== $old ? " (was $old)" : ''),
+            $by
+        );
+    }
+
     /** build() behind a short file cache. Throws if it has to build and the build fails. */
     public function cached(): array
     {

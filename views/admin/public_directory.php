@@ -6,20 +6,23 @@ require_once __DIR__ . '/../../includes/require_role.php';
 require_once __DIR__ . '/../../models/PublicDirectoryModel.php';
 
 /**
- * DCW Engage - organisers' view of the public members list (/admin/public-directory).
- * Read-only: how many people are listed, who opted out, and how many members are not listed because
- * they have no verified Wikimedia username. Opting in or out is the member's own choice (/member/profile).
+ * DCW Engage - the public members list for staff (/admin/public-directory).
+ * Shows how many people are listed, who opted out, and how many members are not listed because they
+ * have no verified Wikimedia username. Membership reviewers and owners can also edit (username, clubs)
+ * or remove the "Listed before Engage" entries. Opting in or out is the member's own choice
+ * (/member/profile).
  */
-requireRole(['membership_reviewer', 'organizer', 'owner']);
+requireRole(['membership_reviewer', 'owner']);
 
 $model = new PublicDirectoryModel();
 
-// "Refresh now" clears the 5-minute cache so organisers can check a change straight away.
+// "Refresh now" clears the 5-minute cache so staff can check a change straight away.
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!CSRF::validate($_POST['csrf_token'] ?? '')) {
         die('Invalid CSRF token.');
     }
     $act = (string) ($_POST['action'] ?? 'refresh');
+
     if ($act === 'remove_legacy') {
         try {
             $model->removeLegacy((int) ($_POST['id'] ?? 0), 'staff');
@@ -30,6 +33,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         exit;
     }
+
+    if ($act === 'update_legacy') {
+        try {
+            $model->updateLegacy(
+                (int) ($_POST['id'] ?? 0),
+                (string) ($_POST['username'] ?? ''),
+                (array) ($_POST['chapters'] ?? []),
+                'staff'
+            );
+            header('Location: /admin/public-directory?updated=1');
+        } catch (InvalidArgumentException $e) {
+            // Safe, human-readable validation messages only.
+            header('Location: /admin/public-directory?updated=0&why=' . urlencode($e->getMessage()));
+        } catch (Throwable $e) {
+            app_log('Update legacy entry failed: ' . $e->getMessage());
+            header('Location: /admin/public-directory?updated=0');
+        }
+        exit;
+    }
+
     PublicDirectoryCache::clear();
     header('Location: /admin/public-directory?refreshed=1');
     exit;
@@ -44,6 +67,14 @@ function pdir_date(?string $utc): string
     if ($utc === null || $utc === '') return '';
     return (new DateTimeImmutable($utc, new DateTimeZone('UTC')))
         ->setTimezone(new DateTimeZone('Asia/Kolkata'))->format('j M Y');
+}
+
+// One row per person: the model returns one row per club, so group them by username.
+$legacyPeople = [];
+foreach ($o['legacy'] as $r) {
+    $k = trim(str_replace('_', ' ', (string) $r['username']));
+    $legacyPeople[$k] ??= ['id' => (int) $r['id'], 'username' => $k, 'chapters' => [], 'shown' => !empty($r['shown'])];
+    $legacyPeople[$k]['chapters'][(string) $r['chapter']] = true;
 }
 
 engage_header([
@@ -65,7 +96,10 @@ engage_header([
     .pa-card p { color: var(--muted); font-size: 14px; }
     .pa-t { width: 100%; border-collapse: collapse; font-size: 14px; }
     .pa-t th { text-align: left; color: var(--muted); font-size: 12.5px; padding: 6px 8px; }
-    .pa-t td { padding: 8px; border-top: 1px solid var(--border); }
+    .pa-t td { padding: 8px; border-top: 1px solid var(--border); vertical-align: top; }
+    .pa-t input[type=text] { width: 100%; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: inherit; font: inherit; }
+    .pa-t input[type=checkbox] { width: auto; }
+    .pa-clubs label { display: inline-block; margin: 0 12px 4px 0; white-space: nowrap; }
     .pa-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 0 0 18px; }
     .pa-actions form { margin: 0; }
 </style>
@@ -77,6 +111,10 @@ engage_header([
     <div class="alert ok">Removed from the public list.</div>
 <?php elseif (($_GET['removed'] ?? '') === '0'): ?>
     <div class="alert error">Could not remove that entry. It may already be gone.</div>
+<?php elseif (($_GET['updated'] ?? '') === '1'): ?>
+    <div class="alert ok">Entry updated.</div>
+<?php elseif (($_GET['updated'] ?? '') === '0'): ?>
+    <div class="alert error"><?= $h($_GET['why'] ?? 'Could not update that entry.') ?></div>
 <?php endif; ?>
 
     <div class="pa-actions">
@@ -100,23 +138,36 @@ engage_header([
 
     <section class="pa-card">
         <h2>Listed before Engage</h2>
-        <p>Imported once from Template:DCW/Members on Meta-Wiki. An entry disappears from the public page by itself once the same username is on Engage (including when that member opted out or was struck off). Use Remove for takedown requests or people who are not members. Removing a username removes it from every club.</p>
-        <?php if (!$o['legacy']): ?>
+        <p>Imported once from Template:DCW/Members on Meta-Wiki. An entry disappears from the public page by itself once the same username is on Engage (including when that member opted out or was struck off), and the clubs shown then come from Engage. Use Save to correct a username or set which clubs appear next to it, until the person joins Engage. Use Remove for takedown requests or people who are not members. Removing a username removes it from every club.</p>
+        <?php if (!$legacyPeople): ?>
             <p>No legacy entries. Run legacy_members_import.sql to add them.</p>
         <?php else: ?>
             <table class="pa-t">
-                <thead><tr><th>Username</th><th>Club</th><th>On public page?</th><th></th></tr></thead>
+                <thead><tr><th style="width:26%;">Username</th><th>Clubs</th><th>On public page?</th><th></th></tr></thead>
                 <tbody>
-                <?php foreach ($o['legacy'] as $r): ?>
+                <?php foreach ($legacyPeople as $p): $fid = 'lg-' . $p['id']; ?>
                     <tr>
-                        <td><?= $h($r['username']) ?></td>
-                        <td><?= $h(MemberModel::CHAPTER_NAMES[$r['chapter']] ?? '') ?></td>
-                        <td><?= !empty($r['shown']) ? 'Yes' : 'No (already on Engage)' ?></td>
-                        <td>
-                            <form method="POST" action="/admin/public-directory" onsubmit="return confirm('Remove this username from the public list?');" style="margin:0;">
+                        <td><input type="text" name="username" form="<?= $fid ?>" value="<?= $h($p['username']) ?>" maxlength="85" required></td>
+                        <td class="pa-clubs">
+                            <?php foreach (MemberModel::CHAPTER_NAMES as $key => $label): ?>
+                                <label>
+                                    <input type="checkbox" name="chapters[]" form="<?= $fid ?>" value="<?= $h($key) ?>" <?= isset($p['chapters'][$key]) ? 'checked' : '' ?>>
+                                    <?= $h($label) ?>
+                                </label>
+                            <?php endforeach; ?>
+                        </td>
+                        <td><?= $p['shown'] ? 'Yes' : 'No (already on Engage)' ?></td>
+                        <td style="white-space:nowrap;">
+                            <form id="<?= $fid ?>" method="POST" action="/admin/public-directory" style="display:inline;margin:0;">
+                                <?= CSRF::getInputField() ?>
+                                <input type="hidden" name="action" value="update_legacy">
+                                <input type="hidden" name="id" value="<?= (int) $p['id'] ?>">
+                                <button type="submit" class="btn">Save</button>
+                            </form>
+                            <form method="POST" action="/admin/public-directory" onsubmit="return confirm('Remove this username from the public list?');" style="display:inline;margin:0;">
                                 <?= CSRF::getInputField() ?>
                                 <input type="hidden" name="action" value="remove_legacy">
-                                <input type="hidden" name="id" value="<?= (int) $r['id'] ?>">
+                                <input type="hidden" name="id" value="<?= (int) $p['id'] ?>">
                                 <button type="submit" class="btn">Remove</button>
                             </form>
                         </td>
