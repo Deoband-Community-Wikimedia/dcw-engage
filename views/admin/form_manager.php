@@ -87,6 +87,20 @@ function buildFilterQueryString()
     return $params ? '&' . http_build_query($params) : '';
 }
 
+/**
+ * Spreadsheet apps run a cell that starts with = + - @ (or a tab/CR) as a
+ * formula. Applicants and organizers control what ends up in an export, so
+ * prefix those cells with an apostrophe to force them to plain text.
+ */
+function csvSafeCell($val)
+{
+    if (is_string($val) && $val !== '' && strpbrk($val[0], "=+-@\t\r") !== false) {
+        return "'" . $val;
+    }
+    return $val;
+}
+
+
 $success = '';
 $deadlineError = '';
 
@@ -240,7 +254,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'export') {
         $headers[] = $f['label'] ?? $f['name'];
         $fields[] = $f['name'];
     }
-    fputcsv($output, $headers);
+    fputcsv($output, array_map('csvSafeCell', $headers));
 
     foreach ($applications as $app) {
         $row = [
@@ -254,7 +268,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'export') {
             $val = $data[$fieldName] ?? '';
             $row[] = is_array($val) ? implode(', ', $val) : $val;
         }
-        fputcsv($output, $row);
+        fputcsv($output, array_map('csvSafeCell', $row));
     }
 
     fclose($output);
