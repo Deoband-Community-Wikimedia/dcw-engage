@@ -96,7 +96,7 @@ window.moveField = function (id, direction) {
     }
 };
 
-// --- Question label formatting toolbar (wikitext syntax, see #61) ---
+// --- Question label and section title formatting toolbar (wikitext syntax, see #61) ---
 // Same Bold/Italic/Link syntax as the description toolbar below, but
 // deliberately without heading/indent/list — those are block-level
 // constructs that don't make sense inside a single-line question label.
@@ -106,8 +106,8 @@ sectionsContainer.addEventListener('click', function(e) {
     const linkBtn = e.target.closest('.label-fmt-link');
     if (!wrapBtn && !linkBtn) return;
 
-    const card = e.target.closest('.field-card');
-    const input = card.querySelector('.field-label');
+    // The input is the element right after the toolbar: a question's label, or a section's title.
+    const input = e.target.closest('.label-toolbar').nextElementSibling;
     const start = input.selectionStart;
     const end = input.selectionEnd;
     const value = input.value;
@@ -250,6 +250,11 @@ function createSection(sectionData = {}) {
             <button type="button" class="btn-danger remove-section-btn">Remove section</button>
         </div>
         <label for="section_title_${sectionCounter}">Section title</label>
+        <div class="label-toolbar" style="display:flex; gap:4px; margin-bottom:4px;">
+            <button type="button" class="btn-outline btn-sm label-fmt-btn" data-wrap="'''" title="Bold" style="font-weight:700; padding:2px 8px;">B</button>
+            <button type="button" class="btn-outline btn-sm label-fmt-btn" data-wrap="''" title="Italic" style="font-style:italic; padding:2px 8px;">I</button>
+            <button type="button" class="btn-outline btn-sm label-fmt-link" title="Link" style="padding:2px 8px;">Link</button>
+        </div>
         <input type="text" id="section_title_${sectionCounter}" class="section-title" placeholder="e.g. Personal Details" value="${String(sectionData.title || '').replace(/&/g, '&amp;').replace(/\"/g, '&quot;').replace(/</g, '&lt;')}">
         <label for="section_description_${sectionCounter}">Section introduction (optional)</label>
         <textarea id="section_description_${sectionCounter}" class="section-description" rows="2" placeholder="Briefly explain this section to applicants">${String(sectionData.description || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</textarea>
