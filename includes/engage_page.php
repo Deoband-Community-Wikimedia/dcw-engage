@@ -94,7 +94,7 @@ function engage_logo_url(string $chapter = ''): string {
  *
  * Top bar: the brand sits alone on the left. On the right, a signed-in member gets the avatar menu
  * (engage_member_menu(), which also holds the About DCW links). Everyone else gets whatever 'tools'
- * holds plus a small menu button (engage_guest_menu()) with Track application and About DCW.
+ * holds plus a small menu button (engage_guest_menu()) with Track application, Members and About DCW.
  */
 function engage_header(array $o) {
     $title    = $o['title'];
@@ -302,7 +302,7 @@ function engage_about_links(bool $withContact = false): array {
 
 /**
  * The small menu for visitors who are not signed in: three lines on the right of the top bar, opening a
- * panel with Track application and the About DCW links. Sign in and Join stay visible beside it.
+ * panel with Track application, Members and the About DCW links. Sign in and Join stay visible beside it.
  * On very small phones the "Join" button is hidden from the bar (see engage.css), so when the page
  * shows one ($withJoin) the same link appears at the top of this menu on those screens only.
  * Returns HTML (already escaped). The open/close behaviour comes from the script in engage_footer().
@@ -316,6 +316,7 @@ function engage_guest_menu(array $about, bool $withJoin = false): string {
             <div class="mpop">
                 <?php if ($withJoin): ?><a class="xs-only" href="/membership">Join DCW</a><?php endif; ?>
                 <a href="/track">Track application</a>
+                <a href="/members">Members</a>
                 <div class="msep"></div>
                 <div class="mlabel">About DCW</div>
                 <?php foreach ($about as [$name, $href]): ?>
@@ -404,6 +405,7 @@ function engage_member_menu(array $member, array $o = []): string {
                     <?= $link('Home', '/') ?>
                 <?php endif; ?>
                 <?= $link('Track Application', '/track') ?>
+                <?= $link('Members', '/members') ?>
 
                 <div class="msep"></div>
                 <?= $link('My Dashboard', '/member/dashboard') ?>
@@ -617,6 +619,7 @@ function engage_footer() {
                     <li><a href="/">All programs</a></li>
                     <li><a href="/membership">Join or renew</a></li>
                     <li><a href="/track">Track an application</a></li>
+                    <li><a href="/members">Our members</a></li>
                     <?php if ($isMember): ?>
                         <li><a href="/member/dashboard">My dashboard</a></li>
                         <li><a href="/member/profile">My profile</a></li>

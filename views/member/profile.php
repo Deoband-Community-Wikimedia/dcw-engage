@@ -7,13 +7,15 @@ require_once __DIR__ . '/../../includes/cert_rows.php';          // .d-btn butto
 require_once __DIR__ . '/../../models/MemberAuthModel.php';
 require_once __DIR__ . '/../../models/MemberModel.php';
 require_once __DIR__ . '/../../models/MemberProfileModel.php';
+require_once __DIR__ . '/../../models/PublicDirectoryModel.php';
 require_once __DIR__ . '/../../includes/mail/membership_mailer.php';
 
 /**
  * DCW Engage - member profile (/member/profile).
  * Signed-in members only. This page is about WHO the member is: identity, memberships (names and join
  * dates only; status and Renew live on the dashboard), the Wikimedia username and its verification,
- * optional "About you" details, and account actions. Anything time-sensitive stays on the dashboard.
+ * whether the username is on the public members list, optional "About you" details, and account actions.
+ * Anything time-sensitive stays on the dashboard.
  *
  * Name and email are read-only here: they appear on certificates and are the key requests and
  * certificates are matched on, so they are changed through DCW Support.
@@ -27,6 +29,7 @@ $memberId = (string) $member['member_id'];
 $email    = (string) $member['email'];
 $fullName = trim((string) ($member['full_name'] ?? ''));
 $profiles = new MemberProfileModel();
+$directory = new PublicDirectoryModel();
 $by       = 'member:' . $memberId;
 
 $error = '';
@@ -39,7 +42,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         if ($act === 'save_username') {
             $profiles->saveByMember($memberId, (string) ($_POST['wikimedia_username'] ?? ''), $by);
+            PublicDirectoryCache::clear();   // a changed username must not linger on /members
             header('Location: /member/profile?saved=username#wikimedia');
+            exit;
+        } elseif ($act === 'save_listing') {
+            // The checkbox is only sent when ticked: ticked = listed, not ticked = opted out.
+            $directory->setListed($memberId, !empty($_POST['listed']), $by);
+            header('Location: /member/profile?saved=listing#listing');
             exit;
         } elseif ($act === 'save_about') {
             $profiles->saveAbout(
@@ -97,6 +106,9 @@ $verified   = $username !== '' && !empty($profile['username_verified_at']);
 $hasName    = $username !== '';
 $areas      = MemberProfileModel::areasOf($profile);
 $languages  = MemberProfileModel::languagesOf($profile);
+
+// Public members list: true = listed, false = opted out, null = not available (card is hidden).
+$listing = $directory->listingState($memberId);
 
 // After a failed save, keep what the member typed.
 $posted = $_SERVER['REQUEST_METHOD'] === 'POST' && $error !== '';
@@ -177,6 +189,10 @@ cert_rows_css();   // .d-btn buttons and icons
     .pf-fold form { margin-top: 14px; }
     .pf-warn { margin: 0 0 14px; padding: 10px 12px; background: #fffbeb; border: 1px solid #fcd34d; border-radius: 10px; font-size: 13.5px; color: #92400e; }
 
+    /* Public members list */
+    .pf-list { display: flex; align-items: flex-start; gap: 10px; margin: 0 0 14px; font-size: 14.5px; font-weight: 400; cursor: pointer; }
+    .pf-list input { width: 18px; height: 18px; margin-top: 2px; accent-color: var(--primary); }
+
     /* About you */
     .pf-areas { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px 14px; }
     .pf-areas label { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 14.5px; font-weight: 400; cursor: pointer; }
@@ -198,6 +214,8 @@ cert_rows_css();   // .d-btn buttons and icons
 
 <?php if ($saved === 'username'): ?>
     <div class="alert ok">Username saved.<?= $verified ? '' : ' A DCW reviewer or coordinator will verify it.' ?></div>
+<?php elseif ($saved === 'listing'): ?>
+    <div class="alert ok"><?= $listing === false ? 'Done. Your username is no longer on the public members list.' : 'Done. Your username can appear on the public members list.' ?></div>
 <?php elseif ($saved === 'about'): ?>
     <div class="alert ok">Your details are saved.</div>
 <?php elseif ($saved === 'link'): ?>
@@ -290,6 +308,32 @@ cert_rows_css();   // .d-btn buttons and icons
                 </form>
             </details>
         </section>
+
+        <?php if ($listing !== null): ?>
+        <section class="pf-card" id="listing" aria-label="Public members list">
+            <div class="pf-head">
+                <h2>Public members list</h2>
+                <?php if ($listing): ?><span class="pill" style="--tone:#047857;">Listed</span>
+                <?php else: ?><span class="pill" style="--tone:#64748b;">Not listed</span><?php endif; ?>
+            </div>
+            <p class="pf-lead">DCW keeps a public list of members' Wikimedia usernames and clubs at <a href="/members">/members</a>. Only your username and clubs are shown, never your name, email or Member ID.</p>
+            <form method="POST" action="/member/profile">
+                <?= CSRF::getInputField() ?>
+                <input type="hidden" name="action" value="save_listing">
+                <label class="pf-list">
+                    <input type="checkbox" name="listed" value="1"<?= $listing ? ' checked' : '' ?>>
+                    <span>List my Wikimedia username on the public members page</span>
+                </label>
+                <button type="submit" class="d-btn fill">Save</button>
+            </form>
+            <p class="pf-note">
+                <?php if (!$verified): ?>
+                    You will only appear once your Wikimedia username has been added and verified.
+                <?php endif; ?>
+                Changes show on the public page within a moment. Your choice covers every club you belong to.
+            </p>
+        </section>
+        <?php endif; ?>
 
         <section class="pf-card" id="about" aria-label="About you">
             <div class="pf-head"><h2>About you</h2></div>

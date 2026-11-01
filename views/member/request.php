@@ -17,15 +17,16 @@ require_once __DIR__ . '/../../models/CommunityRecordsModel.php';
  * Open to every signed-in member, including expired ones: a request already in flight
  * must be finishable (reply to a reviewer, upload a receipt).
  *
- * Never shown here: payment details, phone number, uploaded receipts, internal staff notes.
+ * Never shown here: payment details, the full phone number, uploaded receipts, internal staff notes.
  * The amounts shown are requested / approved / paid, with the reasons staff wrote for the member.
  *
- * Wikimedia username: on an internet support request it comes from the member's verified profile
- * when the request is made. It is shown here read-only and is NOT part of what can be resubmitted,
- * so a member cannot swap in an unverified account by answering a reviewer.
- *
- * Conversation Hours / technical projects: attendance and technical-contributor status always come from staff records,
- * so those two answers are shown read-only and InternetSupportModel::resubmitDraft() keeps them as stored.
+ * Internet support, "Info Requested": the member gets an editable copy of what they submitted
+ * (name, phone, operator, pack, price, validity, pack end date, reason, contributions, plans,
+ * edits answer) and corrects it together with a note to the reviewer. The phone number is shown
+ * masked and left blank to keep it. NOT editable: the Wikimedia username (it comes from the
+ * verified profile when the request is made) and the Conversation Hours / technical-projects
+ * answers (they always come from staff records; InternetSupportModel::resubmitDraft() keeps them
+ * as stored whatever is posted).
  */
 MemberSession::requireLogin();
 $member = MemberSession::current();
@@ -159,13 +160,21 @@ if ($isRb) {
     } elseif ($internet && $isPost && $action === 'resubmit_draft') {
         $reply = trim((string) ($_POST['reply'] ?? ''));
         // No wikimedia_username here on purpose: it is not editable after the request is made.
+        // The model also re-applies the locked attended_ch / tech_contributor values from the stored request.
         $postedDraft = [
-            'reason'             => trim((string) ($_POST['reason'] ?? '')),
-            'contributions'      => trim((string) ($_POST['contributions'] ?? '')),
-            'plans'              => trim((string) ($_POST['plans'] ?? '')),
-            'edits_80'           => (string) ($_POST['edits_80'] ?? ''),
-            'attended_ch'        => (string) ($_POST['attended_ch'] ?? ''),
-            'tech_contributor'   => (string) ($_POST['tech_contributor'] ?? ''),
+            'applicant_name'   => trim((string) ($_POST['applicant_name'] ?? '')),
+            'phone'            => trim((string) ($_POST['phone'] ?? '')),
+            'operator'         => trim((string) ($_POST['operator'] ?? '')),
+            'package_name'     => trim((string) ($_POST['package_name'] ?? '')),
+            'amount'           => trim((string) ($_POST['amount'] ?? '')),
+            'validity_days'    => trim((string) ($_POST['validity_days'] ?? '')),
+            'pack_ends_on'     => trim((string) ($_POST['pack_ends_on'] ?? '')),
+            'reason'           => trim((string) ($_POST['reason'] ?? '')),
+            'contributions'    => trim((string) ($_POST['contributions'] ?? '')),
+            'plans'            => trim((string) ($_POST['plans'] ?? '')),
+            'edits_80'         => (string) ($_POST['edits_80'] ?? ''),
+            'attended_ch'      => (string) ($_POST['attended_ch'] ?? ''),
+            'tech_contributor' => (string) ($_POST['tech_contributor'] ?? ''),
         ];
         if ($internet['status'] !== 'Info Requested') {
             $error = "This request isn't waiting for your changes right now.";
@@ -195,7 +204,8 @@ if ($isRb) {
                 $internetDraft[$k] = req_yes_no($internetDraft[$k]);
             }
             // wikimedia_username is shown read-only, straight from the saved request.
-            foreach (['wikimedia_username', 'contributions', 'plans'] as $k) {
+            foreach (['wikimedia_username', 'contributions', 'plans', 'applicant_name', 'operator',
+                      'package_name', 'amount', 'validity_days', 'pack_ends_on', 'phone_masked'] as $k) {
                 $internetDraft[$k] = (string) ($internetDraft[$k] ?? '');
             }
             // These two answers are always fixed (the model enforces it too).
@@ -207,7 +217,11 @@ if ($isRb) {
                     if ($internetDraft[$k] !== '') $keep[$k] = $internetDraft[$k];
                 }
             }
-            if ($postedDraft) $internetDraft = array_merge($internetDraft, $postedDraft, $keep);
+            if ($postedDraft) {
+                $internetDraft = array_merge($internetDraft, $postedDraft, $keep);
+            }
+            // The phone number is never echoed back: a blank field always means "keep the current number".
+            $internetDraft['phone'] = '';
         }
     }
 }
@@ -248,6 +262,13 @@ $yesNoOrLocked = function ($name, $val, $locked) use ($e, $yesNoSelect) {
     return $yesNoSelect($name, $val);
 };
 $todayIst = (new DateTimeImmutable('now', new DateTimeZone('Asia/Kolkata')))->format('Y-m-d');
+
+// Bounds for the editable internet support form (same window the model enforces, in India time).
+$isSettings  = $internetModel ? $internetModel->getSettings() : null;
+$isMaxRupees = $isSettings ? (int) ($isSettings['max_amount_paise'] / 100) : 0;
+$_todayIst   = new DateTimeImmutable('today', new DateTimeZone('Asia/Kolkata'));
+$packEndMin  = $_todayIst->modify('-' . InternetSupportModel::PACK_END_MAX_PAST_DAYS . ' days')->format('Y-m-d');
+$packEndMax  = $_todayIst->modify('+' . InternetSupportModel::PACK_END_MAX_AHEAD_DAYS . ' days')->format('Y-m-d');
 
 engage_header([
     'title'   => 'My request',
@@ -391,9 +412,9 @@ engage_header([
             <fieldset class="group" style="padding-bottom:18px;">
                 <legend>Your request was sent back to you</legend>
                 <p style="font-size:14px; color:var(--muted); margin-top:0;">
-                    The reviewer needs more information. Read their message, correct your answers below if needed,
-                    add a short note, and resubmit. Your phone number, pack details and Wikimedia username
-                    are not editable here and stay as they were.
+                    The reviewer needs more information. Read their message, correct anything that is wrong below,
+                    add a short note, and resubmit. Only your Wikimedia username and the attendance / technical
+                    status checked by our staff cannot be changed.
                 </p>
                 <?php $renderThread($internetThread); ?>
                 <form method="POST">
@@ -401,11 +422,54 @@ engage_header([
                     <input type="hidden" name="action" value="resubmit_draft">
                     <input type="hidden" name="id" value="<?= $e($internet['tracking_id']) ?>">
 
-                    <div class="field">
-                        <label>Wikimedia username</label>
-                        <input type="text" value="<?= $e($d['wikimedia_username']) ?>" readonly>
-                        <span class="hint">Taken from your verified profile when you made the request.</span>
+                    <div class="row">
+                        <div class="field">
+                            <label>Your full name <span class="req-star">*</span></label>
+                            <input type="text" name="applicant_name" required maxlength="255" value="<?= $e($d['applicant_name']) ?>">
+                        </div>
+                        <div class="field">
+                            <label>Wikimedia username</label>
+                            <input type="text" value="<?= $e($d['wikimedia_username']) ?>" readonly>
+                            <span class="hint">Taken from your verified profile. It can't be changed here.</span>
+                        </div>
                     </div>
+
+                    <div class="row">
+                        <div class="field">
+                            <label>Mobile number to be recharged</label>
+                            <input type="tel" name="phone" maxlength="20" placeholder="Leave blank to keep <?= $e($d['phone_masked']) ?>" value="">
+                            <span class="hint">Enter a number only if you need to correct it. Visible only to the finance team.</span>
+                        </div>
+                        <div class="field">
+                            <label>Mobile operator <span class="req-star">*</span></label>
+                            <input type="text" name="operator" required maxlength="50" value="<?= $e($d['operator']) ?>">
+                        </div>
+                    </div>
+
+                    <div class="field">
+                        <label>Data pack required <span class="req-star">*</span></label>
+                        <input type="text" name="package_name" required minlength="3" maxlength="120" value="<?= $e($d['package_name']) ?>">
+                    </div>
+
+                    <div class="row">
+                        <div class="field">
+                            <label>Pack price (₹) <span class="req-star">*</span></label>
+                            <input type="number" name="amount" required min="1" <?= $isMaxRupees > 0 ? 'max="' . $isMaxRupees . '"' : '' ?> step="0.01" value="<?= $e($d['amount']) ?>">
+                            <?php if ($isMaxRupees > 0): ?><span class="hint">Maximum limit is ₹<?= number_format($isMaxRupees) ?>.</span><?php endif; ?>
+                        </div>
+                        <div class="field">
+                            <label>Validity (days)</label>
+                            <input type="number" name="validity_days" min="1" max="365" step="1" placeholder="optional" value="<?= $e($d['validity_days']) ?>">
+                        </div>
+                    </div>
+
+                    <div class="field">
+                        <label>When does your current pack expire?<?= $d['pack_ends_on'] !== '' ? ' <span class="req-star">*</span>' : '' ?></label>
+                        <?php $minDate = ($d['pack_ends_on'] !== '' && $d['pack_ends_on'] < $packEndMin) ? $d['pack_ends_on'] : $packEndMin; ?>
+                        <input type="date" name="pack_ends_on" <?= $d['pack_ends_on'] !== '' ? 'required' : '' ?>
+                               min="<?= $e($minDate) ?>" max="<?= $e($packEndMax) ?>" value="<?= $e($d['pack_ends_on']) ?>">
+                    </div>
+
                     <div class="field">
                         <label>80+ manual edits last month <span class="req-star">*</span></label>
                         <?= $yesNoSelect('edits_80', $d['edits_80']) ?>

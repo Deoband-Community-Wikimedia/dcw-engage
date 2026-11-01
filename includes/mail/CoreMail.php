@@ -60,11 +60,13 @@ class CoreMail {
      * Short event name from a form title, for wording aimed at the respondent/applicant:
      *   "Scholarship Application Form: Train-a-Wikipedian, 4th Edition" -> "Train-a-Wikipedian"
      *   "Community Input: AI, Composition, Pedagogy, and Wiki Panel (January 2027)" -> "AI, Composition, Pedagogy, and Wiki Panel"
+     *   "Call for Fellows: Heritage Lens Fellowship (9th Iteration)" -> "Heritage Lens Fellowship"
      * Strips, in this order:
-     *   1. a leading form-type label that ends in form / application / feedback / input / survey /
-     *      registration / rsvp, up to the first colon ("Wikimedia Hackathon: Delhi" is left alone);
+     *   1. a leading form-type label up to the first colon: either one that ends in form / application /
+     *      feedback / input / survey / registration / rsvp, or one that starts with "Call for"
+     *      ("Call for Fellows:", "Call for Applications:"). "Wikimedia Hackathon: Delhi" is left alone;
      *   2. a trailing bracket that contains a digit, e.g. "(January 2027)" ("(AMU)" survives);
-     *   3. a trailing "4th Edition" (with or without a comma or dash before it).
+     *   3. a trailing "4th Edition" or "9th Iteration" (with or without a comma or dash before it).
      * Falls back to the full title if nothing would be left.
      * Use this only for what goes into an email to the respondent/applicant; organizer alerts and
      * dev logs keep the full title, and it must never be used to change what is stored.
@@ -72,13 +74,13 @@ class CoreMail {
     public static function eventTitle($formTitle) {
         $full = trim((string) $formTitle);
         $t = $full;
-        if (preg_match('/^[^:]*\b(?:form|application|feedback|input|survey|registration|rsvp)s?\s*:\s*(\S.*)$/isu', $t, $m)) {
+        if (preg_match('/^(?:call\s+for\b[^:]*|[^:]*\b(?:form|application|feedback|input|survey|registration|rsvp)s?)\s*:\s*(\S.*)$/isu', $t, $m)) {
             $t = trim($m[1]);
         }
-        // Trailing "(January 2027)" or "(2027)": only brackets containing a digit, so "(AMU)" survives.
+        // Trailing "(January 2027)" or "(2027)" or "(9th Iteration)": only brackets containing a digit, so "(AMU)" survives.
         $t = preg_replace('/\s*\([^()]*\d[^()]*\)\s*$/u', '', $t);
-        // Trailing ", 4th Edition" / " - 4th Edition".
-        $t = preg_replace('/\s*[,\-–—:]?\s*\b\d+(?:st|nd|rd|th)\s+edition\s*$/iu', '', $t);
+        // Trailing ", 4th Edition" / " - 9th Iteration".
+        $t = preg_replace('/\s*[,\-–—:]?\s*\b\d+(?:st|nd|rd|th)\s+(?:edition|iteration)\s*$/iu', '', $t);
         $t = trim($t, " \t\n\r,;:-–—");
         return $t !== '' ? $t : $full;
     }
@@ -171,6 +173,11 @@ class CoreMail {
         }
 
         $mail = new PHPMailer\PHPMailer\PHPMailer(true);
+        // PHPMailer defaults to ISO-8859-1, which mislabels our UTF-8 subject and body
+        // (an en dash showed up as "â€“", and ₹ would break too). Must be set before
+        // Subject/Body/AltBody are used.
+        $mail->CharSet  = 'UTF-8';
+        $mail->Encoding = 'base64';
         try {
             $mail->isSMTP();
             $mail->Host       = $mailConfig['host'];
@@ -235,6 +242,7 @@ class CoreMail {
         <!DOCTYPE html>
         <html>
         <head>
+            <meta charset='UTF-8'>
             <style>
                 body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background-color: #f4f6f8; margin: 0; padding: 0; color: #1e293b; }
                 .email-container { max-width: 600px; margin: 40px auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; }

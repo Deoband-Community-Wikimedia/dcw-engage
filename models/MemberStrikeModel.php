@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../includes/app_log.php';
 require_once __DIR__ . '/../includes/audit.php';
+require_once __DIR__ . '/PublicDirectoryCache.php';
 
 /**
  * DCW Engage - striking members off (table member_strikes, see member_strikes.sql).
@@ -9,12 +10,14 @@ require_once __DIR__ . '/../includes/audit.php';
  *   - MemberSession::check() ends their session and refuses new ones,
  *   - MemberAuthModel::authenticate() answers 'struck' (after a correct password) and sends no reset links,
  *   - their card is retired and the public check page shows "Card not valid" (same as an unknown card),
- *   - MemberModel::approve() refuses applications from them.
+ *   - MemberModel::approve() refuses applications from them,
+ *   - they are removed from the public members list (/members) at once.
  * Reinstating lifts it. They get a fresh card on their next visit (the old one stays dead).
  *
  * Who may strike is decided by the page (reviewers and owners). This class only stores and answers.
  * Reads fail soft: if the table is missing, nobody counts as struck and the problem is logged, so
  * deploying before running the SQL does not take member pages down.
+ * The one exception is activeIdsStrict(), used by the public members list, which fails closed.
  */
 class MemberStrikeModel
 {
@@ -79,6 +82,17 @@ class MemberStrikeModel
             app_log('Strike list failed: ' . $e->getMessage());
         }
         return $out;
+    }
+
+    /**
+     * [MEMBER ID => true] for every strike in force. Unlike the other reads this THROWS on failure,
+     * so a public page can fail closed instead of listing struck-off people.
+     */
+    public function activeIdsStrict(): array
+    {
+        $ids = $this->db->query('SELECT member_id FROM member_strikes WHERE lifted_at IS NULL')
+                        ->fetchAll(PDO::FETCH_COLUMN);
+        return array_fill_keys(array_map(fn($i) => self::norm((string) $i), $ids), true);
     }
 
     /** Strikes in force with the person's name and email, newest first, for the reviewers' list. */
@@ -154,6 +168,7 @@ class MemberStrikeModel
             throw $e;
         }
         unset(self::$cache[$memberId]);
+        PublicDirectoryCache::clear();   // off the public members list immediately
         AuditLog::activity('member.struck_off', $memberId, $reason, (string) $by);
     }
 
@@ -187,6 +202,7 @@ class MemberStrikeModel
             throw $e;
         }
         unset(self::$cache[$memberId]);
+        PublicDirectoryCache::clear();   // back on the public members list
         AuditLog::activity('member.reinstated', $memberId, $reason, (string) $by);
     }
 }

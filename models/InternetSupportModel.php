@@ -39,10 +39,12 @@ require_once __DIR__ . '/../includes/app_log.php';
  * swapped in by answering a reviewer.
  *
  * "Info Requested" sends the request back to the applicant AS A DRAFT: on
- * /member/request they see the reviewer's question and their own editable answers
- * (getDraftForApplicant()), correct them, add a note and resubmit in one
- * step (resubmitDraft()). The phone number, pack, price and username are never
- * changed from there.
+ * /member/request they see the reviewer's question and an editable copy of what they
+ * submitted (getDraftForApplicant()), correct anything that is wrong, add a note and
+ * resubmit in one step (resubmitDraft()). Only the Wikimedia username and the
+ * staff-verified eligibility answers (Conversation Hours, technical status) are locked.
+ * The phone number is shown MASKED; leaving it blank keeps the current number, and a
+ * changed number is flagged to the reviewers in the thread as "changed" (never printed).
  *
  * Same conventions as ReimbursementModel: every transition is a conditional
  * UPDATE that re-checks the current status and reports success via
@@ -146,6 +148,47 @@ class InternetSupportModel {
             'days'  => (int) self::MIN_DAYS_BETWEEN_REQUESTS,
         ]);
         return (bool) $stmt->fetchColumn();
+    }
+
+    // ------------------------------------------------------------------
+    // Field cleaners shared by the edit-on-resubmit flow
+    // ------------------------------------------------------------------
+
+    private function cleanOperator($v) {
+        $v = trim(preg_replace('/\s+/', ' ', (string) $v));
+        if ($v === '' || mb_strlen($v) > 50) {
+            throw new \InvalidArgumentException('Please enter your mobile operator (50 characters max).');
+        }
+        return $v;
+    }
+
+    private function cleanPackageName($v) {
+        $v = trim(preg_replace('/\s+/', ' ', (string) $v));
+        if (mb_strlen($v) < 3 || mb_strlen($v) > 120) {
+            throw new \InvalidArgumentException('Please describe the pack you need, e.g. "1.5 GB/day, 28 days" (3 to 120 characters).');
+        }
+        return $v;
+    }
+
+    private function cleanAmountPaise($v) {
+        $v = trim((string) $v);
+        if (!preg_match('/^\d{1,6}(\.\d{1,2})?$/', $v) || (float) $v <= 0) {
+            throw new \InvalidArgumentException('Please enter the pack price as a positive amount, e.g. 299.');
+        }
+        $paise = (int) round(((float) $v) * 100);
+        $settings = $this->getSettings();
+        $maxPaise = $settings ? (int) $settings['max_amount_paise'] : 0;
+        if ($maxPaise > 0 && $paise > $maxPaise) {
+            throw new \InvalidArgumentException('Requests are limited to Rs ' . number_format($maxPaise / 100) . '. Please choose a smaller pack.');
+        }
+        return $paise;
+    }
+
+    private function cleanValidityDays($v) {
+        $v = trim((string) $v);
+        if ($v === '') return null;
+        if (ctype_digit($v) && (int) $v >= 1 && (int) $v <= 365) return (int) $v;
+        throw new \InvalidArgumentException('Validity must be a whole number of days between 1 and 365, or left blank.');
     }
 
     /**
@@ -673,13 +716,47 @@ class InternetSupportModel {
     }
 
     /**
-     * Same rules as createRequest() for the answers an applicant may edit.
-     * Phone, pack, price, operator and the Wikimedia username are NOT editable here.
+     * Same rules as createRequest() for everything an applicant may edit when a request is
+     * sent back. NOT editable here: the Wikimedia username (verified profile) and, via
+     * withLockedEligibility(), attended_ch / tech_contributor.
      *
+     * @param string|null $storedPackEnds the date currently on the request (kept as-is if unchanged)
      * @throws \InvalidArgumentException
-     * @return array normalised values, eligibility flags as 1/0
+     * @return array normalised values, eligibility flags as 1/0; 'phone' is null when unchanged
      */
-    private function cleanEditableAnswers(array $in) {
+    private function cleanEditableAnswers(array $in, $storedPackEnds = null) {
+        $name = trim((string) ($in['applicant_name'] ?? ''));
+        if ($name === '') {
+            throw new \InvalidArgumentException('Please enter your name.');
+        }
+        if (mb_strlen($name) > 255) {
+            throw new \InvalidArgumentException('Name is too long (255 characters max).');
+        }
+
+        // Blank phone = keep the number already on the request.
+        $phoneRaw = trim((string) ($in['phone'] ?? ''));
+        $phone = null;
+        if ($phoneRaw !== '') {
+            $phone = self::normalizePhone($phoneRaw);
+            if ($phone === null) {
+                throw new \InvalidArgumentException('Please enter a valid 10-digit Indian mobile number.');
+            }
+        }
+
+        $operator = $this->cleanOperator($in['operator'] ?? '');
+        $package  = $this->cleanPackageName($in['package_name'] ?? '');
+        $price    = $this->cleanAmountPaise($in['amount'] ?? '');
+        $validity = $this->cleanValidityDays($in['validity_days'] ?? '');
+
+        $postedEnds = trim((string) ($in['pack_ends_on'] ?? ''));
+        if ($postedEnds === '' && $storedPackEnds === null) {
+            $packEnds = null;                               // older request with no date: leave it
+        } elseif ($postedEnds !== '' && $postedEnds === (string) $storedPackEnds) {
+            $packEnds = $postedEnds;                        // unchanged: don't re-apply the date window
+        } else {
+            $packEnds = $this->cleanPackEndDate($postedEnds);
+        }
+
         $reason = trim((string) ($in['reason'] ?? ''));
         $len = mb_strlen($reason);
         if ($len < self::MIN_REASON_LENGTH) {
@@ -720,63 +797,92 @@ class InternetSupportModel {
         }
 
         return [
-            'reason'             => $reason,
-            'contributions'      => $contributions,
-            'plans'              => $plans,
-            'edits_80'           => $edits80 === 'yes' ? 1 : 0,
-            'attended_ch'        => $attendedCH === 'yes' ? 1 : 0,
-            'tech_contributor'   => $techContrib === 'yes' ? 1 : 0,
+            'applicant_name'        => $name,
+            'phone'                 => $phone,              // null = unchanged
+            'operator'              => $operator,
+            'package_name'          => $package,
+            'package_price_paise'   => $price,
+            'package_validity_days' => $validity,
+            'current_pack_ends_on'  => $packEnds,
+            'reason'                => $reason,
+            'contributions'         => $contributions,
+            'plans'                 => $plans,
+            'edits_80'              => $edits80 === 'yes' ? 1 : 0,
+            'attended_ch'           => $attendedCH === 'yes' ? 1 : 0,
+            'tech_contributor'      => $techContrib === 'yes' ? 1 : 0,
         ];
     }
 
     /**
      * The applicant's own answers, for the draft form on /member/request.
-     * Only returned while 'Info Requested' and the tracking ID + email pair
-     * matches. Never selects the phone number or anything finance-side.
-     * wikimedia_username is included so the form can SHOW it (read-only).
+     * Only returned while 'Info Requested' and the tracking ID + email pair matches.
+     * The phone number is returned MASKED only (last 4 digits); the form leaves it blank
+     * to keep it. Nothing finance-side is selected.
      */
     public function getDraftForApplicant($trackingId, $email) {
         $stmt = $this->db->prepare(
-            "SELECT wikimedia_username, reason, contributions, plans,
+            "SELECT applicant_name, phone_enc, operator, package_name, package_price_paise,
+                    package_validity_days, current_pack_ends_on,
+                    wikimedia_username, reason, contributions, plans,
                     edits_80, attended_ch, tech_contributor
              FROM internet_requests
              WHERE tracking_id = :t AND email = :email AND status = 'Info Requested'"
         );
         $stmt->execute(['t' => $trackingId, 'email' => strtolower(trim($email))]);
-        return $stmt->fetch() ?: null;
+        $row = $stmt->fetch();
+        if (!$row) {
+            return null;
+        }
+
+        try {
+            $phone = Crypto::decrypt($row['phone_enc']);
+            $row['phone_masked'] = str_repeat('X', max(0, strlen($phone) - 4)) . substr($phone, -4);
+        } catch (\RuntimeException $e) {
+            $row['phone_masked'] = '';
+        }
+        unset($row['phone_enc']);
+
+        $row['amount']        = number_format($row['package_price_paise'] / 100, 2, '.', '');
+        $row['validity_days'] = $row['package_validity_days'] !== null ? (string) $row['package_validity_days'] : '';
+        $row['pack_ends_on']  = (string) ($row['current_pack_ends_on'] ?? '');
+        return $row;
     }
 
     /**
-     * Applicant corrects their answers and answers the reviewer.
-     * Saves the edits, stores the note (with a line listing which answers
-     * changed, visible to the reviewer in the thread) and moves
-     * Info Requested -> Submitted in one transaction. Returns false if the
-     * pair doesn't match or the request is no longer waiting on the applicant.
+     * Applicant corrects their request and answers the reviewer, in one step.
+     * Everything except the Wikimedia username and the two staff-verified eligibility
+     * answers can be changed. The note is stored with a line listing what changed
+     * (a changed phone number is listed as changed, never printed), and the request
+     * moves Info Requested -> Submitted in one transaction.
+     * Returns false if the pair doesn't match or the request is no longer waiting.
      *
-     * The Wikimedia username is deliberately not part of this: it is fixed when the
-     * request is made (from the verified profile) and cannot be changed here.
-     *
-     * @param array $answers keys: reason, contributions, plans, edits_80, attended_ch, tech_contributor
+     * @param array $answers keys: applicant_name, phone (blank = keep), operator, package_name,
+     *                       amount (rupees), validity_days, pack_ends_on, reason, contributions,
+     *                       plans, edits_80, attended_ch, tech_contributor
      * @throws \InvalidArgumentException on any validation failure
      */
     public function resubmitDraft($trackingId, $email, array $answers, $note) {
         $answers = $this->withLockedEligibility($trackingId, $email, $answers);
         $note = $this->cleanMessage($note);
-        $new  = $this->cleanEditableAnswers($answers);
 
-        $labels = [
-            'reason'             => 'Why you need support',
-            'contributions'      => 'Contributions',
-            'plans'              => 'Plans',
-            'edits_80'           => '80+ edits answer',
-            'attended_ch'        => 'Conversation Hours answer',
-            'tech_contributor'   => 'Technical projects answer',
+        $textLabels = [
+            'applicant_name'       => 'Name',
+            'operator'             => 'Operator',
+            'package_name'         => 'Data pack',
+            'current_pack_ends_on' => 'Current pack end date',
+            'reason'               => 'Why you need support',
+            'contributions'        => 'Contributions',
+            'plans'                => 'Plans',
+            'edits_80'             => '80+ edits answer',
+            'attended_ch'          => 'Conversation Hours answer',
+            'tech_contributor'     => 'Technical projects answer',
         ];
 
         $this->db->beginTransaction();
         try {
             $find = $this->db->prepare(
-                "SELECT id, " . implode(', ', array_keys($labels)) . "
+                "SELECT id, phone_enc, package_price_paise, package_validity_days, "
+                . implode(', ', array_keys($textLabels)) . "
                  FROM internet_requests
                  WHERE tracking_id = :t AND email = :email AND status = 'Info Requested'
                  FOR UPDATE"
@@ -788,29 +894,68 @@ class InternetSupportModel {
                 return false;
             }
 
+            $new = $this->cleanEditableAnswers($answers, $current['current_pack_ends_on']);
+
             $changed = [];
-            foreach ($labels as $col => $label) {
+            foreach ($textLabels as $col => $label) {
                 if ((string) $current[$col] !== (string) $new[$col]) {
                     $changed[] = $label;
+                }
+            }
+            if ((int) $current['package_price_paise'] !== $new['package_price_paise']) {
+                $changed[] = sprintf('Pack price (Rs %s -> Rs %s)',
+                    number_format($current['package_price_paise'] / 100, 2),
+                    number_format($new['package_price_paise'] / 100, 2));
+            }
+            if ((string) $current['package_validity_days'] !== (string) $new['package_validity_days']) {
+                $changed[] = 'Validity';
+            }
+
+            // Phone: blank = keep. Only re-encrypt if it really is a different number.
+            $phoneEnc = $current['phone_enc'];
+            if ($new['phone'] !== null) {
+                $same = false;
+                try { $same = (Crypto::decrypt($current['phone_enc']) === $new['phone']); } catch (\RuntimeException $e) {}
+                if (!$same) {
+                    $phoneEnc = Crypto::encrypt($new['phone']);
+                    $changed[] = 'Mobile number';
                 }
             }
 
             $update = $this->db->prepare(
                 "UPDATE internet_requests
-                 SET reason = :reason,
-                     contributions = :contributions, plans = :plans,
+                 SET applicant_name = :applicant_name, phone_enc = :phone_enc,
+                     operator = :operator, package_name = :package_name,
+                     package_price_paise = :price, package_validity_days = :validity,
+                     current_pack_ends_on = :pack_ends,
+                     reason = :reason, contributions = :contributions, plans = :plans,
                      edits_80 = :edits_80, attended_ch = :attended_ch, tech_contributor = :tech_contributor,
                      status = 'Submitted'
                  WHERE id = :id AND status = 'Info Requested'"
             );
-            $update->execute($new + ['id' => (int) $current['id']]);
+            $update->execute([
+                'applicant_name'   => $new['applicant_name'],
+                'phone_enc'        => $phoneEnc,
+                'operator'         => $new['operator'],
+                'package_name'     => $new['package_name'],
+                'price'            => $new['package_price_paise'],
+                'validity'         => $new['package_validity_days'],
+                'pack_ends'        => $new['current_pack_ends_on'],
+                'reason'           => $new['reason'],
+                'contributions'    => $new['contributions'],
+                'plans'            => $new['plans'],
+                'edits_80'         => $new['edits_80'],
+                'attended_ch'      => $new['attended_ch'],
+                'tech_contributor' => $new['tech_contributor'],
+                'id'               => (int) $current['id'],
+            ]);
             if ($update->rowCount() !== 1) {
                 $this->db->rollBack();
                 return false;
             }
 
             $body = $note . "\n\n" . ($changed
-                ? '[Answers updated: ' . implode(', ', $changed) . ']'
+                ? '[Updated: ' . implode(', ', $changed) . ']'
                 : '[No answers changed]');
             $this->insertMessage($current['id'], 'applicant', null, $body);
 
