@@ -173,6 +173,11 @@ class CoreMail {
         }
 
         $mail = new PHPMailer\PHPMailer\PHPMailer(true);
+        // PHPMailer defaults to ISO-8859-1, which mislabels our UTF-8 subject and body
+        // (an en dash showed up as "â€“", and ₹ would break too). Must be set before
+        // Subject/Body/AltBody are used.
+        $mail->CharSet  = 'UTF-8';
+        $mail->Encoding = 'base64';
         try {
             $mail->isSMTP();
             $mail->Host       = $mailConfig['host'];
@@ -237,6 +242,7 @@ class CoreMail {
         <!DOCTYPE html>
         <html>
         <head>
+            <meta charset='UTF-8'>
             <style>
                 body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background-color: #f4f6f8; margin: 0; padding: 0; color: #1e293b; }
                 .email-container { max-width: 600px; margin: 40px auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; }
