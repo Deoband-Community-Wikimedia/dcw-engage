@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../../includes/init.php';
 require_once __DIR__ . '/../../includes/auth.php';
+require_once __DIR__ . '/../../includes/csrf.php';
 require_once __DIR__ . '/../../includes/require_role.php';
 require_once __DIR__ . '/../../includes/engage_page.php';
 require_once __DIR__ . '/../../includes/event_card_pdf.php';
@@ -17,8 +18,25 @@ require_once __DIR__ . '/../../models/FormModel.php';
  *   /admin/event-cards?event=7&form=3     the same, with the confirmed awardees of form 3 listed to import
  *   /admin/event-cards?event=7&pdf=all    download the print file for everyone (pdf=<participant id> for one card)
  *
- * CHECK BEFORE USE (names I could not see in the code I was given): csrf_field() and csrf_verify() below.
+ * CSRF: every form carries CSRF::getInputField() and every POST is checked with CSRF::validate(). The three forms
+ * that create rows (new event, add person, CSV upload) also carry a single-use submit token, so a double click
+ * cannot create duplicates.
  */
+
+/** Hidden CSRF field: the portal's own CSRF class (includes/csrf.php), field name csrf_token. */
+function ec_csrf_field(): string
+{
+    return CSRF::getInputField();
+}
+
+/** Refuse the request (403) unless the posted csrf_token matches the session's. */
+function ec_csrf_verify(): void
+{
+    if (!CSRF::validate($_POST['csrf_token'] ?? '')) {
+        http_response_code(403);
+        exit('The security check failed. Go back, reload the page and try again.');
+    }
+}
 
 Auth::requireLogin();
 requireRole(['organizer', 'owner']);
@@ -52,9 +70,13 @@ if ($event !== null && isset($_GET['pdf'])) {
 
 // ---- Actions (POST) ------------------------------------------------------------------------------
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    csrf_verify();
+    ec_csrf_verify();
     $act = (string) ($_POST['action'] ?? '');
     try {
+        if (in_array($act, ['create_event', 'add_person', 'import_csv'], true)
+            && !CSRF::consumeSubmitToken($_POST['submit_token'] ?? '')) {
+            throw new InvalidArgumentException('That form was already submitted. Reload the page to see the result.');
+        }
         switch ($act) {
             case 'create_event':
                 $id = $model->createEvent((string) ($_POST['name'] ?? ''), (string) ($_POST['edition'] ?? ''),
@@ -162,8 +184,9 @@ engage_header([
 
     <h2>New event</h2>
     <form method="post" class="box">
-        <?= csrf_field() ?>
+        <?= ec_csrf_field() ?>
         <input type="hidden" name="action" value="create_event">
+        <?= CSRF::getSubmitField() ?>
         <p><label>Event name<br><input type="text" name="name" maxlength="120" required placeholder="Train-a-Wikipedian"></label></p>
         <p><label>Edition<br><input type="text" name="edition" maxlength="80" placeholder="November 2026"></label></p>
         <p><label>Event logo (optional, from assets/chapters/)<br>
@@ -201,7 +224,7 @@ engage_header([
             <tr>
                 <td>
                     <form id="u<?= $pid ?>" method="post">
-                        <?= csrf_field() ?>
+                        <?= ec_csrf_field() ?>
                         <input type="hidden" name="action" value="update_person">
                         <input type="hidden" name="event_id" value="<?= $eventId ?>">
                         <input type="hidden" name="pid" value="<?= $pid ?>">
@@ -221,14 +244,14 @@ engage_header([
                     <button form="u<?= $pid ?>" type="submit">Save</button>
                     <a href="/admin/event-cards?event=<?= $eventId ?>&amp;pdf=<?= $pid ?>">Card PDF</a>
                     <form method="post" onsubmit="return confirm('Issue a new card? The old QR code stops working.');">
-                        <?= csrf_field() ?>
+                        <?= ec_csrf_field() ?>
                         <input type="hidden" name="action" value="reissue">
                         <input type="hidden" name="event_id" value="<?= $eventId ?>">
                         <input type="hidden" name="pid" value="<?= $pid ?>">
                         <button type="submit">Re-issue</button>
                     </form>
                     <form method="post" onsubmit="return confirm('Remove this person? Their QR code stops working.');">
-                        <?= csrf_field() ?>
+                        <?= ec_csrf_field() ?>
                         <input type="hidden" name="action" value="remove">
                         <input type="hidden" name="event_id" value="<?= $eventId ?>">
                         <input type="hidden" name="pid" value="<?= $pid ?>">
@@ -262,7 +285,7 @@ engage_header([
                     <p>No confirmed awardees left to import from this form.</p>
                 <?php else: ?>
                     <form method="post">
-                        <?= csrf_field() ?>
+                        <?= ec_csrf_field() ?>
                         <input type="hidden" name="action" value="import_mentees">
                         <input type="hidden" name="event_id" value="<?= $eventId ?>">
                         <input type="hidden" name="form_id" value="<?= $formId ?>">
@@ -280,8 +303,9 @@ engage_header([
         <div class="box">
             <strong>Add one person</strong>
             <form method="post" style="margin-top: .6rem;">
-                <?= csrf_field() ?>
+                <?= ec_csrf_field() ?>
                 <input type="hidden" name="action" value="add_person">
+        <?= CSRF::getSubmitField() ?>
                 <input type="hidden" name="event_id" value="<?= $eventId ?>">
                 <p><label>Name<br><input type="text" name="name" maxlength="80" required></label></p>
                 <p><label>Role<br><select name="role">
@@ -296,8 +320,9 @@ engage_header([
             <strong>Upload a CSV</strong>
             <p><small>Columns: <code>name, role, affiliation</code> (affiliation optional). Roles: <?= $h(implode(', ', array_keys(EventCardModel::ROLES))) ?>.</small></p>
             <form method="post" enctype="multipart/form-data">
-                <?= csrf_field() ?>
+                <?= ec_csrf_field() ?>
                 <input type="hidden" name="action" value="import_csv">
+        <?= CSRF::getSubmitField() ?>
                 <input type="hidden" name="event_id" value="<?= $eventId ?>">
                 <p><input type="file" name="csv" accept=".csv" required></p>
                 <button type="submit">Upload</button>
