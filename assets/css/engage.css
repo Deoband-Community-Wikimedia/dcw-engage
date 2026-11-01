@@ -1191,3 +1191,124 @@ table.ms-table { width: 100%; border-collapse: collapse; min-width: 720px; }
 .add-section-field {
     margin-top: 12px;
 }
+
+/* ======================================================================
+   Public members directory (/members): .pm-* rules.
+   Append to the end of assets/css/engage.css. Replaces the old inline .pd-* styles.
+   ====================================================================== */
+.pm-card {
+    margin: 0 0 18px; padding: 20px 22px;
+    background: var(--card); border: 1.5px solid var(--border); border-radius: 16px;
+    box-shadow: 0 2px 0 var(--edge), var(--lift);
+}
+.pm-card .panel-head { margin-bottom: 14px; }
+
+/* Toolbar card: search, totals, club tabs */
+.pm-top { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 20px; }
+.pm-search { flex: 1 1 280px; min-width: 0; }
+.pm-search input {
+    width: 100%; min-height: 46px; padding: 11px 14px; background: #fff; color: var(--ink);
+    border: 1.5px solid #C5D3DE; border-radius: 10px; font: inherit; font-size: 15px;
+    -webkit-appearance: none; appearance: none;
+    transition: border-color .15s, box-shadow .15s;
+}
+.pm-search input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 4px color-mix(in srgb, var(--primary) 20%, transparent); }
+.pm-search input::-webkit-search-cancel-button { -webkit-appearance: none; }
+.pm-total { margin: 0; font-size: 14px; color: var(--muted); white-space: nowrap; }
+.pm-total strong { color: var(--leaf-dark); font-size: 16px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.pm-total span { margin: 0 .3em; opacity: .5; }
+.pm-tools .tabs { margin: 14px 0 0; padding: 0; border: 0; }
+.pm-tools button.tab { font-family: inherit; cursor: pointer; }
+
+/* Member grid */
+.pm-grid {
+    list-style: none; margin: 0; padding: 0;
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px;
+}
+.pm-grid li[hidden] { display: none; }
+.pm-link {
+    display: flex; align-items: center; gap: 12px; height: 100%; padding: 12px 14px;
+    background: #F6F9FB; border: 1.5px solid var(--border); border-radius: 14px;
+    color: inherit; text-decoration: none;
+    transition: transform .12s, box-shadow .12s, border-color .15s, background .15s;
+}
+.pm-link:hover { transform: translateY(-1px); background: var(--card); border-color: var(--primary); box-shadow: 0 2px 0 var(--edge), var(--lift); }
+.pm-link:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.pm-av {
+    flex: none; width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center;
+    font-size: 16px; font-weight: 800; color: #fff;
+    background: linear-gradient(135deg, var(--primary), var(--leaf-dark));
+}
+.pm-grid.alumni .pm-av { background: #94a3b8; }
+.pm-body { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.pm-name { font-size: 15px; font-weight: 700; line-height: 1.3; color: var(--ink); overflow-wrap: anywhere; }
+.pm-link:hover .pm-name { color: var(--primary-dark); }
+.pm-ext { margin-left: 5px; font-size: 12px; color: var(--muted); opacity: .6; }
+.pm-link:hover .pm-ext { opacity: 1; color: var(--primary); }
+.pm-clubs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
+.pm-pill {
+    padding: 2px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 700; white-space: nowrap;
+    color: var(--tone, var(--primary)); background: color-mix(in srgb, var(--tone, var(--primary)) 13%, #fff);
+}
+.pm-former { flex-basis: 100%; font-size: 12px; color: var(--muted); }
+.pm-empty { margin: 12px 0 0; color: var(--muted); font-size: 14px; }
+.pm-empty[hidden] { display: none; }
+
+/* Collapsed sections (Alumni, Listed before Engage) */
+.pm-fold > summary { list-style: none; cursor: pointer; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 14px; }
+.pm-fold > summary::-webkit-details-marker { display: none; }
+.pm-fold > summary::after {
+    content: ''; margin-left: auto; align-self: center; width: 9px; height: 9px;
+    border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: rotate(45deg); transition: transform .2s;
+}
+.pm-fold[open] > summary::after { transform: rotate(-135deg); }
+.pm-fold > summary:focus-visible { outline: 3px solid var(--focus); outline-offset: 4px; border-radius: 8px; }
+.pm-sum-h { font-size: 18px; font-weight: 800; letter-spacing: -.01em; }
+.pm-sum-p { font-size: 13.5px; color: var(--muted); }
+.pm-fold[open] > summary { margin-bottom: 14px; }
+.pm-fold .pm-note { margin-top: 0; }
+
+.pm-note { color: var(--muted); font-size: 13.5px; line-height: 1.6; }
+.pm-note a { color: var(--primary); font-weight: 600; }
+
+@media (max-width: 640px) {
+    .pm-card { padding: 18px 16px; }
+    .pm-grid { grid-template-columns: 1fr; }
+    .pm-total { white-space: normal; }
+    .pm-tools .tabs { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 4px; }
+    .pm-tools .tab { flex: none; }
+}
+
+/* Home page stats line: the "View all members" link */
+.stats-line a.stats-link { color: var(--primary); font-weight: 700; text-decoration: none; white-space: nowrap; }
+.stats-line a.stats-link:hover { color: var(--accent); text-decoration: underline; }
+
+/* ---------- Home page: "Meet our members" strip ---------- */
+.cm { margin: 0 0 12px; }
+.cm-card {
+    padding: 22px 24px 18px; background: var(--card); border: 1.5px solid var(--border); border-radius: 18px;
+    box-shadow: 0 2px 0 var(--edge), var(--lift);
+}
+.cm-list { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
+.cm-chip {
+    display: inline-flex; align-items: center; gap: 9px; max-width: 100%; padding: 5px 15px 5px 5px;
+    background: #F6F9FB; border: 1.5px solid var(--border); border-radius: 999px;
+    color: var(--ink); font-size: 14.5px; font-weight: 600; text-decoration: none;
+    transition: transform .12s, border-color .15s, background .15s, box-shadow .12s;
+}
+.cm-chip:hover { transform: translateY(-1px); background: #fff; border-color: var(--primary); box-shadow: 0 2px 0 var(--edge); }
+.cm-chip:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.cm-av {
+    flex: none; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center;
+    font-size: 13px; font-weight: 800; color: #fff; background: linear-gradient(135deg, var(--primary), var(--leaf-dark));
+}
+.cm-name { min-width: 0; overflow-wrap: anywhere; }
+.cm-chip.cm-more { padding: 9px 16px; color: var(--primary-dark); background: var(--primary-tint); border-color: color-mix(in srgb, var(--primary) 25%, #fff); }
+.cm-foot {
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 20px;
+    margin: 18px 0 0; padding-top: 16px; border-top: 1px solid var(--border); font-size: 14px; color: var(--muted);
+}
+@media (max-width: 640px) {
+    .cm-card { padding: 18px 16px 16px; }
+    .cm-foot { justify-content: center; text-align: center; }
+}
