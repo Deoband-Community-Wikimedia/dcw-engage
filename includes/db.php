@@ -9,11 +9,20 @@ class DB {
     private static $instance = null;
     private $pdo;
 
+    /**
+     * The collation every table in database.sql is declared with. The
+     * connection is pinned to it so bound parameters and literals never fall
+     * back to the server default (utf8mb4_uca1400_ai_ci on newer MariaDB),
+     * which is what caused "Illegal mix of collations" (error 1267).
+     */
+    private const CONNECTION_CHARSET   = 'utf8mb4';
+    private const CONNECTION_COLLATION = 'utf8mb4_unicode_ci';
+
     private function __construct() {
         require_once __DIR__ . '/app_log.php';
         $config = require __DIR__ . '/config.php';
         
-        $dsn = "mysql:host=" . $config['db']['host'] . ";dbname=" . $config['db']['name'] . ";charset=" . $config['db']['charset'];
+        $dsn = "mysql:host=" . $config['db']['host'] . ";dbname=" . $config['db']['name'] . ";charset=" . self::CONNECTION_CHARSET;
         
         $options = [
             PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION, // Fail hard on SQL errors
@@ -22,7 +31,11 @@ class DB {
             // PHP runs in UTC (see init.php). Make the connection UTC too, so NOW() / CURRENT_TIMESTAMP and the
             // TIMESTAMP values read back are in the same time zone PHP assumes, whatever the host's MySQL default is.
             // A fixed offset, because named zones need time zone tables loaded on the server.
-            PDO::MYSQL_ATTR_INIT_COMMAND => "SET time_zone = '+00:00'",
+            //
+            // SET NAMES ... COLLATE pins the connection collation to the one the schema uses. The charset in the
+            // DSN alone only picks that charset's server-default collation.
+            PDO::MYSQL_ATTR_INIT_COMMAND => "SET time_zone = '+00:00', NAMES "
+                . self::CONNECTION_CHARSET . " COLLATE " . self::CONNECTION_COLLATION,
             // Deliberately NOT persistent. A persistent connection is reused
             // across unrelated requests by the same PHP worker, so if it gets
             // killed mid-transaction by the host's MySQL connection-rate
