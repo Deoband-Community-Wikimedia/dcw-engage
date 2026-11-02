@@ -224,7 +224,7 @@ engage_header([
         <?php foreach ($schemaSections as $section): ?>
             <?php if (trim($section['title']) !== '' || trim($section['description']) !== ''): ?>
                 <section class="form-section">
-                    <?php if (trim($section['title']) !== ''): ?><h2><?= $e($section['title']) ?></h2><?php endif; ?>
+                    <?php if (trim($section['title']) !== ''): ?><h2><?= $label_html($section['title']) ?></h2><?php endif; ?>
                     <?php if (trim($section['description']) !== ''): ?><div class="form-section-intro"><?= MiniWikiText::render($section['description']) ?></div><?php endif; ?>
                 </section>
             <?php endif; ?>
