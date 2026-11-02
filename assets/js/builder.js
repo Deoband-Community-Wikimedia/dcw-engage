@@ -132,13 +132,13 @@ sectionsContainer.addEventListener('click', function(e) {
     input.focus();
     input.setSelectionRange(start + cursorOffset, start + cursorOffset + selectLength);
 });
-// --- Description formatting toolbar (wikitext syntax, see #44) ---
-// Operates directly on #form_description's selection — it's a plain
-// <textarea>, not contenteditable, so there's no execCommand to lean on.
-const descriptionToolbar = document.getElementById('description_toolbar');
-if (descriptionToolbar) {
-    const descriptionTextarea = document.getElementById('form_description');
-
+// --- Wikitext formatting toolbar (wikitext syntax, see #44) ---
+// Wires one toolbar's buttons to one <textarea>. It's a plain <textarea>, not
+// contenteditable, so there's no execCommand to lean on: everything works on the
+// textarea's selection. Used for the form description and for every section
+// introduction, so there is a single copy of this logic. A function declaration
+// (not a const) so createSection(), which runs earlier, can call it.
+function wireWikiToolbar(toolbar, textarea) {
     const getLineBounds = function (value, pos) {
         const start = value.lastIndexOf('\n', pos - 1) + 1;
         let end = value.indexOf('\n', pos);
@@ -149,35 +149,35 @@ if (descriptionToolbar) {
     // Replaces [start, end) with `replacement`, then places the cursor
     // (or a selection, if selectLength is given) at start + selectOffset.
     const replaceRange = function (start, end, replacement, selectOffset, selectLength) {
-        const value = descriptionTextarea.value;
-        descriptionTextarea.value = value.slice(0, start) + replacement + value.slice(end);
+        const value = textarea.value;
+        textarea.value = value.slice(0, start) + replacement + value.slice(end);
         const cursor = start + selectOffset;
-        descriptionTextarea.focus();
-        descriptionTextarea.setSelectionRange(cursor, cursor + (selectLength || 0));
+        textarea.focus();
+        textarea.setSelectionRange(cursor, cursor + (selectLength || 0));
     };
 
     const wrapSelection = function (marker) {
-        const start = descriptionTextarea.selectionStart;
-        const end = descriptionTextarea.selectionEnd;
-        const selected = descriptionTextarea.value.slice(start, end);
+        const start = textarea.selectionStart;
+        const end = textarea.selectionEnd;
+        const selected = textarea.value.slice(start, end);
         replaceRange(start, end, marker + selected + marker, marker.length, selected.length);
     };
 
     // Re-clicking a heading button on an already-headinged line swaps the
     // level instead of nesting a second pair of markers onto it.
     const toggleHeadingLine = function (marker) {
-        const pos = descriptionTextarea.selectionStart;
-        const bounds = getLineBounds(descriptionTextarea.value, pos);
-        const line = descriptionTextarea.value.slice(bounds.start, bounds.end);
+        const pos = textarea.selectionStart;
+        const bounds = getLineBounds(textarea.value, pos);
+        const line = textarea.value.slice(bounds.start, bounds.end);
         const bare = line.replace(/^={2,3}\s+/, '').replace(/\s+={2,3}$/, '');
         const replacement = marker + ' ' + bare + ' ' + marker;
         replaceRange(bounds.start, bounds.end, replacement, marker.length + 1, bare.length);
     };
 
     const increaseIndent = function () {
-        const pos = descriptionTextarea.selectionStart;
-        const bounds = getLineBounds(descriptionTextarea.value, pos);
-        const line = descriptionTextarea.value.slice(bounds.start, bounds.end);
+        const pos = textarea.selectionStart;
+        const bounds = getLineBounds(textarea.value, pos);
+        const line = textarea.value.slice(bounds.start, bounds.end);
         const existing = line.match(/^(:+)/);
         const level = Math.min((existing ? existing[1].length : 0) + 1, 3); // cap: #44 asks for up to level 3
         const rest = line.replace(/^:+\s*/, '');
@@ -186,11 +186,11 @@ if (descriptionToolbar) {
     };
 
     const insertLink = function () {
-        const start = descriptionTextarea.selectionStart;
-        const end = descriptionTextarea.selectionEnd;
+        const start = textarea.selectionStart;
+        const end = textarea.selectionEnd;
         const url = window.prompt('Link URL (http:// or https://):', 'https://');
         if (!url) return;
-        const text = descriptionTextarea.value.slice(start, end) || 'link text';
+        const text = textarea.value.slice(start, end) || 'link text';
         const replacement = '[' + url + ' ' + text + ']';
         replaceRange(start, end, replacement, replacement.length, 0);
     };
@@ -200,16 +200,16 @@ if (descriptionToolbar) {
     // clicking the other marker swaps it, same "one marker per line" rule
     // MiniWikiText::render() applies when grouping lines into a list.
     const toggleListLine = function (marker) {
-        const pos = descriptionTextarea.selectionStart;
-        const bounds = getLineBounds(descriptionTextarea.value, pos);
-        const line = descriptionTextarea.value.slice(bounds.start, bounds.end);
+        const pos = textarea.selectionStart;
+        const bounds = getLineBounds(textarea.value, pos);
+        const line = textarea.value.slice(bounds.start, bounds.end);
         const existing = line.match(/^([*#])\s*/);
         const rest = line.replace(/^[*#]\s*/, '');
         const replacement = (existing && existing[1] === marker) ? rest : marker + ' ' + rest;
         replaceRange(bounds.start, bounds.end, replacement, replacement.length, 0);
     };
 
-    descriptionToolbar.addEventListener('click', function (e) {
+    toolbar.addEventListener('click', function (e) {
         const btn = e.target.closest('button');
         if (!btn) return;
 
@@ -225,6 +225,12 @@ if (descriptionToolbar) {
             toggleListLine(btn.dataset.wikiList);
         }
     });
+}
+
+const descriptionToolbar = document.getElementById('description_toolbar');
+if (descriptionToolbar) {
+    const descriptionTextarea = document.getElementById('form_description');
+    wireWikiToolbar(descriptionToolbar, descriptionTextarea);
 
     // Auto-grow the textarea to fit its content instead of a fixed height
     // with an inner scrollbar (see #47).
@@ -262,6 +268,18 @@ function createSection(sectionData = {}) {
         <button type="button" class="btn-outline btn-sm add-section-field">+ Add Question to Section</button>
     `;
     sectionsContainer.appendChild(section);    sectionsContainer.appendChild(section);
+
+    // Section introduction gets the same toolbar as the form description. It is cloned from that one, so the
+    // buttons are defined in a single place (views/admin/builder.php), then wired to this section's textarea.
+    const introToolbarSource = document.getElementById('description_toolbar');
+    if (introToolbarSource) {
+        const introTextarea = section.querySelector('.section-description');
+        const introToolbar = introToolbarSource.cloneNode(true);
+        introToolbar.removeAttribute('id');
+        introToolbar.classList.add('section-intro-toolbar');
+        introTextarea.parentNode.insertBefore(introToolbar, introTextarea);
+        wireWikiToolbar(introToolbar, introTextarea);
+    }
     const fieldContainer = section.querySelector('.section-fields');
     if (Array.isArray(sectionData.fields) && sectionData.fields.length) {
         sectionData.fields.forEach(field => createFieldCard(field, fieldContainer));
