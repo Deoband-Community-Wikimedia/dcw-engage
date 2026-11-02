@@ -21,6 +21,9 @@ require_once __DIR__ . '/../../models/PointsModel.php';
  *
  * Conversation Hour (award tab): attendance logged in Community records is awarded per session with
  * "Award now" (PointsModel::awardForSession), and hosts are set here. Re-running only adds what is new.
+ *
+ * Layout note: the activities and catalogue tabs list one compact row per item; "Edit" opens the form
+ * for that row in place (<details>). Nothing about the POST handlers changed.
  */
 Auth::requireLogin();
 // Signed in but not a support reviewer or owner: 403, the same way Auth::requireOwner() treats a non-owner.
@@ -248,6 +251,14 @@ if ($tab === 'award') {
 $ist = new DateTimeZone('Asia/Kolkata');
 $when = fn($ts) => $ts ? (new DateTimeImmutable((string) $ts, new DateTimeZone('UTC')))->setTimezone($ist)->format('j M Y, g:i a') : '';
 
+// One hue per category, in the order PointsModel::CATEGORIES lists them. Drives the colour bar and the points pill.
+$gdHues = [205, 165, 28, 275, 340, 48, 190];
+$gdCatKeys = array_keys(PointsModel::CATEGORIES);
+$gdHue = function (string $cat) use ($gdCatKeys, $gdHues): int {
+    $i = array_search($cat, $gdCatKeys, true);
+    return $gdHues[($i === false ? count($gdCatKeys) : $i) % count($gdHues)];
+};
+
 engage_header([
     'title'   => 'Goodies',
     'heading' => 'Goodies',
@@ -259,29 +270,40 @@ engage_header([
 ]);
 ?>
 <style>
+    [hidden] { display: none !important; }
     .gd-nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 20px; }
-    .gd-nav a { padding: 7px 16px; border-radius: 999px; border: 1px solid var(--border); background: var(--card); color: var(--ink); font-weight: 600; font-size: 14px; text-decoration: none; }
+    .gd-nav a { display: inline-flex; align-items: center; padding: 8px 18px; border-radius: 999px; border: 1px solid var(--border); background: var(--card); color: var(--ink); font-weight: 600; font-size: 14px; text-decoration: none; transition: border-color .15s, background .15s; }
+    .gd-nav a:hover { border-color: var(--primary); }
     .gd-nav a.on { background: var(--primary); border-color: var(--primary); color: #fff; }
-    .gd-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 0 0 22px; }
-    .gd-stat { padding: 14px 16px; background: var(--card); border: 1px solid var(--border); border-radius: 12px; }
-    .gd-stat b { display: block; font-size: 22px; font-variant-numeric: tabular-nums; }
+    .gd-badge { margin-left: 8px; padding: 1px 8px; border-radius: 999px; background: #e11d48; color: #fff; font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+    .gd-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 0 0 24px; }
+    .gd-stat { position: relative; padding: 16px 18px; background: var(--card); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
+    .gd-stat::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 4px; background: hsl(var(--h, 205) 65% 48%); }
+    .gd-stat b { display: block; font-size: 26px; line-height: 1.15; font-variant-numeric: tabular-nums; }
     .gd-stat span { color: var(--muted); font-size: 13px; }
-    .gd-card { margin: 0 0 22px; padding: 18px; background: var(--card); border: 1px solid var(--border); border-radius: 14px; }
-    .gd-card h3 { margin: 0 0 12px; font-size: 16px; }
-    .gd-form { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); align-items: end; }
+
+    .gd-card { margin: 0 0 22px; padding: 20px; background: var(--card); border: 1px solid var(--border); border-radius: 16px; }
+    .gd-card h3 { margin: 0 0 12px; font-size: 17px; }
+    .gd-form { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); align-items: end; }
     .gd-form label { display: block; font-size: 13px; font-weight: 600; }
-    .gd-form input[type=text], .gd-form input[type=number], .gd-form input[type=url], .gd-form select { width: 100%; box-sizing: border-box; padding: 8px 10px; font: inherit; border: 1px solid var(--border); border-radius: 8px; }
+    .gd-form label small { display: block; margin-top: 2px; color: var(--muted); font-weight: 400; font-size: 12px; }
+    .gd-form input[type=text], .gd-form input[type=number], .gd-form input[type=url], .gd-form select { width: 100%; box-sizing: border-box; margin-top: 4px; padding: 9px 11px; font: inherit; border: 1px solid var(--border); border-radius: 10px; background: #fff; }
+    .gd-form input:focus-visible, .gd-form select:focus-visible, .gd-btn:focus-visible, .ac > summary:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
     .gd-form .wide { grid-column: 1 / -1; }
-    .gd-btn { padding: 8px 16px; font: inherit; font-weight: 600; font-size: 14px; border: 1px solid var(--primary); border-radius: 999px; background: var(--primary); color: #fff; cursor: pointer; }
+
+    .gd-btn { padding: 9px 18px; font: inherit; font-weight: 600; font-size: 14px; border: 1px solid var(--primary); border-radius: 999px; background: var(--primary); color: #fff; cursor: pointer; }
     .gd-btn.line { background: #fff; color: var(--primary); }
-    .gd-btn.red { background: #fff; color: #97161b; border-color: #97161b; }
+    .gd-btn.red { background: #fff; color: #97161b; border-color: #e3b5b7; }
+    .gd-btn.red:hover { border-color: #97161b; }
     .gd-btn[disabled] { opacity: .5; cursor: not-allowed; }
-    .gd-row { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; padding: 12px 0; border-top: 1px solid var(--border); }
+
+    .gd-row { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; padding: 14px 0; border-top: 1px solid var(--border); }
     .gd-row:first-of-type { border-top: 0; }
     .gd-row p { margin: 2px 0 0; color: var(--muted); font-size: 13.5px; overflow-wrap: anywhere; }
     .gd-row form { display: inline; margin: 0; }
-    .gd-empty { padding: 18px; text-align: center; color: var(--muted); }
-    .gd-note { margin: 0 0 10px; color: var(--muted); font-size: 13.5px; }
+    .gd-empty { padding: 22px; text-align: center; color: var(--muted); }
+    .gd-note { margin: 0 0 12px; color: var(--muted); font-size: 13.5px; }
     .gd-warn { color: #b45309; }
     .gd-hosts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; }
     .gd-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px 2px 10px; border: 1px solid var(--border); border-radius: 999px; font-size: 13px; }
@@ -289,6 +311,59 @@ engage_header([
     .gd-inline { display: inline-flex !important; gap: 6px; align-items: center; }
     .gd-inline input[type=text] { width: 9.5em; padding: 5px 8px; font: inherit; font-size: 13px; border: 1px solid var(--border); border-radius: 8px; }
     .gd-inline .gd-btn { padding: 5px 12px; font-size: 13px; }
+
+    /* ---- Activities and catalogue: one compact row per item, Edit opens the form in place ---- */
+    .ac-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 0 0 16px; }
+    .ac-bar input[type=search] { flex: 1 1 220px; min-width: 0; padding: 10px 14px; font: inherit; border: 1px solid var(--border); border-radius: 999px; background: #fff; }
+    .ac-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+    .ac-pill { padding: 6px 14px; font: inherit; font-size: 13px; font-weight: 600; border: 1px solid var(--border); border-radius: 999px; background: var(--card); color: var(--ink); cursor: pointer; }
+    .ac-pill.on { background: var(--ink); border-color: var(--ink); color: #fff; }
+    .ac-tick { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; color: var(--muted); cursor: pointer; }
+
+    .ac-group { margin: 0 0 26px; --h: 205; }
+    .ac-group > h4 { display: flex; align-items: center; gap: 10px; margin: 0 0 10px; font-size: 15px; }
+    .ac-group > h4::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: hsl(var(--h) 65% 48%); }
+    .ac-group > h4 span { color: var(--muted); font-weight: 500; font-size: 13px; }
+
+    .ac { --h: 205; margin: 0 0 8px; background: var(--card); border: 1px solid var(--border); border-left: 5px solid hsl(var(--h) 60% 50%); border-radius: 12px; }
+    .ac[open] { box-shadow: 0 8px 24px rgba(15, 23, 42, .09); border-color: hsl(var(--h) 45% 70%); border-left-color: hsl(var(--h) 60% 50%); }
+    .ac.off { border-left-color: #cbd5e1; }
+    .ac.off > summary .ac-name { color: var(--muted); }
+    .ac > summary { display: grid; grid-template-columns: 1fr auto auto; gap: 6px 16px; align-items: center; padding: 12px 16px; cursor: pointer; list-style: none; }
+    .ac > summary::-webkit-details-marker { display: none; }
+    .ac > summary:hover { background: #f8fafc; border-radius: 12px; }
+    .ac-name { display: block; font-weight: 700; font-size: 15px; overflow-wrap: anywhere; }
+    .ac-meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 4px; font-size: 12.5px; color: var(--muted); }
+    .ac-tag { padding: 1px 9px; border-radius: 999px; background: #f1f5f9; color: #475569; font-weight: 600; font-size: 12px; }
+    .ac-tag.warn { background: #fef3c7; color: #92400e; }
+    .ac-tag.off { background: #e2e8f0; color: #475569; }
+    .ac-pts { min-width: 72px; padding: 6px 12px; text-align: center; border-radius: 12px; font-weight: 800; font-size: 20px; line-height: 1.1; font-variant-numeric: tabular-nums; color: hsl(var(--h) 65% 26%); background: hsl(var(--h) 85% 94%); }
+    .ac-pts small { display: block; font-size: 11px; font-weight: 600; opacity: .8; }
+    .ac-edit { color: var(--primary); font-weight: 600; font-size: 14px; }
+    .ac-edit::before { content: "Edit"; }
+    .ac[open] .ac-edit::before { content: "Close"; }
+
+    .ac-form { padding: 6px 18px 18px 18px; border-top: 1px dashed var(--border); margin: 0; padding-top: 16px; }
+    .ac-flags { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; }
+    .gd-tg { display: inline-flex !important; align-items: center; gap: 8px; padding: 8px 14px; border: 1px solid var(--border); border-radius: 999px; background: #fff; font-weight: 600; cursor: pointer; }
+    .gd-tg input { accent-color: var(--primary); width: 16px; height: 16px; margin: 0; }
+    .gd-tg:has(input:checked) { background: #e8f3f9; border-color: var(--primary); color: #0b4f73; }
+    .ac-foot { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding-top: 4px; }
+    .ac-foot .grow { margin-left: auto; }
+    .ac-hint { grid-column: 1 / -1; margin: 0; padding: 10px 12px; border-radius: 10px; background: #f1f7fb; color: #334155; font-size: 13px; }
+
+    .gd-add > summary { display: inline-flex; align-items: center; gap: 8px; padding: 10px 20px; border-radius: 999px; background: var(--primary); color: #fff; font-weight: 700; font-size: 14px; cursor: pointer; list-style: none; }
+    .gd-add > summary::-webkit-details-marker { display: none; }
+    .gd-add[open] > summary { background: #fff; color: var(--primary); border: 1px solid var(--primary); }
+    .gd-add .gd-card { margin: 12px 0 0; }
+
+    .gd-info { margin: 0 0 18px; padding: 12px 16px; border-radius: 12px; background: #fff7e6; border: 1px solid #f5d38a; color: #7a4b00; font-size: 13.5px; line-height: 1.5; }
+
+    @media (max-width: 640px) {
+        .ac > summary { grid-template-columns: 1fr auto; }
+        .ac-edit { display: none; }
+    }
+    @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 
 <?php if ($flash): ?>
@@ -296,16 +371,16 @@ engage_header([
 <?php endif; ?>
 
 <div class="gd-stats">
-    <div class="gd-stat"><b><?= number_format($totals['outstanding']) ?></b><span>Points outstanding (≈ ₹ liability)</span></div>
-    <div class="gd-stat"><b><?= number_format($totals['awarded']) ?></b><span>Points awarded, ever</span></div>
-    <div class="gd-stat"><b><?= number_format($totals['spent']) ?></b><span>Points spent, net of refunds</span></div>
-    <div class="gd-stat"><b><?= (int) $totals['awaiting_second'] ?></b><span>Awards awaiting a second reviewer</span></div>
-    <div class="gd-stat"><b><?= (int) $totals['requested'] ?></b><span>New orders</span></div>
+    <div class="gd-stat" style="--h:205"><b><?= number_format($totals['outstanding']) ?></b><span>Points outstanding (≈ ₹ liability)</span></div>
+    <div class="gd-stat" style="--h:165"><b><?= number_format($totals['awarded']) ?></b><span>Points awarded, ever</span></div>
+    <div class="gd-stat" style="--h:28"><b><?= number_format($totals['spent']) ?></b><span>Points spent, net of refunds</span></div>
+    <div class="gd-stat" style="--h:340"><b><?= (int) $totals['awaiting_second'] ?></b><span>Awards awaiting a second reviewer</span></div>
+    <div class="gd-stat" style="--h:275"><b><?= (int) $totals['requested'] ?></b><span>New orders</span></div>
 </div>
 
 <nav class="gd-nav" aria-label="Goodies sections">
-    <?php foreach (GOODIES_TABS as $key => $label): ?>
-        <a href="/admin/goodies?tab=<?= $key ?>"<?= $tab === $key ? ' class="on" aria-current="page"' : '' ?>><?= htmlspecialchars($label) ?></a>
+    <?php foreach (GOODIES_TABS as $key => $label): $badge = $key === 'award' ? (int) $totals['awaiting_second'] : ($key === 'redemptions' ? (int) $totals['requested'] : 0); ?>
+        <a href="/admin/goodies?tab=<?= $key ?>"<?= $tab === $key ? ' class="on" aria-current="page"' : '' ?>><?= htmlspecialchars($label) ?><?php if ($badge > 0): ?><span class="gd-badge"><?= $badge ?></span><?php endif; ?></a>
     <?php endforeach; ?>
 </nav>
 
@@ -408,7 +483,7 @@ engage_header([
 
     <section class="gd-card">
         <h3>Take points back</h3>
-        <p style="margin:0 0 10px;color:var(--muted);font-size:13.5px">For a bad award or a code-of-conduct breach. This adds a negative entry to the member’s history; the original award stays on record. A balance can go below zero if the points were already spent.</p>
+        <p class="gd-note">For a bad award or a code-of-conduct breach. This adds a negative entry to the member’s history; the original award stays on record. A balance can go below zero if the points were already spent.</p>
         <form method="POST" action="/admin/goodies?tab=award" class="gd-form">
             <?= CSRF::getInputField() ?>
             <input type="hidden" name="do" value="reverse">
@@ -420,66 +495,119 @@ engage_header([
     </section>
 
 <?php elseif ($tab === 'activities'): ?>
+    <?php
+    // Group by category, in the order PointsModel::CATEGORIES lists them; unknown categories go last.
+    $groups = [];
+    foreach ($allTypes as $t) $groups[(string) $t['category']][] = $t;
+    $groupOrder = array_values(array_unique(array_merge(array_intersect($gdCatKeys, array_keys($groups)), array_keys($groups))));
+    ?>
 
-    <section class="gd-card">
-        <h3>Add an activity</h3>
-        <form method="POST" action="/admin/goodies?tab=activities" class="gd-form">
-            <?= CSRF::getInputField() ?>
-            <input type="hidden" name="do" value="activity_save">
-            <label>Name<input type="text" name="name" required maxlength="160" placeholder="Attend a Wiki Loves Monuments walk"></label>
-            <label>Category
-                <select name="category" required>
-                    <?php foreach (PointsModel::CATEGORIES as $key => $label): ?><option value="<?= $key ?>"><?= htmlspecialchars($label) ?></option><?php endforeach; ?>
-                </select>
-            </label>
-            <label>Points<input type="number" name="points" min="1" max="10000" required></label>
-            <label><input type="checkbox" name="needs_evidence" value="1"> Needs an evidence link</label>
-            <label><input type="checkbox" name="one_time" value="1"> Only once per member</label>
-            <label><input type="checkbox" name="is_active" value="1" checked> Can be awarded</label>
-            <div><button type="submit" class="gd-btn">Add</button></div>
-        </form>
-    </section>
+    <div class="ac-bar">
+        <input type="search" id="ac-q" placeholder="Search activities…" aria-label="Search activities">
+        <div class="ac-pills" id="ac-cats" role="group" aria-label="Filter by category">
+            <button type="button" class="ac-pill on" data-cat="">All</button>
+            <?php foreach ($groupOrder as $c): ?><button type="button" class="ac-pill" data-cat="<?= htmlspecialchars($c) ?>"><?= htmlspecialchars(PointsModel::CATEGORIES[$c] ?? $c) ?></button><?php endforeach; ?>
+        </div>
+        <label class="ac-tick"><input type="checkbox" id="ac-hideoff"> Hide switched off</label>
+    </div>
 
-    <section class="gd-card">
-        <h3>Activities (<?= count($allTypes) ?>)</h3>
-        <p class="gd-note">Changing an activity's points <strong>revises every award already made for it</strong>: each member's balance moves by the difference, and the change shows in their points history. Awards of <?= PointsModel::SECOND_APPROVAL_AT ?> points or more need a second reviewer. Minimum attendance is for hosting: under it, the host earns the lower points. An activity that has been awarded can be switched off but not deleted.</p>
-        <?php foreach ($allTypes as $t): $used = (int) ($usage[(int) $t['id']] ?? 0); $builtIn = in_array((string) $t['code'], PointsModel::BUILT_IN_CODES, true); ?>
-            <form method="POST" action="/admin/goodies?tab=activities" class="gd-form gd-row gd-activity" style="display:grid"
-                  data-used="<?= $used ?>" data-points="<?= (int) $t['points'] ?>" data-below="<?= $t['below_min_points'] === null ? '' : (int) $t['below_min_points'] ?>">
+    <details class="gd-add" style="margin:0 0 22px">
+        <summary>＋ Add an activity</summary>
+        <section class="gd-card">
+            <form method="POST" action="/admin/goodies?tab=activities" class="gd-form">
                 <?= CSRF::getInputField() ?>
                 <input type="hidden" name="do" value="activity_save">
-                <input type="hidden" name="id" value="<?= (int) $t['id'] ?>">
-                <label class="wide">Name<input type="text" name="name" value="<?= htmlspecialchars((string) $t['name']) ?>" required maxlength="160"></label>
+                <label class="wide">Name<input type="text" name="name" required maxlength="160" placeholder="Attend a Wiki Loves Monuments walk"></label>
                 <label>Category
                     <select name="category" required>
-                        <?php foreach (PointsModel::CATEGORIES as $key => $label): ?><option value="<?= $key ?>"<?= $t['category'] === $key ? ' selected' : '' ?>><?= htmlspecialchars($label) ?></option><?php endforeach; ?>
+                        <?php foreach (PointsModel::CATEGORIES as $key => $label): ?><option value="<?= $key ?>"><?= htmlspecialchars($label) ?></option><?php endforeach; ?>
                     </select>
                 </label>
-                <label>Points<input type="number" name="points" value="<?= (int) $t['points'] ?>" min="1" max="10000" required></label>
-                <label>Minimum attendance (optional)<input type="number" name="min_attendees" value="<?= $t['min_attendees'] === null ? '' : (int) $t['min_attendees'] ?>" min="1" max="1000"></label>
-                <label>Points under the minimum<input type="number" name="below_min_points" value="<?= $t['below_min_points'] === null ? '' : (int) $t['below_min_points'] ?>" min="0" max="10000"></label>
-                <label><input type="checkbox" name="needs_evidence" value="1"<?= (int) $t['needs_evidence'] ? ' checked' : '' ?>> Needs an evidence link</label>
-                <label><input type="checkbox" name="one_time" value="1"<?= (int) ($t['one_time'] ?? 0) ? ' checked' : '' ?>> Only once per member</label>
-                <label><input type="checkbox" name="is_active" value="1"<?= (int) $t['is_active'] ? ' checked' : '' ?>> Can be awarded</label>
-                <div>
-                    <button type="submit" class="gd-btn line">Save</button>
-                    <span class="gd-note" style="margin-left:8px"><?= $used ? 'Awarded ' . $used . ' time' . ($used === 1 ? '' : 's') : 'Not awarded yet' ?><?= $builtIn ? ' · used by the app' : '' ?></span>
+                <label>Points<input type="number" name="points" min="1" max="10000" required></label>
+                <div class="ac-flags">
+                    <label class="gd-tg"><input type="checkbox" name="needs_evidence" value="1"> Needs an evidence link</label>
+                    <label class="gd-tg"><input type="checkbox" name="one_time" value="1"> Only once per member</label>
+                    <label class="gd-tg"><input type="checkbox" name="is_active" value="1" checked> Can be awarded</label>
                 </div>
+                <div class="ac-foot"><button type="submit" class="gd-btn">Add activity</button></div>
             </form>
-            <?php if (!$used && !$builtIn): ?>
-                <form method="POST" action="/admin/goodies?tab=activities" style="margin:-6px 0 8px"
-                      onsubmit="return confirm('Delete this activity? It has never been awarded.')">
-                    <?= CSRF::getInputField() ?>
-                    <input type="hidden" name="do" value="activity_delete"><input type="hidden" name="id" value="<?= (int) $t['id'] ?>">
-                    <button type="submit" class="gd-btn red" style="padding:4px 12px;font-size:13px">Delete <?= htmlspecialchars((string) $t['name']) ?></button>
-                </form>
-            <?php endif; ?>
-        <?php endforeach; ?>
-    </section>
+        </section>
+    </details>
+
+    <p class="gd-info"><strong>Changing points revises past awards.</strong> Every award already made for that activity moves each member’s balance by the difference, and it shows in their history. Awards of <?= (int) PointsModel::SECOND_APPROVAL_AT ?> points or more need a second reviewer. An activity that has been awarded can be switched off but not deleted.</p>
+
+    <?php foreach ($groupOrder as $cat): $rows = $groups[$cat]; ?>
+        <section class="ac-group" data-cat="<?= htmlspecialchars($cat) ?>" style="--h:<?= $gdHue($cat) ?>">
+            <h4><?= htmlspecialchars(PointsModel::CATEGORIES[$cat] ?? $cat) ?> <span><?= count($rows) ?></span></h4>
+            <?php foreach ($rows as $t):
+                $id = (int) $t['id'];
+                $used = (int) ($usage[$id] ?? 0);
+                $builtIn = in_array((string) $t['code'], PointsModel::BUILT_IN_CODES, true);
+                $on = (int) $t['is_active'] === 1;
+                $hasMin = $t['min_attendees'] !== null && $t['min_attendees'] !== '';
+            ?>
+                <details class="ac<?= $on ? '' : ' off' ?>" data-name="<?= htmlspecialchars(mb_strtolower((string) $t['name'])) ?>">
+                    <summary>
+                        <div>
+                            <span class="ac-name"><?= htmlspecialchars((string) $t['name']) ?></span>
+                            <span class="ac-meta">
+                                <?php if (!$on): ?><span class="ac-tag off">Switched off</span><?php endif; ?>
+                                <?php if ((int) $t['points'] >= PointsModel::SECOND_APPROVAL_AT): ?><span class="ac-tag warn">Needs 2nd approval</span><?php endif; ?>
+                                <?php if ((int) $t['needs_evidence']): ?><span class="ac-tag">Evidence link</span><?php endif; ?>
+                                <?php if ((int) ($t['one_time'] ?? 0)): ?><span class="ac-tag">Once per member</span><?php endif; ?>
+                                <?php if ($hasMin): ?><span class="ac-tag">Host: <?= (int) $t['below_min_points'] ?> pts under <?= (int) $t['min_attendees'] ?> attendees</span><?php endif; ?>
+                                <?php if ($builtIn): ?><span class="ac-tag">Used by the app</span><?php endif; ?>
+                                <span><?= $used ? 'Awarded ' . $used . ' time' . ($used === 1 ? '' : 's') : 'Not awarded yet' ?></span>
+                            </span>
+                        </div>
+                        <span class="ac-pts"><?= number_format((int) $t['points']) ?><small>points</small></span>
+                        <span class="ac-edit" aria-hidden="true"></span>
+                    </summary>
+
+                    <form method="POST" action="/admin/goodies?tab=activities" class="gd-form ac-form gd-activity"
+                          data-used="<?= $used ?>" data-points="<?= (int) $t['points'] ?>" data-below="<?= $t['below_min_points'] === null ? '' : (int) $t['below_min_points'] ?>">
+                        <?= CSRF::getInputField() ?>
+                        <input type="hidden" name="do" value="activity_save">
+                        <input type="hidden" name="id" value="<?= $id ?>">
+                        <label class="wide">Name<input type="text" name="name" value="<?= htmlspecialchars((string) $t['name']) ?>" required maxlength="160"></label>
+                        <label>Category
+                            <select name="category" required>
+                                <?php foreach (PointsModel::CATEGORIES as $key => $label): ?><option value="<?= $key ?>"<?= $t['category'] === $key ? ' selected' : '' ?>><?= htmlspecialchars($label) ?></option><?php endforeach; ?>
+                            </select>
+                        </label>
+                        <label>Points<input type="number" name="points" value="<?= (int) $t['points'] ?>" min="1" max="10000" required></label>
+                        <label>Minimum attendance<small>Optional. For hosts only.</small><input type="number" name="min_attendees" value="<?= $t['min_attendees'] === null ? '' : (int) $t['min_attendees'] ?>" min="1" max="1000"></label>
+                        <label>Points under the minimum<small>What the host earns below it.</small><input type="number" name="below_min_points" value="<?= $t['below_min_points'] === null ? '' : (int) $t['below_min_points'] ?>" min="0" max="10000"></label>
+                        <div class="ac-flags">
+                            <label class="gd-tg"><input type="checkbox" name="needs_evidence" value="1"<?= (int) $t['needs_evidence'] ? ' checked' : '' ?>> Needs an evidence link</label>
+                            <label class="gd-tg"><input type="checkbox" name="one_time" value="1"<?= (int) ($t['one_time'] ?? 0) ? ' checked' : '' ?>> Only once per member</label>
+                            <label class="gd-tg"><input type="checkbox" name="is_active" value="1"<?= $on ? ' checked' : '' ?>> Can be awarded</label>
+                        </div>
+                        <div class="ac-foot">
+                            <button type="submit" class="gd-btn">Save changes</button>
+                            <?php if (!$used && !$builtIn): ?>
+                                <button type="submit" class="gd-btn red grow" form="del-<?= $id ?>" formnovalidate
+                                        onclick="return confirm('Delete this activity? It has never been awarded.')">Delete activity</button>
+                            <?php endif; ?>
+                        </div>
+                    </form>
+                    <?php if (!$used && !$builtIn): ?>
+                        <form method="POST" action="/admin/goodies?tab=activities" id="del-<?= $id ?>">
+                            <?= CSRF::getInputField() ?>
+                            <input type="hidden" name="do" value="activity_delete"><input type="hidden" name="id" value="<?= $id ?>">
+                        </form>
+                    <?php endif; ?>
+                </details>
+            <?php endforeach; ?>
+        </section>
+    <?php endforeach; ?>
+    <div class="gd-empty gd-card" id="ac-none" hidden>No activity matches. Clear the search or pick another category.</div>
+
     <script>
     // Changing the points of an activity that has been awarded revises those awards: say so before saving.
     document.querySelectorAll('form.gd-activity').forEach(function (f) {
         f.addEventListener('submit', function (ev) {
+            if (ev.submitter && ev.submitter.getAttribute('form')) return; // the delete button
             var used = +f.dataset.used, p = f.elements.points.value, b = f.elements.below_min_points.value;
             if (used > 0 && (p !== f.dataset.points || b !== f.dataset.below)
                 && !confirm('This activity has been awarded ' + used + ' time(s). Saving new points revises all of those awards, and members\' balances move by the difference. Continue?')) {
@@ -487,39 +615,80 @@ engage_header([
             }
         });
     });
+    // Search, category and "hide switched off" filters. Nothing is sent to the server.
+    (function () {
+        var q = document.getElementById('ac-q'), off = document.getElementById('ac-hideoff'), cat = '';
+        var items = [].slice.call(document.querySelectorAll('.ac-group .ac'));
+        function run() {
+            var s = q.value.trim().toLowerCase();
+            items.forEach(function (el) {
+                el.hidden = !((!s || el.dataset.name.indexOf(s) > -1) && (!off.checked || !el.classList.contains('off')));
+            });
+            document.querySelectorAll('.ac-group').forEach(function (g) {
+                g.hidden = !((!cat || g.dataset.cat === cat) && g.querySelector('.ac:not([hidden])'));
+            });
+            document.getElementById('ac-none').hidden = !!document.querySelector('.ac-group:not([hidden])');
+        }
+        q.addEventListener('input', run);
+        off.addEventListener('change', run);
+        document.getElementById('ac-cats').addEventListener('click', function (e) {
+            var b = e.target.closest('.ac-pill'); if (!b) return;
+            cat = b.dataset.cat;
+            document.querySelectorAll('.ac-pill').forEach(function (x) { x.classList.toggle('on', x === b); });
+            run();
+        });
+    })();
     </script>
 
 <?php elseif ($tab === 'catalogue'): ?>
 
-    <section class="gd-card">
-        <h3>Add a goody</h3>
-        <form method="POST" action="/admin/goodies?tab=catalogue" class="gd-form">
-            <?= CSRF::getInputField() ?>
-            <input type="hidden" name="do" value="save_goody">
-            <label>Name<input type="text" name="name" required maxlength="120"></label>
-            <label>Cost (points)<input type="number" name="points_cost" min="1" max="100000" required></label>
-            <label>Sizes or options (comma separated, optional)<input type="text" name="variants" placeholder="S, M, L, XL"></label>
-            <label class="wide">Description<input type="text" name="description" maxlength="500"></label>
-            <label><input type="checkbox" name="is_active" value="1" checked> Show to members</label>
-            <div><button type="submit" class="gd-btn">Add</button></div>
-        </form>
-    </section>
-
-    <section class="gd-card">
-        <h3>Catalogue (<?= count($goodies) ?>)</h3>
-        <p style="margin:0 0 6px;color:var(--muted);font-size:13.5px">Members only see goodies that are switched on. Changing a cost never affects orders already placed.</p>
-        <?php foreach ($goodies as $g): ?>
-            <form method="POST" action="/admin/goodies?tab=catalogue" class="gd-form gd-row" style="display:grid">
+    <details class="gd-add" style="margin:0 0 22px">
+        <summary>＋ Add a goody</summary>
+        <section class="gd-card">
+            <form method="POST" action="/admin/goodies?tab=catalogue" class="gd-form">
                 <?= CSRF::getInputField() ?>
                 <input type="hidden" name="do" value="save_goody">
-                <input type="hidden" name="id" value="<?= (int) $g['id'] ?>">
-                <label>Name<input type="text" name="name" value="<?= htmlspecialchars($g['name']) ?>" required maxlength="120"></label>
-                <label>Cost<input type="number" name="points_cost" value="<?= (int) $g['points_cost'] ?>" min="1" max="100000" required></label>
-                <label>Options<input type="text" name="variants" value="<?= htmlspecialchars(implode(', ', $g['variants'])) ?>"></label>
-                <label class="wide">Description<input type="text" name="description" value="<?= htmlspecialchars((string) $g['description']) ?>" maxlength="500"></label>
-                <label><input type="checkbox" name="is_active" value="1"<?= (int) $g['is_active'] ? ' checked' : '' ?>> Show to members</label>
-                <div><button type="submit" class="gd-btn line">Save</button></div>
+                <label>Name<input type="text" name="name" required maxlength="120"></label>
+                <label>Cost (points)<input type="number" name="points_cost" min="1" max="100000" required></label>
+                <label>Sizes or options<small>Comma separated, optional</small><input type="text" name="variants" placeholder="S, M, L, XL"></label>
+                <label class="wide">Description<input type="text" name="description" maxlength="500"></label>
+                <div class="ac-flags"><label class="gd-tg"><input type="checkbox" name="is_active" value="1" checked> Show to members</label></div>
+                <div class="ac-foot"><button type="submit" class="gd-btn">Add goody</button></div>
             </form>
+        </section>
+    </details>
+
+    <p class="gd-info">Members only see goodies that are switched on. Changing a cost never affects orders already placed.</p>
+
+    <section>
+        <h4 style="margin:0 0 10px;font-size:15px">Catalogue <span style="color:var(--muted);font-weight:500;font-size:13px"><?= count($goodies) ?></span></h4>
+        <?php if (!$goodies): ?><div class="gd-empty gd-card">No goodies yet. Add the first one above.</div><?php endif; ?>
+        <?php foreach ($goodies as $g): $on = (int) $g['is_active'] === 1; ?>
+            <details class="ac<?= $on ? '' : ' off' ?>" style="--h:<?= abs(crc32((string) $g['name'])) % 360 ?>">
+                <summary>
+                    <div>
+                        <span class="ac-name"><?= htmlspecialchars($g['name']) ?></span>
+                        <span class="ac-meta">
+                            <?php if (!$on): ?><span class="ac-tag off">Hidden from members</span><?php endif; ?>
+                            <?php foreach ($g['variants'] as $v): ?><span class="ac-tag"><?= htmlspecialchars($v) ?></span><?php endforeach; ?>
+                            <?php if ((string) $g['description'] !== ''): ?><span><?= htmlspecialchars(mb_strimwidth((string) $g['description'], 0, 90, '…')) ?></span><?php endif; ?>
+                        </span>
+                    </div>
+                    <span class="ac-pts"><?= number_format((int) $g['points_cost']) ?><small>points</small></span>
+                    <span class="ac-edit" aria-hidden="true"></span>
+                </summary>
+                <form method="POST" action="/admin/goodies?tab=catalogue" class="gd-form ac-form">
+                    <?= CSRF::getInputField() ?>
+                    <input type="hidden" name="do" value="save_goody">
+                    <input type="hidden" name="id" value="<?= (int) $g['id'] ?>">
+                    <label>Name<input type="text" name="name" value="<?= htmlspecialchars($g['name']) ?>" required maxlength="120"></label>
+                    <label>Cost (points)<input type="number" name="points_cost" value="<?= (int) $g['points_cost'] ?>" min="1" max="100000" required></label>
+                    <label>Options<small>Comma separated</small><input type="text" name="variants" value="<?= htmlspecialchars(implode(', ', $g['variants'])) ?>"></label>
+                    <label class="wide">Description<input type="text" name="description" value="<?= htmlspecialchars((string) $g['description']) ?>" maxlength="500"></label>
+                    <div class="ac-flags"><label class="gd-tg"><input type="checkbox" name="is_active" value="1"<?= $on ? ' checked' : '' ?>> Show to members</label></div>
+                    <div class="ac-foot"><button type="submit" class="gd-btn">Save changes</button></div>
+                </form>
+            </details>
         <?php endforeach; ?>
     </section>
 
