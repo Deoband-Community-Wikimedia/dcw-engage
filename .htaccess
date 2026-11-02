@@ -11,13 +11,19 @@ ServerSignature Off
     Require all denied
 </FilesMatch>
 
-# 3b. Never serve our own application log files over HTTP
-<FilesMatch "\.log$">
+# 3b. Never serve our own application log files over HTTP. Also the extension-less error_log
+#     that PHP and some hosts create (it is in .gitignore for the same reason).
+<FilesMatch "(\.log$|^error_log$)">
     Require all denied
 </FilesMatch>
 
 # 3c. Never serve SQL files (schema dumps, the certificates view, backups)
 <FilesMatch "\.sql$">
+    Require all denied
+</FilesMatch>
+
+# 3d. Never serve key or certificate files, or participant lists left in the web root
+<FilesMatch "\.(pem|key|csv)$">
     Require all denied
 </FilesMatch>
 
@@ -35,7 +41,10 @@ RewriteEngine On
 #    (PHP includes read from disk, so this does not affect the site.)
 #    views/ is reached only through index.php's routes; opening a view file
 #    directly would skip the router.
-RewriteRule ^(includes|models|views|vendor|migrations|bin|cron|docs|\.github)(/|$) - [F,L]
+#    config/ holds private card data (card_titles.php, the Board's signature image); the card code reads
+#    it from disk, never through a URL. .git and .github are matched too, in case a repository folder
+#    ever reaches the server.
+RewriteRule ^(includes|models|views|vendor|migrations|config|bin|cron|docs|\.git(hub)?)(/|$) - [F,L]
 
 # 5b. Uploaded files (ID proofs, CVs, receipts) are never served directly. /file sends them after
 #     checking who is asking (views/file.php). This rule lives here, not in uploads/.htaccess,

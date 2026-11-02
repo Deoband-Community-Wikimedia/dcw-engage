@@ -1,0 +1,9 @@
+User-agent: *
+Disallow: /admin/
+Disallow: /member/
+Disallow: /finance
+Disallow: /card/
+Disallow: /event-card/
+Disallow: /file
+Disallow: /confirm/
+Disallow: /resume/
