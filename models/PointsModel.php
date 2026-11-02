@@ -13,6 +13,9 @@
  *  - Redemption is one transaction under a per-member lock, so two quick clicks cannot spend the
  *    same points twice.
  *  - Reviewer actions are written to the audit log (AuditLog::activity). The ledger carries the actor's email as a snapshot.
+ *  - Bulk awards (several members, one activity) go through the same rules, one member at a time, under one
+ *    batch reference so a double click cannot award twice. Bulk point edits revise past awards exactly like a
+ *    single edit does, all in one transaction.
  *
  * Assumes PDO is in ERRMODE_EXCEPTION, as the other models do. Keep every query a prepared statement.
  * A Member ID is one person across every chapter they hold (letter + 8 digits, e.g. A48213977), so
@@ -26,6 +29,9 @@ class PointsModel
 {
     /** Awards at or above this many points, made by a non-owner reviewer, need a second, different reviewer. */
     public const SECOND_APPROVAL_AT = 150;
+
+    /** The most people one bulk award can include. */
+    public const BULK_MAX = 200;
 
     /** Allowed redemption status moves. Cancelling refunds the points. */
     public const REDEMPTION_FLOW = [
@@ -138,6 +144,34 @@ class PointsModel
     // ---- Awards --------------------------------------------------------------------------------
 
     /**
+     * Checks that do not depend on the member: the evidence link and the TaW edition. Null when fine.
+     */
+    private function checkEvidence(array $type, string $evidence): ?string
+    {
+        if ($evidence !== '' && !preg_match('#^https?://\S+$#i', $evidence)) return 'Evidence must be a link starting with http:// or https://.';
+        if ((int) $type['needs_evidence'] && $evidence === '') return 'This activity needs an evidence link (a diff or page).';
+        if ((string) $type['code'] === 'taw_graduate') {
+            $edition = self::tawEdition($evidence);
+            if ($edition === null) {
+                return 'Link the page of the TaW they graduated from, for example https://dcwwiki.org/Train_a_Wikipedian,_April_2026';
+            }
+            if ($edition < self::TAW_FIRST_EDITION) {
+                return 'Only TaW April 2026 and later count. Earlier editions are not awarded.';
+            }
+        }
+        return null;
+    }
+
+    /** True when the activity is one-time and this member already has it (rejected awards do not count). */
+    private function hasOneTime(array $type, string $memberId): bool
+    {
+        if (!(int) ($type['one_time'] ?? 0)) return false;
+        $st = $this->pdo->prepare("SELECT 1 FROM point_awards WHERE member_id = :m AND activity_type_id = :t AND status <> 'Rejected' LIMIT 1");
+        $st->execute([':m' => $memberId, ':t' => (int) $type['id']]);
+        return (bool) $st->fetchColumn();
+    }
+
+    /**
      * A reviewer awards points for an activity. An award made by an owner is approved straight away,
      * whatever its size. An award made by any other reviewer is approved straight away under
      * SECOND_APPROVAL_AT; otherwise it waits for a different reviewer.
@@ -152,22 +186,8 @@ class PointsModel
     {
         $type = $this->activityType($typeId);
         if (!$type || !(int) $type['is_active']) return ['ok' => false, 'error' => 'That activity is not available.'];
-        if ($evidence !== '' && !preg_match('#^https?://\S+$#i', $evidence)) return ['ok' => false, 'error' => 'Evidence must be a link starting with http:// or https://.'];
-        if ((int) $type['needs_evidence'] && $evidence === '') return ['ok' => false, 'error' => 'This activity needs an evidence link (a diff or page).'];
-        if ((string) $type['code'] === 'taw_graduate') {
-            $edition = self::tawEdition($evidence);
-            if ($edition === null) {
-                return ['ok' => false, 'error' => 'Link the page of the TaW they graduated from, for example https://dcwwiki.org/Train_a_Wikipedian,_April_2026'];
-            }
-            if ($edition < self::TAW_FIRST_EDITION) {
-                return ['ok' => false, 'error' => 'Only TaW April 2026 and later count. Earlier editions are not awarded.'];
-            }
-        }
-        if ((int) ($type['one_time'] ?? 0)) {
-            $st = $this->pdo->prepare("SELECT 1 FROM point_awards WHERE member_id = :m AND activity_type_id = :t AND status <> 'Rejected' LIMIT 1");
-            $st->execute([':m' => $memberId, ':t' => $typeId]);
-            if ($st->fetchColumn()) return ['ok' => false, 'error' => '"' . $type['name'] . '" can only be awarded once, and this member already has it.'];
-        }
+        if ($err = $this->checkEvidence($type, $evidence)) return ['ok' => false, 'error' => $err];
+        if ($this->hasOneTime($type, $memberId)) return ['ok' => false, 'error' => '"' . $type['name'] . '" can only be awarded once, and this member already has it.'];
 
         $points = (int) $type['points'];
         $needsSecond = $points >= self::SECOND_APPROVAL_AT && !$actorIsOwner;
@@ -231,6 +251,34 @@ class PointsModel
     }
 
     /**
+     * Approve several awards waiting for a second reviewer. Each is approved on its own (its own transaction
+     * and audit entry), so one that cannot be approved does not stop the others.
+     * $ownIds are Member IDs the actor may not approve for (a non-owner reviewer's own IDs; an owner passes none).
+     * @return array{approved:int, skipped:int}
+     */
+    public function approveAwards(array $awardIds, string $actorEmail, array $ownIds = []): array
+    {
+        $own = array_fill_keys(array_map(fn($m) => strtoupper(trim((string) $m)), $ownIds), true);
+        $approved = $skipped = 0;
+        foreach (array_unique(array_map('intval', $awardIds)) as $id) {
+            $a = $id > 0 ? $this->award($id) : null;
+            if (!$a || isset($own[strtoupper((string) $a['member_id'])])) { $skipped++; continue; }
+            if ($this->approveAward($id, $actorEmail)['ok']) $approved++; else $skipped++;
+        }
+        return ['approved' => $approved, 'skipped' => $skipped];
+    }
+
+    /** @return array{rejected:int, skipped:int} */
+    public function rejectAwards(array $awardIds, string $actorEmail): array
+    {
+        $rejected = $skipped = 0;
+        foreach (array_unique(array_map('intval', $awardIds)) as $id) {
+            if ($id > 0 && $this->rejectAward($id, $actorEmail)) $rejected++; else $skipped++;
+        }
+        return ['rejected' => $rejected, 'skipped' => $skipped];
+    }
+
+    /**
      * The TaW edition ('YYYY-MM') a dcwwiki.org Train a Wikipedian page link points to, or null.
      * Accepts https://dcwwiki.org/Train_a_Wikipedian,_April_2026 and the same with spaces or %2C.
      */
@@ -269,6 +317,133 @@ class PointsModel
     {
         $st = $this->pdo->prepare("INSERT INTO points_ledger (member_id, points, entry_type, award_id, reason, actor_email) VALUES (:m, :p, 'award', :aw, :r, :a)");
         $st->execute([':m' => $memberId, ':p' => $points, ':aw' => $awardId, ':r' => mb_substr('Award: ' . $label, 0, 255), ':a' => $actorEmail]);
+    }
+
+    // ---- Bulk awards -----------------------------------------------------------------------------
+    //
+    // Flow: the reviewer picks several members and ONE activity, bulkPlan() sorts them into buckets without
+    // saving anything, the page shows that preview, and bulkAward() saves the "ready" bucket on confirm.
+    // Each person is saved on their own (a failure for one does not stop the rest). Every award in a batch
+    // carries source_ref = 'bulk-' + the batch token, and the unique key (member, activity, source_ref) means
+    // a double click or a replayed form cannot award anyone twice.
+    // The second-approval rule applies per person: an owner's awards are approved at once, a non-owner's
+    // awards of SECOND_APPROVAL_AT points or more wait for a different reviewer.
+
+    /**
+     * Split typed text into entries, one per line: "Name or Member ID or username", optionally followed by
+     * an evidence link for that person ("Asha Rao https://en.wikipedia.org/wiki/Special:Diff/123").
+     * @return list<array{typed:string, evidence:string}>
+     */
+    public static function parseBulkLines(string $text): array
+    {
+        $out = [];
+        foreach (preg_split('/\R/u', $text) ?: [] as $line) {
+            $line = trim($line);
+            if ($line === '') continue;
+            $evidence = '';
+            if (preg_match('/^(.*?)[\s,;|]+(https?:\/\/\S+)$/u', $line, $m)) {
+                $line = $m[1];
+                $evidence = $m[2];
+            }
+            $typed = trim($line, " \t,;|");
+            if ($typed !== '') $out[] = ['typed' => $typed, 'evidence' => $evidence];
+        }
+        return $out;
+    }
+
+    /**
+     * What a bulk award would do, without doing it.
+     * $ownIds are the actor's own Member IDs: a non-owner's are left out, an owner's are awarded and flagged 'self'.
+     * @return array{error?:string, type?:array, points?:int, ready:list<array{member_id:string,name:string,evidence:string,self:bool}>,
+     *               ambiguous:list<array{typed:string,error:string}>, notfound:list<string>, struck:list<string>,
+     *               already:list<string>, own:list<string>, invalid:list<array{name:string,error:string}>, dupes:int,
+     *               needs_second:bool}
+     */
+    public function bulkPlan(array $entries, int $typeId, string $sharedEvidence, array $ownIds, bool $isOwner): array
+    {
+        $plan = ['ready' => [], 'ambiguous' => [], 'notfound' => [], 'struck' => [], 'already' => [], 'own' => [], 'invalid' => [], 'dupes' => 0, 'needs_second' => false];
+        $type = $this->activityType($typeId);
+        if (!$type || !(int) $type['is_active']) return ['error' => 'Choose an activity first.'] + $plan;
+        if (!$entries) return ['error' => 'Add at least one member.'] + $plan;
+        if (count($entries) > self::BULK_MAX) return ['error' => 'Up to ' . self::BULK_MAX . ' people at a time, please. You added ' . count($entries) . '.'] + $plan;
+
+        $sharedEvidence = trim($sharedEvidence);
+        $own = array_fill_keys(array_map(fn($m) => strtoupper(trim((string) $m)), $ownIds), true);
+        $struck = $this->struckMembers();
+        $seen = [];
+        $points = (int) $type['points'];
+
+        foreach ($entries as $e) {
+            $hit = $this->findMember((string) $e['typed']);
+            if (!isset($hit['member_id'])) {
+                if (strpos((string) $hit['error'], 'No member found') === 0) $plan['notfound'][] = (string) $e['typed'];
+                else $plan['ambiguous'][] = ['typed' => (string) $e['typed'], 'error' => (string) $hit['error']];
+                continue;
+            }
+            $mid = (string) $hit['member_id'];
+            $label = $hit['name'] . ' (' . $mid . ')';
+            if (isset($seen[$mid])) { $plan['dupes']++; continue; }
+            $seen[$mid] = true;
+
+            $isSelf = isset($own[$mid]);
+            if ($isSelf && !$isOwner) { $plan['own'][] = $label; continue; }
+            if (isset($struck[$mid])) { $plan['struck'][] = $label; continue; }
+            $evidence = trim((string) ($e['evidence'] ?? '')) !== '' ? trim((string) $e['evidence']) : $sharedEvidence;
+            if ($err = $this->checkEvidence($type, $evidence)) { $plan['invalid'][] = ['name' => $label, 'error' => $err]; continue; }
+            if ($this->hasOneTime($type, $mid)) { $plan['already'][] = $label; continue; }
+            $plan['ready'][] = ['member_id' => $mid, 'name' => (string) $hit['name'], 'evidence' => $evidence, 'self' => $isSelf];
+        }
+        $plan['type'] = ['id' => (int) $type['id'], 'name' => (string) $type['name']];
+        $plan['points'] = $points;
+        $plan['needs_second'] = $points >= self::SECOND_APPROVAL_AT && !$isOwner;
+        return $plan;
+    }
+
+    /**
+     * Save the "ready" people of a plan. Everything is re-checked here (strikes, one-time awards, evidence),
+     * because time may have passed since the preview.
+     * @param list<array{member_id:string,name:string,evidence:string,self:bool}> $ready
+     * @return array{ok:bool, error?:string, awarded:int, pending:int, skipped:int, each:int}
+     */
+    public function bulkAward(array $ready, int $typeId, string $note, string $actorEmail, bool $actorIsOwner, string $token): array
+    {
+        $type = $this->activityType($typeId);
+        $res = ['ok' => false, 'awarded' => 0, 'pending' => 0, 'skipped' => 0, 'each' => 0];
+        if (!$type || !(int) $type['is_active']) return ['error' => 'That activity is not available.'] + $res;
+        if (!$ready) return ['error' => 'There is nobody to award.'] + $res;
+
+        $points = (int) $type['points'];
+        $needsSecond = $points >= self::SECOND_APPROVAL_AT && !$actorIsOwner;
+        $ref = 'bulk-' . substr(preg_replace('/[^a-z0-9]/i', '', $token), 0, 24);
+        $struck = $this->struckMembers();
+        $note = mb_substr(trim($note), 0, 500);
+        $ids = [];
+        $selfCount = 0;
+
+        foreach (array_slice($ready, 0, self::BULK_MAX) as $r) {
+            $mid = (string) $r['member_id'];
+            $evidence = (string) ($r['evidence'] ?? '');
+            if (isset($struck[$mid]) || $this->checkEvidence($type, $evidence) || $this->hasOneTime($type, $mid)) { $res['skipped']++; continue; }
+            try {
+                $made = $this->insertSourceAward($mid, $type, $points, 'standard', $ref, ' (bulk award)', $actorEmail, $actorIsOwner, $evidence, $note);
+            } catch (Throwable $e) {
+                $this->log('bulkAward failed for ' . $mid . ': ' . $e->getMessage());
+                $made = false;
+            }
+            if (!$made) { $res['skipped']++; continue; }
+            if ($needsSecond) $res['pending']++; else $res['awarded']++;
+            $ids[] = $mid;
+            if (!empty($r['self']) && $actorIsOwner) $selfCount++;
+        }
+        $res['ok'] = true;
+        $res['each'] = $points;
+
+        if ($ids) {
+            $this->audit($actorEmail, 'goodies.bulk_award', count($ids) . ' member(s)',
+                $type['name'] . ' (' . $points . ' pts each, ' . ($needsSecond ? 'awaiting second approval' : 'approved') . ($actorIsOwner ? ', owner award' : '') . '): ' . implode(' ', $ids));
+            if ($selfCount) $this->audit($actorEmail, 'goodies.award_self', 'bulk award', $type['name'] . ' (' . $points . ' pts, included in a bulk award)');
+        }
+        return $res;
     }
 
     // ---- Conversation Hour awards ----------------------------------------------------------------
@@ -440,19 +615,21 @@ class PointsModel
     /**
      * One automatic award and, when it needs no second reviewer, its ledger row. False if it already exists.
      * $autoApprove skips the second-approval rule (the actor is an owner).
+     * $evidence and $noteOverride are for bulk awards: the evidence link, and a note to store instead of the label.
      */
-    private function insertSourceAward(string $memberId, array $type, int $points, string $tier, string $sourceRef, string $label, string $actorEmail, bool $autoApprove = false): bool
+    private function insertSourceAward(string $memberId, array $type, int $points, string $tier, string $sourceRef, string $label, string $actorEmail, bool $autoApprove = false, string $evidence = '', string $noteOverride = ''): bool
     {
         $needsSecond = $points >= self::SECOND_APPROVAL_AT && !$autoApprove;
         $this->pdo->beginTransaction();
         try {
             $st = $this->pdo->prepare(
-                'INSERT INTO point_awards (member_id, activity_type_id, source_ref, points, tier, note, status, created_by_email, first_reviewer_email, decided_at)
-                 VALUES (:m, :t, :r, :p, :tier, :n, :s, :a, :a2, :d)'
+                'INSERT INTO point_awards (member_id, activity_type_id, source_ref, points, tier, evidence_url, note, status, created_by_email, first_reviewer_email, decided_at)
+                 VALUES (:m, :t, :r, :p, :tier, :e, :n, :s, :a, :a2, :d)'
             );
             $st->execute([
                 ':m' => $memberId, ':t' => (int) $type['id'], ':r' => $sourceRef, ':p' => $points, ':tier' => $tier,
-                ':n' => mb_substr(ltrim($label, ' '), 0, 500), ':s' => $needsSecond ? 'Needs Second Approval' : 'Approved',
+                ':e' => $evidence !== '' ? $evidence : null,
+                ':n' => mb_substr($noteOverride !== '' ? $noteOverride : ltrim($label, ' '), 0, 500), ':s' => $needsSecond ? 'Needs Second Approval' : 'Approved',
                 ':a' => $actorEmail, ':a2' => $actorEmail, ':d' => $needsSecond ? null : gmdate('Y-m-d H:i:s'),
             ]);
             if (!$needsSecond) {
@@ -592,7 +769,8 @@ class PointsModel
     // the new value, and each member's balance moves by the difference through a 'revaluation' ledger row
     // (the ledger stays append-only). Awards waiting for a second reviewer are revised too; rejected ones
     // are left alone. A Conversation Hour host award keeps its tier: one made under the minimum attendance
-    // follows below_min_points.
+    // follows below_min_points. Bulk edits (savePointChanges) behave exactly the same, for many activities
+    // in one transaction.
 
     /** Approved and waiting awards per activity: [activity_type_id => count]. */
     public function activityUsage(): array
@@ -680,6 +858,112 @@ class PointsModel
         $this->audit($actorEmail, 'goodies.activity_edit', $name,
             $old['points'] . ' -> ' . $points . ' pts' . ($rev['revised'] ? ', ' . $rev['revised'] . ' award(s) revised (' . sprintf('%+d', $rev['change']) . ' pts)' : ''));
         return ['ok' => true] + $rev;
+    }
+
+    /**
+     * Bulk edit, step 1: what changing the points of several activities would do, without doing it.
+     * $changes is [activity id => ['points' => int, 'below' => ?int]]; unchanged activities are ignored.
+     * Past awards ARE revised on save (see above), so the preview counts them.
+     * @return array{rows:list<array>, changes:array, errors:list<string>, awards:int, members:int, net:int, negative:int}
+     *   rows      one per changed activity: id, name, old, new, revised (awards), members, net (points), crosses
+     *   changes   the cleaned changes to pass to savePointChanges()
+     *   negative  members whose balance would end up below zero because of a cut
+     *   crosses   the activity now reaches SECOND_APPROVAL_AT: past awards are revised without a second reviewer
+     */
+    public function previewPointChanges(array $changes): array
+    {
+        $out = ['rows' => [], 'changes' => [], 'errors' => [], 'awards' => 0, 'members' => 0, 'net' => 0, 'negative' => 0];
+        $memberNet = [];
+        foreach ($changes as $id => $c) {
+            $t = $this->activityType((int) $id);
+            if (!$t) { $out['errors'][] = 'An activity no longer exists.'; continue; }
+            $name = (string) $t['name'];
+            $points = (int) ($c['points'] ?? 0);
+            $oldPoints = (int) $t['points'];
+            $oldBelow = $t['below_min_points'] === null ? null : (int) $t['below_min_points'];
+            $below = $oldBelow === null ? null : (isset($c['below']) && $c['below'] !== '' ? (int) $c['below'] : null);
+
+            if ($points < 1 || $points > 10000) { $out['errors'][] = $name . ': points must be between 1 and 10000.'; continue; }
+            if ($oldBelow !== null && $below === null) { $out['errors'][] = $name . ': enter the points under the minimum too.'; continue; }
+            if ($below !== null && ($below < 0 || $below >= $points)) { $out['errors'][] = $name . ': points under the minimum must be less than the full points.'; continue; }
+            if ($points === $oldPoints && $below === $oldBelow) continue;
+
+            $st = $this->pdo->prepare("SELECT member_id, points, tier, status FROM point_awards WHERE activity_type_id = :t AND status <> 'Rejected'");
+            $st->execute([':t' => (int) $id]);
+            $revised = 0; $net = 0; $mem = [];
+            foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $a) {
+                $new = ($a['tier'] === 'below_min' && $below !== null) ? $below : $points;
+                $diff = $new - (int) $a['points'];
+                if ($diff === 0) continue;
+                $revised++;
+                if ($a['status'] === 'Approved') {
+                    $net += $diff;
+                    $m = strtoupper((string) $a['member_id']);
+                    $mem[$m] = true;
+                    $memberNet[$m] = ($memberNet[$m] ?? 0) + $diff;
+                }
+            }
+            $out['rows'][] = [
+                'id' => (int) $id, 'name' => $name, 'old' => $oldPoints, 'new' => $points,
+                'revised' => $revised, 'members' => count($mem), 'net' => $net,
+                'crosses' => $points >= self::SECOND_APPROVAL_AT && $oldPoints < self::SECOND_APPROVAL_AT && $revised > 0,
+            ];
+            $out['changes'][(int) $id] = ['points' => $points, 'below' => $below];
+            $out['awards'] += $revised;
+            $out['net'] += $net;
+        }
+        $out['members'] = count($memberNet);
+
+        // Members a cut would push below zero (their points may already have been spent).
+        $cutIds = array_keys(array_filter($memberNet, fn($n) => $n < 0));
+        foreach (array_chunk($cutIds, 500) as $chunk) {
+            $in = implode(',', array_fill(0, count($chunk), '?'));
+            $st = $this->pdo->prepare("SELECT member_id, COALESCE(SUM(points), 0) AS bal FROM points_ledger WHERE member_id IN ($in) GROUP BY member_id");
+            $st->execute($chunk);
+            foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $r) {
+                if ((int) $r['bal'] + $memberNet[strtoupper((string) $r['member_id'])] < 0) $out['negative']++;
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * Bulk edit, step 2: save the new points of several activities in ONE transaction, revising past awards
+     * exactly as saveActivity() does. All or nothing. Only points (and the host "under the minimum" points) change.
+     * @return array{ok:bool, error?:string, activities?:int, revised?:int, members?:int, change?:int}
+     */
+    public function savePointChanges(array $changes, string $actorEmail): array
+    {
+        $pv = $this->previewPointChanges($changes);
+        if ($pv['errors']) return ['ok' => false, 'error' => implode(' ', $pv['errors'])];
+        if (!$pv['changes']) return ['ok' => false, 'error' => 'Nothing has changed.'];
+
+        $revised = 0; $change = 0; $names = [];
+        $this->pdo->beginTransaction();
+        try {
+            foreach ($pv['changes'] as $id => $c) {
+                $st = $this->pdo->prepare('SELECT name FROM activity_types WHERE id = :id FOR UPDATE');
+                $st->execute([':id' => $id]);
+                $name = $st->fetchColumn();
+                if ($name === false) throw new RuntimeException('Activity ' . $id . ' no longer exists.');
+                $up = $this->pdo->prepare('UPDATE activity_types SET points = :p, below_min_points = :b WHERE id = :id');
+                $up->execute([':p' => $c['points'], ':b' => $c['below'], ':id' => $id]);
+                $rev = $this->revalue((int) $id, (string) $name, (int) $c['points'], $c['below'], $actorEmail);
+                $revised += $rev['revised']; $change += $rev['change'];
+                $names[] = $name;
+            }
+            $this->pdo->commit();
+        } catch (Throwable $e) {
+            if ($this->pdo->inTransaction()) $this->pdo->rollBack();
+            $this->log('savePointChanges failed: ' . $e->getMessage());
+            return ['ok' => false, 'error' => 'Could not save. Nothing was changed.'];
+        }
+        foreach ($pv['rows'] as $row) {
+            $this->audit($actorEmail, 'goodies.activity_edit', $row['name'], $row['old'] . ' -> ' . $row['new'] . ' pts (bulk edit), ' . $row['revised'] . ' award(s) revised (' . sprintf('%+d', $row['net']) . ' pts)');
+        }
+        $this->audit($actorEmail, 'goodies.activity_bulk_edit', count($pv['changes']) . ' activities',
+            $revised . ' award(s) revised, ' . $pv['members'] . ' member(s), ' . sprintf('%+d', $change) . ' pts in total');
+        return ['ok' => true, 'activities' => count($pv['changes']), 'revised' => $revised, 'members' => $pv['members'], 'change' => $change];
     }
 
     /**
