@@ -10,14 +10,18 @@ require_once __DIR__ . '/../../models/PointsModel.php';
  * DCW Engage - goodies, reviewer side (/admin/goodies).
  * support_reviewer and owner only (the same roles as internet_review.php).
  *
- * Four tabs, kept in the address as ?tab=:
+ * Five tabs, kept in the address as ?tab=:
  *   award        award points for an activity, approve large awards, take points back
+ *   guide        read-only "what earns points" view of every active activity and its points
  *   activities   what can earn points and how many; changing points revises awards already made (#208)
  *   catalogue    add and edit goodies and their point costs
  *   redemptions  the order queue: Requested > Ordered > Shipped > Delivered (or Cancelled, which refunds)
  *
- * An award under PointsModel::SECOND_APPROVAL_AT is approved when it is created. A larger one waits for
- * a different reviewer. Every state-changing action is a CSRF-checked POST and is written to audit_log.
+ * Awards made by an owner (to anyone) are approved when created and never wait for a second reviewer.
+ * An award made by a support_reviewer who is not an owner is approved at once under
+ * PointsModel::SECOND_APPROVAL_AT; a larger one waits for a different reviewer. Owners awarding their own
+ * Member ID are logged as goodies.award_self. A non-owner still cannot award, approve or take back their
+ * own points. Every state-changing action is a CSRF-checked POST and is written to audit_log.
  *
  * Conversation Hour (award tab): attendance logged in Community records is awarded per session with
  * "Award now" (PointsModel::awardForSession), and hosts are set here. Re-running only adds what is new.
@@ -42,12 +46,15 @@ if (!Auth::hasAnyRole(['support_reviewer', 'owner'])) {
 
 $actor = strtolower((string) Auth::email());
 $model = new PointsModel();
+$isOwner = Auth::isOwner();
 
-// The reviewer's own Member IDs: Conversation Hour awards for these are left for another reviewer.
+// The reviewer's own Member IDs. A non-owner leaves Conversation Hour awards for these to another reviewer;
+// an owner may award themselves (and every owner award skips second approval).
 $ownIds = [];
 try { $ownIds = array_column((new MemberModel())->membershipsForEmail($actor), 'member_id'); } catch (Throwable $e) { app_log_ignored('goodies.php:own', $e); }
+$planOwn = $isOwner ? [] : $ownIds;   // what chPlan() should treat as "left for another reviewer"
 
-const GOODIES_TABS = ['award' => 'Award points', 'activities' => 'Activities and points', 'catalogue' => 'Catalogue', 'redemptions' => 'Orders'];
+const GOODIES_TABS = ['award' => 'Award points', 'guide' => 'Points guide', 'activities' => 'Activities and points', 'catalogue' => 'Catalogue', 'redemptions' => 'Orders'];
 $tab = isset(GOODIES_TABS[$_GET['tab'] ?? '']) ? (string) $_GET['tab'] : 'award';
 
 function goodies_flash(string $kind, string $text): void
@@ -108,20 +115,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!$found) {
                 goodies_flash('error', $notFound);
             } elseif ($do === 'award') {
-                if (goodies_is_own($found)) {
-                    goodies_flash('error', 'You cannot award points to yourself. Ask another reviewer.');
+                $self = goodies_is_own($found);
+                if ($self && !$isOwner) {
+                    goodies_flash('error', 'You cannot award points to yourself. Ask another reviewer or an owner.');
                 } elseif ((new MemberStrikeModel())->isStruck($mid)) {
                     goodies_flash('error', 'That member is struck off, so points cannot be awarded.');
                 } else {
+                    // An owner's awards (to anyone) skip the second-approval rule. Owner awards to their own
+                    // Member ID are logged as goodies.award_self.
                     $r = $model->createAward($mid, (int) ($_POST['activity_type_id'] ?? 0),
-                        trim((string) ($_POST['evidence_url'] ?? '')), trim((string) ($_POST['note'] ?? '')), $actor);
+                        trim((string) ($_POST['evidence_url'] ?? '')), trim((string) ($_POST['note'] ?? '')), $actor, $isOwner, $self);
                     goodies_flash($r['ok'] ? 'ok' : 'error', $r['ok']
                         ? ($r['status'] === 'Approved' ? $r['points'] . ' points awarded to ' . goodies_who($found) . '.' : 'Saved for ' . goodies_who($found) . '. This award is ' . $r['points'] . ' points, so a different reviewer must approve it before it counts.')
                         : $r['error']);
                 }
             } else {
-                if (goodies_is_own($found)) {
-                    goodies_flash('error', 'You cannot change your own points. Ask another reviewer.');
+                if (goodies_is_own($found) && !$isOwner) {
+                    goodies_flash('error', 'You cannot change your own points. Ask another reviewer or an owner.');
                 } else {
                     $r = $model->reverse($mid, (int) ($_POST['points'] ?? 0), (string) ($_POST['reason'] ?? ''), $actor);
                     goodies_flash($r['ok'] ? 'ok' : 'error', $r['ok'] ? 'Points taken back from ' . goodies_who($found) . '.' : $r['error']);
@@ -132,7 +142,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $awardId = (int) ($_POST['award_id'] ?? 0);
             $award   = $model->award($awardId);
             $owner   = $award ? goodies_find_member((string) $award['member_id']) : [];
-            if ($do === 'approve' && $owner && goodies_is_own($owner)) {
+            if ($do === 'approve' && $owner && goodies_is_own($owner) && !$isOwner) {
                 goodies_flash('error', 'You cannot approve points awarded to yourself.');
             } elseif ($do === 'approve') {
                 $r = $model->approveAward($awardId, $actor);
@@ -142,7 +152,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         } elseif ($do === 'ch_award') {
             $back = 'award';
-            $r = $model->awardForSession((int) ($_POST['session_id'] ?? 0), $actor, $ownIds);
+            $r = $model->awardForSession((int) ($_POST['session_id'] ?? 0), $actor, $planOwn, $isOwner);
             if (!$r['ok']) {
                 goodies_flash('error', $r['error']);
             } else {
@@ -240,7 +250,7 @@ $chError = '';
 if ($tab === 'award') {
     try {
         foreach ($model->chSessions(12) as $sess) {
-            $chRows[] = ['session' => $sess, 'plan' => $model->chPlan((int) $sess['id'], $ownIds)];
+            $chRows[] = ['session' => $sess, 'plan' => $model->chPlan((int) $sess['id'], $planOwn)];
         }
     } catch (Throwable $e) {
         app_log_ignored('goodies.php:ch', $e);
@@ -312,6 +322,28 @@ engage_header([
     .gd-inline input[type=text] { width: 9.5em; padding: 5px 8px; font: inherit; font-size: 13px; border: 1px solid var(--border); border-radius: 8px; }
     .gd-inline .gd-btn { padding: 5px 12px; font-size: 13px; }
 
+    /* ---- Points guide: read-only, one colourful card per activity ---- */
+    .pg-hero { display: flex; flex-wrap: wrap; gap: 8px 24px; align-items: center; justify-content: space-between; margin: 0 0 22px; padding: 22px 24px; border-radius: 18px; color: #fff; background: linear-gradient(135deg, #106b9a 0%, #1f8fc4 55%, #36b3a0 100%); }
+    .pg-hero h3 { margin: 0 0 4px; font-size: 21px; }
+    .pg-hero p { margin: 0; font-size: 14px; opacity: .92; max-width: 46em; }
+    .pg-hero .pg-count { text-align: center; padding: 8px 18px; border-radius: 14px; background: rgba(255, 255, 255, .18); }
+    .pg-hero .pg-count b { display: block; font-size: 30px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+    .pg-hero .pg-count span { font-size: 12px; opacity: .9; }
+    .pg-group { margin: 0 0 28px; --h: 205; }
+    .pg-group > h4 { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; font-size: 16px; }
+    .pg-group > h4::before { content: ""; width: 12px; height: 12px; border-radius: 50%; background: hsl(var(--h) 65% 48%); }
+    .pg-group > h4 span { color: var(--muted); font-weight: 500; font-size: 13px; }
+    .pg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 14px; }
+    .pg-card { position: relative; display: flex; flex-direction: column; justify-content: space-between; gap: 14px; min-height: 124px; padding: 16px 18px 16px 22px; background: var(--card); border: 1px solid var(--border); border-radius: 16px; overflow: hidden; transition: transform .15s, box-shadow .15s; }
+    .pg-card::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 6px; background: hsl(var(--h) 62% 50%); }
+    .pg-card:hover { transform: translateY(-2px); box-shadow: 0 10px 26px rgba(15, 23, 42, .10); }
+    .pg-name { font-weight: 700; font-size: 15px; line-height: 1.35; overflow-wrap: anywhere; }
+    .pg-foot { display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; }
+    .pg-tags { display: flex; flex-wrap: wrap; gap: 5px; }
+    .pg-pts { flex: none; padding: 6px 14px; border-radius: 14px; text-align: center; font-weight: 800; font-size: 26px; line-height: 1.05; font-variant-numeric: tabular-nums; color: hsl(var(--h) 65% 24%); background: hsl(var(--h) 85% 93%); }
+    .pg-pts small { display: block; font-size: 11px; font-weight: 600; opacity: .8; }
+    .pg-edit { margin: 8px 0 0; font-size: 13.5px; color: var(--muted); }
+
     /* ---- Activities and catalogue: one compact row per item, Edit opens the form in place ---- */
     .ac-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 0 0 16px; }
     .ac-bar input[type=search] { flex: 1 1 220px; min-width: 0; padding: 10px 14px; font: inherit; border: 1px solid var(--border); border-radius: 999px; background: #fff; }
@@ -363,7 +395,7 @@ engage_header([
         .ac > summary { grid-template-columns: 1fr auto; }
         .ac-edit { display: none; }
     }
-    @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+    @media (prefers-reduced-motion: reduce) { * { transition: none !important; } .pg-card:hover { transform: none; } }
 </style>
 
 <?php if ($flash): ?>
@@ -402,7 +434,7 @@ engage_header([
                 <select name="activity_type_id" required>
                     <option value="">Choose…</option>
                     <?php foreach ($types as $t): ?>
-                        <option value="<?= (int) $t['id'] ?>"><?= htmlspecialchars($t['name']) ?> (<?= (int) $t['points'] ?><?= (int) $t['points'] >= PointsModel::SECOND_APPROVAL_AT ? ', needs 2nd approval' : '' ?>)</option>
+                        <option value="<?= (int) $t['id'] ?>"><?= htmlspecialchars($t['name']) ?> (<?= (int) $t['points'] ?><?= (!$isOwner && (int) $t['points'] >= PointsModel::SECOND_APPROVAL_AT) ? ', needs 2nd approval' : '' ?>)</option>
                     <?php endforeach; ?>
                 </select>
             </label>
@@ -410,6 +442,11 @@ engage_header([
             <label>Note (optional)<input type="text" name="note" maxlength="500"></label>
             <div><button type="submit" class="gd-btn">Award</button></div>
         </form>
+        <?php if ($isOwner): ?>
+            <p class="gd-note" style="margin:12px 0 0">As an owner, the points you award are approved straight away, with no second review. Awards to your own Member ID are marked <code>goodies.award_self</code> in the audit log.</p>
+        <?php else: ?>
+            <p class="gd-note" style="margin:12px 0 0">Awards of <?= (int) PointsModel::SECOND_APPROVAL_AT ?> points or more need approval from a different reviewer or an owner before they count.</p>
+        <?php endif; ?>
     </section>
 
     <section class="gd-card">
@@ -494,6 +531,49 @@ engage_header([
         </form>
     </section>
 
+<?php elseif ($tab === 'guide'): ?>
+    <?php
+    // Read-only: every activity that can be awarded right now, grouped by category. $types is activityTypes() (active only).
+    $pgGroups = [];
+    foreach ($types as $t) $pgGroups[(string) $t['category']][] = $t;
+    $pgOrder = array_values(array_unique(array_merge(array_intersect($gdCatKeys, array_keys($pgGroups)), array_keys($pgGroups))));
+    ?>
+
+    <div class="pg-hero">
+        <div>
+            <h3>What earns points</h3>
+            <p>Every activity members can earn points for right now, and what each one is worth. This is a read-only view; to change points, use the Activities and points tab.</p>
+        </div>
+        <div class="pg-count"><b><?= count($types) ?></b><span>active activities</span></div>
+    </div>
+
+    <?php if (!$types): ?>
+        <div class="gd-empty gd-card">No activities are switched on yet. Add one in Activities and points.</div>
+    <?php endif; ?>
+
+    <?php foreach ($pgOrder as $cat): $rows = $pgGroups[$cat]; ?>
+        <section class="pg-group" style="--h:<?= $gdHue($cat) ?>">
+            <h4><?= htmlspecialchars(PointsModel::CATEGORIES[$cat] ?? $cat) ?> <span><?= count($rows) ?></span></h4>
+            <div class="pg-grid">
+                <?php foreach ($rows as $t): $hasMin = $t['min_attendees'] !== null && $t['min_attendees'] !== ''; ?>
+                    <div class="pg-card">
+                        <div class="pg-name"><?= htmlspecialchars((string) $t['name']) ?></div>
+                        <div class="pg-foot">
+                            <div class="pg-tags">
+                                <?php if ((int) $t['needs_evidence']): ?><span class="ac-tag">Evidence link</span><?php endif; ?>
+                                <?php if ((int) ($t['one_time'] ?? 0)): ?><span class="ac-tag">Once per member</span><?php endif; ?>
+                                <?php if ($hasMin): ?><span class="ac-tag">Host: <?= (int) $t['below_min_points'] ?> pts under <?= (int) $t['min_attendees'] ?> attendees</span><?php endif; ?>
+                            </div>
+                            <div class="pg-pts"><?= number_format((int) $t['points']) ?><small>points</small></div>
+                        </div>
+                    </div>
+                <?php endforeach; ?>
+            </div>
+        </section>
+    <?php endforeach; ?>
+
+    <p class="pg-edit">Need to change something? <a href="/admin/goodies?tab=activities">Edit activities and points</a>.</p>
+
 <?php elseif ($tab === 'activities'): ?>
     <?php
     // Group by category, in the order PointsModel::CATEGORIES lists them; unknown categories go last.
@@ -534,7 +614,7 @@ engage_header([
         </section>
     </details>
 
-    <p class="gd-info"><strong>Changing points revises past awards.</strong> Every award already made for that activity moves each member’s balance by the difference, and it shows in their history. Awards of <?= (int) PointsModel::SECOND_APPROVAL_AT ?> points or more need a second reviewer. An activity that has been awarded can be switched off but not deleted.</p>
+    <p class="gd-info"><strong>Changing points revises past awards.</strong> Every award already made for that activity moves each member’s balance by the difference, and it shows in their history. Awards of <?= (int) PointsModel::SECOND_APPROVAL_AT ?> points or more made by a reviewer need a second reviewer (awards made by an owner are the exception). An activity that has been awarded can be switched off but not deleted.</p>
 
     <?php foreach ($groupOrder as $cat): $rows = $groups[$cat]; ?>
         <section class="ac-group" data-cat="<?= htmlspecialchars($cat) ?>" style="--h:<?= $gdHue($cat) ?>">

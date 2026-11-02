@@ -5,8 +5,11 @@
  * The rules this class enforces:
  *  - points_ledger is append-only. A balance is SUM(points) for a Member ID. Nothing here updates
  *    or deletes a ledger row; corrections are new rows (refund, reversal).
- *  - Points reach the ledger only through an approved award. An award worth SECOND_APPROVAL_AT or
- *    more needs a second reviewer, and never the one who created it.
+ *  - Points reach the ledger only through an approved award. An award made by a non-owner reviewer worth
+ *    SECOND_APPROVAL_AT or more needs a second reviewer, and never the one who created it. Awards made by
+ *    an owner (to anyone, including themselves) are approved straight away, because the community has too
+ *    few organisers to always find a second reviewer. An owner awarding their own Member ID is logged as
+ *    goodies.award_self so it stays easy to review.
  *  - Redemption is one transaction under a per-member lock, so two quick clicks cannot spend the
  *    same points twice.
  *  - Reviewer actions are written to the audit log (AuditLog::activity). The ledger carries the actor's email as a snapshot.
@@ -21,7 +24,7 @@ require_once __DIR__ . '/MemberStrikeModel.php';
 
 class PointsModel
 {
-    /** Awards at or above this many points need a second, different reviewer. */
+    /** Awards at or above this many points, made by a non-owner reviewer, need a second, different reviewer. */
     public const SECOND_APPROVAL_AT = 150;
 
     /** Allowed redemption status moves. Cancelling refunds the points. */
@@ -135,11 +138,17 @@ class PointsModel
     // ---- Awards --------------------------------------------------------------------------------
 
     /**
-     * A reviewer awards points for an activity. Under SECOND_APPROVAL_AT the award is approved
-     * straight away; otherwise it waits for a different reviewer.
+     * A reviewer awards points for an activity. An award made by an owner is approved straight away,
+     * whatever its size. An award made by any other reviewer is approved straight away under
+     * SECOND_APPROVAL_AT; otherwise it waits for a different reviewer.
+     *
+     * $actorIsOwner is true only when the caller has checked that the actor is an owner. The model cannot
+     * check the role itself (it only receives an email), so the page decides.
+     * $isSelf is true when the award is to the actor's own Member ID; it only changes the audit action
+     * (goodies.award_self), so such awards stay easy to review.
      * @return array{ok:bool, error?:string, status?:string, points?:int}
      */
-    public function createAward(string $memberId, int $typeId, string $evidence, string $note, string $actorEmail): array
+    public function createAward(string $memberId, int $typeId, string $evidence, string $note, string $actorEmail, bool $actorIsOwner = false, bool $isSelf = false): array
     {
         $type = $this->activityType($typeId);
         if (!$type || !(int) $type['is_active']) return ['ok' => false, 'error' => 'That activity is not available.'];
@@ -161,7 +170,7 @@ class PointsModel
         }
 
         $points = (int) $type['points'];
-        $needsSecond = $points >= self::SECOND_APPROVAL_AT;
+        $needsSecond = $points >= self::SECOND_APPROVAL_AT && !$actorIsOwner;
         $status = $needsSecond ? 'Needs Second Approval' : 'Approved';
 
         $this->pdo->beginTransaction();
@@ -184,7 +193,8 @@ class PointsModel
             $this->log('createAward failed: ' . $e->getMessage());
             return ['ok' => false, 'error' => 'Could not save the award. If it was already awarded for this event, it cannot be awarded twice.'];
         }
-        $this->audit($actorEmail, 'goodies.award', $memberId, $type['name'] . ' (' . $points . ' pts, ' . $status . ')');
+        $this->audit($actorEmail, ($actorIsOwner && $isSelf) ? 'goodies.award_self' : 'goodies.award', $memberId,
+            $type['name'] . ' (' . $points . ' pts, ' . $status . ($actorIsOwner ? ', owner award' : '') . ')');
         return ['ok' => true, 'status' => $status, 'points' => $points];
     }
 
@@ -272,7 +282,9 @@ class PointsModel
     // same rule as CommunityRecordsModel. Rows that match nobody are listed, never guessed.
     // Each award carries source_ref = chRef(session); the unique key (member, activity, source_ref) means a
     // second run only adds people logged since, and a double click cannot award twice.
-    // Skipped: the reviewer's own Member IDs (another reviewer runs it for them) and struck-off members.
+    // Skipped: the Member IDs passed as $ownIds (the page passes a non-owner reviewer's own IDs, so another
+    // reviewer runs it for them; it passes none for an owner) and struck-off members.
+    // When the actor is an owner, every award from the run is approved at once, whatever the size.
 
     /** source_ref for the awards of one Conversation Hour session. */
     public static function chRef(int $sessionId): string
@@ -315,7 +327,8 @@ class PointsModel
     }
 
     /**
-     * What "Award now" would do for a session, without doing it. $ownIds are the reviewer's own Member IDs.
+     * What "Award now" would do for a session, without doing it. $ownIds are Member IDs to leave for another
+     * reviewer (a non-owner reviewer's own IDs; an owner passes none).
      * @return array{present:int, award:list<array{member_id:string, code:string, points:int}>, done:int,
      *               own:list<string>, struck:list<string>, unresolved:list<string>, gone:list<string>,
      *               hosts:list<string>, host_points:int, missing:list<string>}
@@ -389,9 +402,13 @@ class PointsModel
     /**
      * Award everything chPlan() lists for a session. Safe to repeat: each award is unique per member,
      * activity and session, so a second run (or a double click) only adds what is new.
+     *
+     * $ownIds are left for another reviewer. $actorIsOwner is true when the page has checked that the actor
+     * is an owner: every award from the run is then approved at once, even when it reaches
+     * SECOND_APPROVAL_AT, so an owner is never stuck waiting for a second reviewer.
      * @return array{ok:bool, error?:string, awarded?:int, plan?:array}
      */
-    public function awardForSession(int $sessionId, string $actorEmail, array $ownIds = []): array
+    public function awardForSession(int $sessionId, string $actorEmail, array $ownIds = [], bool $actorIsOwner = false): array
     {
         $session = $this->chSession($sessionId);
         if (!$session) return ['ok' => false, 'error' => 'That session no longer exists.'];
@@ -407,7 +424,7 @@ class PointsModel
             $awarded = 0;
             foreach ($plan['award'] as $a) {
                 $type = $this->activityTypeByCode($a['code']);
-                if ($type && $this->insertSourceAward($a['member_id'], $type, $a['points'], $a['tier'], self::chRef($sessionId), $label, $actorEmail)) $awarded++;
+                if ($type && $this->insertSourceAward($a['member_id'], $type, $a['points'], $a['tier'], self::chRef($sessionId), $label, $actorEmail, $actorIsOwner)) $awarded++;
             }
         } finally {
             $rel = $this->pdo->prepare('SELECT RELEASE_LOCK(:l)');
@@ -415,15 +432,18 @@ class PointsModel
         }
 
         if ($awarded > 0) {
-            $this->audit($actorEmail, 'goodies.ch_award', 'CH session #' . $sessionId, $awarded . ' award(s): ' . $session['title']);
+            $this->audit($actorEmail, 'goodies.ch_award', 'CH session #' . $sessionId, $awarded . ' award(s): ' . $session['title'] . ($actorIsOwner ? ' (owner award)' : ''));
         }
         return ['ok' => true, 'awarded' => $awarded, 'plan' => $plan];
     }
 
-    /** One automatic award and, when it needs no second reviewer, its ledger row. False if it already exists. */
-    private function insertSourceAward(string $memberId, array $type, int $points, string $tier, string $sourceRef, string $label, string $actorEmail): bool
+    /**
+     * One automatic award and, when it needs no second reviewer, its ledger row. False if it already exists.
+     * $autoApprove skips the second-approval rule (the actor is an owner).
+     */
+    private function insertSourceAward(string $memberId, array $type, int $points, string $tier, string $sourceRef, string $label, string $actorEmail, bool $autoApprove = false): bool
     {
-        $needsSecond = $points >= self::SECOND_APPROVAL_AT;
+        $needsSecond = $points >= self::SECOND_APPROVAL_AT && !$autoApprove;
         $this->pdo->beginTransaction();
         try {
             $st = $this->pdo->prepare(
