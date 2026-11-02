@@ -19,6 +19,11 @@ require_once __DIR__ . '/../../models/PointsModel.php';
  * An award under PointsModel::SECOND_APPROVAL_AT is approved when it is created. A larger one waits for
  * a different reviewer. Every state-changing action is a CSRF-checked POST and is written to audit_log.
  *
+ * Owners are the exception for their OWN Member ID: the community has few organisers, so an owner can
+ * award, approve and take back their own points, and their own awards never wait for a second reviewer.
+ * Those awards are logged as goodies.award_self. A support_reviewer who is not an owner still cannot.
+ * Everyone else's large awards still need a different reviewer, owners included.
+ *
  * Conversation Hour (award tab): attendance logged in Community records is awarded per session with
  * "Award now" (PointsModel::awardForSession), and hosts are set here. Re-running only adds what is new.
  *
@@ -42,10 +47,13 @@ if (!Auth::hasAnyRole(['support_reviewer', 'owner'])) {
 
 $actor = strtolower((string) Auth::email());
 $model = new PointsModel();
+$isOwner = Auth::isOwner();
 
-// The reviewer's own Member IDs: Conversation Hour awards for these are left for another reviewer.
+// The reviewer's own Member IDs. A non-owner leaves Conversation Hour awards for these to another reviewer;
+// an owner may award themselves (the model then skips second approval for those awards).
 $ownIds = [];
 try { $ownIds = array_column((new MemberModel())->membershipsForEmail($actor), 'member_id'); } catch (Throwable $e) { app_log_ignored('goodies.php:own', $e); }
+$planOwn = $isOwner ? [] : $ownIds;   // what chPlan() should treat as "left for another reviewer"
 
 const GOODIES_TABS = ['award' => 'Award points', 'activities' => 'Activities and points', 'catalogue' => 'Catalogue', 'redemptions' => 'Orders'];
 $tab = isset(GOODIES_TABS[$_GET['tab'] ?? '']) ? (string) $_GET['tab'] : 'award';
@@ -108,20 +116,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!$found) {
                 goodies_flash('error', $notFound);
             } elseif ($do === 'award') {
-                if (goodies_is_own($found)) {
-                    goodies_flash('error', 'You cannot award points to yourself. Ask another reviewer.');
+                $self = goodies_is_own($found);
+                if ($self && !$isOwner) {
+                    goodies_flash('error', 'You cannot award points to yourself. Ask another reviewer or an owner.');
                 } elseif ((new MemberStrikeModel())->isStruck($mid)) {
                     goodies_flash('error', 'That member is struck off, so points cannot be awarded.');
                 } else {
+                    // An owner awarding their own Member ID skips the second-approval rule (logged as goodies.award_self).
                     $r = $model->createAward($mid, (int) ($_POST['activity_type_id'] ?? 0),
-                        trim((string) ($_POST['evidence_url'] ?? '')), trim((string) ($_POST['note'] ?? '')), $actor);
+                        trim((string) ($_POST['evidence_url'] ?? '')), trim((string) ($_POST['note'] ?? '')), $actor, $self && $isOwner);
                     goodies_flash($r['ok'] ? 'ok' : 'error', $r['ok']
                         ? ($r['status'] === 'Approved' ? $r['points'] . ' points awarded to ' . goodies_who($found) . '.' : 'Saved for ' . goodies_who($found) . '. This award is ' . $r['points'] . ' points, so a different reviewer must approve it before it counts.')
                         : $r['error']);
                 }
             } else {
-                if (goodies_is_own($found)) {
-                    goodies_flash('error', 'You cannot change your own points. Ask another reviewer.');
+                if (goodies_is_own($found) && !$isOwner) {
+                    goodies_flash('error', 'You cannot change your own points. Ask another reviewer or an owner.');
                 } else {
                     $r = $model->reverse($mid, (int) ($_POST['points'] ?? 0), (string) ($_POST['reason'] ?? ''), $actor);
                     goodies_flash($r['ok'] ? 'ok' : 'error', $r['ok'] ? 'Points taken back from ' . goodies_who($found) . '.' : $r['error']);
@@ -132,7 +142,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $awardId = (int) ($_POST['award_id'] ?? 0);
             $award   = $model->award($awardId);
             $owner   = $award ? goodies_find_member((string) $award['member_id']) : [];
-            if ($do === 'approve' && $owner && goodies_is_own($owner)) {
+            if ($do === 'approve' && $owner && goodies_is_own($owner) && !$isOwner) {
                 goodies_flash('error', 'You cannot approve points awarded to yourself.');
             } elseif ($do === 'approve') {
                 $r = $model->approveAward($awardId, $actor);
@@ -142,7 +152,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         } elseif ($do === 'ch_award') {
             $back = 'award';
-            $r = $model->awardForSession((int) ($_POST['session_id'] ?? 0), $actor, $ownIds);
+            $r = $model->awardForSession((int) ($_POST['session_id'] ?? 0), $actor, $planOwn, $isOwner ? $ownIds : []);
             if (!$r['ok']) {
                 goodies_flash('error', $r['error']);
             } else {
@@ -240,7 +250,7 @@ $chError = '';
 if ($tab === 'award') {
     try {
         foreach ($model->chSessions(12) as $sess) {
-            $chRows[] = ['session' => $sess, 'plan' => $model->chPlan((int) $sess['id'], $ownIds)];
+            $chRows[] = ['session' => $sess, 'plan' => $model->chPlan((int) $sess['id'], $planOwn)];
         }
     } catch (Throwable $e) {
         app_log_ignored('goodies.php:ch', $e);
@@ -410,6 +420,9 @@ engage_header([
             <label>Note (optional)<input type="text" name="note" maxlength="500"></label>
             <div><button type="submit" class="gd-btn">Award</button></div>
         </form>
+        <?php if ($isOwner): ?>
+            <p class="gd-note" style="margin:12px 0 0">As an owner, points you award to your own Member ID are approved straight away. They are marked <code>goodies.award_self</code> in the audit log.</p>
+        <?php endif; ?>
     </section>
 
     <section class="gd-card">
@@ -534,7 +547,7 @@ engage_header([
         </section>
     </details>
 
-    <p class="gd-info"><strong>Changing points revises past awards.</strong> Every award already made for that activity moves each member’s balance by the difference, and it shows in their history. Awards of <?= (int) PointsModel::SECOND_APPROVAL_AT ?> points or more need a second reviewer. An activity that has been awarded can be switched off but not deleted.</p>
+    <p class="gd-info"><strong>Changing points revises past awards.</strong> Every award already made for that activity moves each member’s balance by the difference, and it shows in their history. Awards of <?= (int) PointsModel::SECOND_APPROVAL_AT ?> points or more need a second reviewer (an owner awarding their own Member ID is the exception). An activity that has been awarded can be switched off but not deleted.</p>
 
     <?php foreach ($groupOrder as $cat): $rows = $groups[$cat]; ?>
         <section class="ac-group" data-cat="<?= htmlspecialchars($cat) ?>" style="--h:<?= $gdHue($cat) ?>">
