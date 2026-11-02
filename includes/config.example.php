@@ -11,6 +11,14 @@ return [
         'name' => 'DCW Engage',
         'url'  => 'http://localhost:8000', // Update for production
         'env'  => 'development', // 'development' or 'production'
+        // Developer machines only. When true and no mail server is set up, the full text of every email
+        // that would have been sent (recipient, codes, links) is written UNREDACTED to app_errors.log, so you can
+        // test sign-up and verification flows. Never set this to true on the live server.
+        'debug' => false,
+        // Where errors are logged. An absolute path OUTSIDE public_html is safest, e.g.
+        // '/home/<user>/logs/engage_errors.log' (create the folder first). Empty: app_errors.log in the app folder,
+        // which .htaccess refuses to serve.
+        'log_file' => '',
     ],
     'db' => [
         'host'     => '127.0.0.1',

@@ -7,6 +7,7 @@ require_once __DIR__ . '/../../models/FeedbackModel.php';
 require_once __DIR__ . '/../../models/ApplicationModel.php';
 require_once __DIR__ . '/../../models/MemberModel.php';
 require_once __DIR__ . '/../../models/TechIssueModel.php';
+require_once __DIR__ . '/../../models/PointsModel.php';
 
 Auth::requireLogin();
 
@@ -14,13 +15,16 @@ Auth::requireLogin();
 // a link only ever appears for someone who can actually get past its gate:
 //   application_review.php   -> requireRole(['organizer', 'owner'])   (program forms; membership and feedback forms are left out)
 //   feedback_review.php      -> requireRole(['owner', 'organizer'])   (responses to feedback forms; has its own Feedback tab here)
+//   event_cards.php          -> requireRole(['organizer', 'owner'])   (event participation cards; has its own Events tab here)
 //   reimbursement_review.php -> requireRole(['support_reviewer', 'owner'])
 //   internet_review.php      -> requireRole(['support_reviewer', 'owner'])
+//   goodies.php              -> support_reviewer or owner (checked with Auth::hasAnyRole inside the view)
 //   finance/queue.php        -> requireRole(['finance', 'owner'])   (combined: reimbursements + internet support)
 //   finance/closed.php       -> requireRole(['finance', 'owner'])
 //   membership_review.php    -> requireRole(['membership_coordinator', 'membership_reviewer', 'owner'])   (organizers: forms only)
 //                               Member card PDFs are reached from there (Members tab, or inside an application).
 //   community_records.php    -> requireRole(['membership_reviewer', 'owner'])   (Conversation Hour attendance, technical contributors)
+//   public_directory.php     -> requireRole(['membership_reviewer', 'organizer', 'owner'])   (who is on the public /members page)
 //   team.php                 -> Auth::requireOwner()   (invites, roles and coordinator chapters)
 //   member_support.php       -> requireRole(['member_support', 'owner'])   (shown as "DCW Support")
 //   tech-issues.php, tech-diagnostics.php -> tech_require_staff()   (technical_manager, owner)
@@ -29,14 +33,17 @@ Auth::requireLogin();
 // requireRole() grants access when ANY matches, so use hasAnyRole() here too.
 $canReviewApplications   = Auth::hasAnyRole(['organizer', 'owner']);
 $canReadFeedback         = Auth::hasAnyRole(['organizer', 'owner']);   // mirrors feedback_review.php
+$canManageEventCards     = Auth::hasAnyRole(['organizer', 'owner']);   // mirrors event_cards.php
 $canReviewReimbursements = Auth::hasAnyRole(['support_reviewer', 'owner']);
 $canReviewInternet       = Auth::hasAnyRole(['support_reviewer', 'owner']);
+$canManageGoodies        = Auth::hasAnyRole(['support_reviewer', 'owner']);   // mirrors goodies.php
 $canProcessFinance       = Auth::hasAnyRole(['finance', 'owner']);
 $canReviewMembership     = Auth::hasAnyRole(['membership_coordinator', 'membership_reviewer', 'owner']);
 $canManageTeam           = Auth::isOwner();
 $canWorkMemberSupport    = Auth::hasAnyRole(['member_support', 'owner']);
 $canWorkTech             = Auth::hasAnyRole(TechIssueModel::STAFF_ROLES);
 $canManageRecords        = Auth::hasAnyRole(['membership_reviewer', 'owner']);   // mirrors community_records.php
+$canManageDirectory      = Auth::hasAnyRole(['membership_reviewer', 'organizer', 'owner']);   // mirrors public_directory.php
 
 // Technical: open count for the queue tile, and this person's own reports that have a new reply.
 $techOpen = 0; $techWaiting = [];
@@ -44,7 +51,17 @@ try {
     $techModel = new TechIssueModel();
     if ($canWorkTech) $techOpen = $techModel->openCount();
     $techWaiting = $techModel->awaitingReporter('team', strtolower((string) Auth::email()));
-} catch (Throwable $e) { /* tables not created yet */ }
+} catch (Throwable $e) { app_log_ignored('dashboard.php:47', $e); /* tables not created yet */ }
+
+// Goodies: awards waiting for a second reviewer plus new orders, shown as the badge on the Goodies tab.
+// If the goodies tables have not been created yet, the badge is simply left out.
+$goodiesWaiting = 0;
+if ($canManageGoodies) {
+    try {
+        $goodiesTotals  = (new PointsModel())->totals();
+        $goodiesWaiting = (int) $goodiesTotals['awaiting_second'] + (int) $goodiesTotals['requested'];
+    } catch (Throwable $e) { app_log_ignored('dashboard.php:goodies', $e); /* tables not created yet */ }
+}
 
 // Who gets the forms grid, and which forms they see. Mirrors
 // FormModel::userCanOpen(), which form_manager.php enforces:
@@ -78,7 +95,7 @@ try {
     foreach ((new FeedbackModel())->feedbackForms() as $fbForm) {
         $feedbackCounts[(int) $fbForm['id']] = (int) $fbForm['response_count'];
     }
-} catch (Throwable $e) { /* migration not run yet */ }
+} catch (Throwable $e) { app_log_ignored('dashboard.php:81', $e); /* migration not run yet */ }
 
 // Application forms and feedback forms are shown separately: feedback has responses, not applications.
 $isFeedbackForm = fn($f) => FeedbackModel::isFeedbackSchema(json_decode((string) ($f['schema_json'] ?? ''), true));
@@ -143,9 +160,9 @@ if ($canReviewMembership) {
     } catch (Throwable $e) { $membershipWaiting = null; }
 }
 
-// The "Review" tab holds the review queues: applications, membership and community records. Feedback is read,
-// not decided on, so it has its own tab. Everything else is its own tab too.
-$showReviewPanel = $canReviewApplications || $canReviewMembership || $canManageRecords;
+// The "Review" tab holds the review queues: applications, membership, community records and the public
+// members list. Feedback is read, not decided on, so it has its own tab. Everything else is its own tab too.
+$showReviewPanel = $canReviewApplications || $canReviewMembership || $canManageRecords || $canManageDirectory;
 $reviewIntro = ($canReviewApplications && $canReviewMembership)
     ? 'Decide on applications to our programs and on membership requests' . ($chapterLimited ? ' for your chapters' : '') . '.'
     : ($canReviewApplications
@@ -168,13 +185,16 @@ $icons = [
     'alert'  => '<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>',
     'pulse'  => '<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>',
     'star'   => '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>',
+    'badge'  => '<rect x="5" y="2" width="14" height="20" rx="2"/><line x1="9" y1="6" x2="15" y2="6"/><circle cx="12" cy="12" r="2.5"/><line x1="8.5" y1="18" x2="15.5" y2="18"/>',
 ];
 
 // The vertical tabs, in order: [id, label, icon, number shown in a coral badge (0 = none)].
 $vtabs = [];
 if ($showReviewPanel) $vtabs[] = ['review',   'Review',               'inbox', (int) $appsWaiting + (int) $membershipWaiting];
 if ($canSeeSupport)   $vtabs[] = ['support',  'Volunteer support',    'card',  0];
+if ($canManageGoodies) $vtabs[] = ['goodies', 'Goodies',              'star',  (int) $goodiesWaiting];
 if ($showFormsGrid)   $vtabs[] = ['forms',    'Forms',                'doc',   0];
+if ($canManageEventCards) $vtabs[] = ['events', 'Events',             'badge', 0];   // no badge: nothing "waiting"
 if ($canReadFeedback) $vtabs[] = ['feedback', 'Feedback',             'star',  0];   // no badge: feedback has nothing "waiting"
 if ($showSupportTech) $vtabs[] = ['tech',     'Support & technical',  'chat',  (int) $techOpen];
 
@@ -309,6 +329,11 @@ engage_header([
                                 'Log Conversation Hour attendance and keep the technical contributors list. Internet support reads from these.',
                                 '/admin/community-records');
                         }
+                        if ($canManageDirectory) {
+                            lrow($icons, 'var(--leaf-dark, #3E7A53)', 'people', 'Public members list',
+                                'Who appears on the public members page: current members, alumni and earlier-list names. See opt-outs and remove entries.',
+                                '/admin/public-directory');
+                        }
                         ?>
                     </div>
                 </section>
@@ -345,6 +370,27 @@ engage_header([
                 </section>
                 <?php endif; ?>
 
+                <?php if ($canManageGoodies): ?>
+                <section class="vpanel" id="p-goodies" role="tabpanel" aria-labelledby="t-goodies" hidden>
+                    <div class="panel-head">
+                        <h2>Goodies</h2>
+                        <p>Award points to members, manage the catalogue and fulfil orders.</p>
+                    </div>
+                    <div class="lrows">
+                        <?php
+                        lrow($icons, 'var(--primary)', 'star', 'Award points',
+                            'Award points for activities, approve large awards, or take points back.', '/admin/goodies?tab=award');
+                        lrow($icons, 'var(--primary)', 'check', 'Activities and points',
+                            'What members can earn points for, and how many. Changing points revises past awards.', '/admin/goodies?tab=activities');
+                        lrow($icons, 'var(--primary)', 'doc', 'Catalogue',
+                            'The goodies members can redeem, and what each costs in points.', '/admin/goodies?tab=catalogue');
+                        lrow($icons, 'var(--leaf-dark, #3E7A53)', 'inbox', 'Orders',
+                            'Order, ship and deliver what members have redeemed.', '/admin/goodies?tab=redemptions');
+                        ?>
+                    </div>
+                </section>
+                <?php endif; ?>
+
                 <?php if ($showFormsGrid): ?>
                 <section class="vpanel" id="p-forms" role="tabpanel" aria-labelledby="t-forms" hidden>
                     <div class="panel-head">
@@ -372,6 +418,22 @@ engage_header([
                             </div>
                         </details>
                     <?php endif; ?>
+                </section>
+                <?php endif; ?>
+
+                <?php if ($canManageEventCards): ?>
+                <section class="vpanel" id="p-events" role="tabpanel" aria-labelledby="t-events" hidden>
+                    <div class="panel-head">
+                        <h2>Events</h2>
+                        <p>Set up an event, add its people and print their cards.</p>
+                    </div>
+                    <div class="lrows">
+                        <?php
+                        lrow($icons, 'var(--primary)', 'badge', 'Event cards',
+                            'Pick an event, import confirmed scholarship awardees, add organisers and facilitators, and download the print file.',
+                            '/admin/event-cards');
+                        ?>
+                    </div>
                 </section>
                 <?php endif; ?>
 

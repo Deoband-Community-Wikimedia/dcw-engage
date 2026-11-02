@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/../../includes/init.php';
+require_once __DIR__ . '/../../includes/audit.php';
 require_once __DIR__ . '/../../includes/require_role.php';
 require_once __DIR__ . '/../../includes/wikitext.php';
 require_once __DIR__ . '/../../includes/app_log.php';
@@ -8,6 +9,7 @@ require_once __DIR__ . '/../../models/FormModel.php';
 require_once __DIR__ . '/../../models/FeedbackModel.php';
 require_once __DIR__ . '/../../models/ApplicationModel.php';
 require_once __DIR__ . '/../../models/ScholarshipLetterModel.php';
+require_once __DIR__ . '/../../models/AwardConfirmationModel.php';   // award confirmation: link, response, settings
 require_once __DIR__ . '/../../includes/mailer.php';   // Mailer::sendStatusUpdate() and Mailer::sendSentBack()
 require_once __DIR__ . '/../../includes/mail/ApplicationMail.php';   // ApplicationMail::decisionLetter()
 
@@ -33,6 +35,22 @@ require_once __DIR__ . '/../../includes/mail/ApplicationMail.php';   // Applicat
  * (config mail.src_reply_to). Mark under review still sends the standard status email.
  * If a letter cannot be sent the decision stays saved, the application is flagged, and "Resend letter" appears.
  *
+ * AWARD CONFIRMATION (see AwardConfirmationModel; the public page is /confirm/<token>). A program can ask its
+ * awardees to confirm or decline and share travel and stay details. The award letter carries the awardee's private
+ * link wherever the committee writes [{confirm_link} Confirm your place]. Each awarded row shows Confirmed /
+ * Declined / Awaiting / Overdue (no answer after the deadline). Nothing changes automatically: a decline or an
+ * overdue row is only FLAGGED, and a reviewer accepts whoever they choose from the applications still open.
+ * "Send confirmation link / reminder" emails the private link again (it is also how people accepted before
+ * confirmation was switched on get their first link). Responses download as a CSV from the program panel.
+ * The introduction supports the same wiki formatting as the letters (the public page renders it with
+ * MiniWikiText), and "Preview confirmation page" shows the page as an awardee sees it without saving or sending.
+ *
+ * "Mark as declined" records a decline that reached the committee some other way (email, phone) so it shows as
+ * Declined like one made on the confirmation page. It sends NOTHING, releases no place, and works on any awarded
+ * row of a program with confirmation on (also one that had already confirmed: their travel answers are removed).
+ * The optional note is kept as the reason, prefixed "[Recorded by a reviewer: <who>]" (AwardConfirmationModel::
+ * recordReviewerDecline()).
+ *
  * "Needs information" sets the application back to Draft, makes a one-time link (/resume/<token>) and EMAILS
  * the applicant your message plus that link (Mailer::sendSentBack). If the email cannot be sent, the link and
  * message are shown on screen instead so you can pass them on yourself. The status change is kept either way.
@@ -53,6 +71,13 @@ $formModel = new FormModel();
 $letterModel = new ScholarshipLetterModel();
 $letters = $letterModel->allByForm();   // form id => letters row; [] until the migration has been run
 $letterOn = fn($formId) => ScholarshipLetterModel::isActive($letters[(int) $formId] ?? null);
+
+$confModel = new AwardConfirmationModel();
+$confSettings = $confModel->allSettings();        // form id => settings row; [] until the migration has been run
+$confByApp = $confModel->allByApplication();      // application id => response row
+$confOn = fn($formId) => AwardConfirmationModel::isOn($confSettings[(int) $formId] ?? null);
+// confirmed | declined | awaiting | overdue | none
+$confState = fn(array $r) => AwardConfirmationModel::stateOf($confByApp[(int) $r['id']] ?? null, $confSettings[(int) $r['form_id']] ?? null, (string) $r['status']);
 
 // Forms this person may review: ordinary forms only (no membership, no feedback), and only ones FormModel
 // says they can open. getAllForms() returns schema_json, which FeedbackModel::isFeedbackRow() reads.
@@ -81,6 +106,7 @@ if (!function_exists('review_hidden_form')) {
 
 $notice = ''; $error = '';
 $keepLetters = null;   // posted letter text, kept in the editor when a save is refused
+$keepConfirm = null;   // posted confirmation settings, kept in the panel when a save is refused
 $id = (int) ($_GET['id'] ?? $_POST['id'] ?? 0);
 $app = false;
 if ($id) {
@@ -117,23 +143,46 @@ $notifyApplicant = function (array $row, string $status, string $note) {
 // Returns true only when the email really went out, and records that on the application either way
 // (sent -> letter_sent_at, failed -> letter_failed so "Resend letter" appears).
 // A failure never undoes the decision that is already saved.
-$sendLetter = function (array $row, string $status) use ($letters, $letterModel, $srcReplyTo, $srcName): bool {
+$sendLetter = function (array $row, string $status) use ($letters, $letterModel, $srcReplyTo, $srcName, $confModel, $confOn, $config): bool {
     $l = $letters[(int) $row['form_id']] ?? null;
     $kind = $status === 'Accepted' ? 'award' : 'decline';
     $ok = false;
     try {
+        // The award letter carries the awardee's private confirmation link when the program uses confirmation.
+        // If the link cannot be made the letter is NOT sent without it: it is flagged for "Resend letter" instead.
+        $confirmUrl = ($kind === 'award' && $confOn($row['form_id']))
+            ? $confModel->urlFor((int) $row['id'], (string) $config['app']['url'])
+            : '';
         $ok = $l && (bool) ApplicationMail::decisionLetter(
             $row['email'], $row['applicant_name'], $row['form_title'] ?: $row['form_type'],
-            (string) $l[$kind . '_subject'], (string) $l[$kind . '_body'], $srcReplyTo, $srcName
+            (string) $l[$kind . '_subject'], (string) $l[$kind . '_body'], $srcReplyTo, $srcName, $confirmUrl
         );
         if ($ok) $letterModel->markSent((int) $row['id']); else $letterModel->markFailed((int) $row['id']);
     } catch (Throwable $e) {
         app_log("Scholarship $kind letter failed for application #{$row['id']}: " . $e->getMessage());
-        try { $letterModel->markFailed((int) $row['id']); } catch (Throwable $e2) {}
+        try { $letterModel->markFailed((int) $row['id']); } catch (Throwable $e2) { app_log_ignored('application_review.php:157', $e2);}
         $ok = false;
     }
-    if ($ok) app_log("Scholarship $kind letter sent: #{$row['id']} (letters v" . (int) ($l['version'] ?? 0) . ')');
+    if ($ok) AuditLog::record('scholarship.letter_sent', Auth::id(), Auth::email(), 'Application #' . $row['id'],
+        "$kind letter, letters v" . (int) ($l['version'] ?? 0));
     return $ok;
+};
+
+// Emails an awardee their private confirmation link (the first link, or a reminder). Returns true only when the
+// email really went out, and records the reminder. Callers have already checked the application is Accepted and
+// that confirmation is on for its program.
+$sendConfirmLink = function (array $row) use ($confModel, $confSettings, $srcReplyTo, $srcName, $config): bool {
+    try {
+        $s = $confSettings[(int) $row['form_id']] ?? [];
+        $url = $confModel->urlFor((int) $row['id'], (string) $config['app']['url']);
+        $ok = (bool) Mailer::sendConfirmReminder($row['email'], $row['applicant_name'], $row['form_title'] ?: $row['form_type'],
+                                                 FormModel::formatIst($s['deadline_at'] ?? null), $url, $srcReplyTo, $srcName);
+        if ($ok) $confModel->markReminded((int) $row['id']);
+        return $ok;
+    } catch (Throwable $e) {
+        app_log("Confirmation link email failed for application #{$row['id']}: " . $e->getMessage());
+        return false;
+    }
 };
 
 // "Needs information": emails the applicant what is needed plus their one-time link.
@@ -150,11 +199,11 @@ $emailSentBack = function (array $row, string $message, string $token): bool {
 };
 
 // ---------------------------------------------------------------------------
-// Scholarship letters: save, or preview (nothing is sent by a preview).
+// Scholarship letters and award confirmation: save, or preview (nothing is sent or saved by a preview).
 // The program must be one this person may review, so editing the request cannot reach any other form.
 // ---------------------------------------------------------------------------
 if (!$id && $_SERVER['REQUEST_METHOD'] === 'POST'
-    && in_array($_POST['action'] ?? '', ['save_letters', 'preview_award', 'preview_decline'], true)) {
+    && in_array($_POST['action'] ?? '', ['save_letters', 'preview_award', 'preview_decline', 'save_confirm', 'preview_confirm'], true)) {
     if (!CSRF::validate($_POST['csrf_token'] ?? '')) die('Invalid CSRF token.');
     $lf = (int) ($_POST['form_id'] ?? 0);
     if (!isset($allowed[$lf])) { http_response_code(404); die('Program not found.'); }
@@ -164,18 +213,181 @@ if (!$id && $_SERVER['REQUEST_METHOD'] === 'POST'
             if (!empty($_POST['enabled']) && !$srcReady) {
                 throw new Exception('Add mail.src_reply_to (the committee email address) to config.php before turning scholarship letters on.');
             }
+            // A program that uses confirmation must keep the link in its award letter, or awardees get no link.
+            if (!empty($_POST['enabled']) && $confOn($lf)
+                && strpos((string) ($_POST['award_body'] ?? ''), '{confirm_link}') === false) {
+                throw new Exception('This program asks awardees to confirm, so the award letter must contain the link: write [{confirm_link} Confirm your place] where you want it.');
+            }
             $letterModel->save($lf, !empty($_POST['enabled']),
                 (string) ($_POST['award_subject'] ?? ''), (string) ($_POST['award_body'] ?? ''),
                 (string) ($_POST['decline_subject'] ?? ''), (string) ($_POST['decline_body'] ?? ''),
                 currentAdminIdentifier());
-            app_log("Scholarship letters saved: form #$lf by " . currentAdminIdentifier());
+            AuditLog::record('scholarship.letters_saved', Auth::id(), Auth::email(), 'Form #' . $lf);
             $keep = array_filter(['form' => $_GET['form'] ?? '', 'status' => $_GET['status'] ?? ''], 'strlen');
             header('Location: /admin/application-review?' . http_build_query($keep + ['letters' => 'saved']));
             exit;
         } catch (Throwable $e) {
-            $error = $e->getMessage();
+            $error = engage_user_message($e, 'Scholarship letters');
             $keepLetters = $_POST;
         }
+    } elseif ($_POST['action'] === 'save_confirm') {
+        try {
+            $on = !empty($_POST['confirm_enabled']);
+            if ($on && !$srcReady) {
+                throw new Exception('Add mail.src_reply_to (the committee email address) to config.php before turning confirmation on.');
+            }
+            // The link has to be in the award letter, and the letter has to be on, or nobody would receive it.
+            if ($on && !$letterOn($lf)) {
+                throw new Exception('Turn the scholarship letters on first: the award letter is what carries the confirmation link.');
+            }
+            if ($on && strpos((string) (($letters[$lf]['award_body'] ?? '')), '{confirm_link}') === false) {
+                throw new Exception('Add [{confirm_link} Confirm your place] to the award letter first, so awardees receive their link. Then turn confirmation on.');
+            }
+            $confModel->saveSettings($lf, $on, (string) ($_POST['confirm_deadline'] ?? ''),
+                (string) ($_POST['confirm_fields'] ?? ''), (string) ($_POST['confirm_intro'] ?? ''), currentAdminIdentifier());
+            AuditLog::record('award.settings_saved', Auth::id(), Auth::email(), 'Form #' . $lf);
+            $keep = array_filter(['form' => $_GET['form'] ?? '', 'status' => $_GET['status'] ?? ''], 'strlen');
+            header('Location: /admin/application-review?' . http_build_query($keep + ['confirm' => 'saved']));
+            exit;
+        } catch (Throwable $e) {
+            $error = engage_user_message($e, 'Award confirmation settings');
+            $keepConfirm = $_POST;
+        }
+    } elseif ($_POST['action'] === 'preview_confirm') {
+        // The confirmation page as an awardee sees it, built from what is typed in the panel (saved or not).
+        // Uses the real engage_header / engage_footer and the same MiniWikiText rendering as /confirm/<token>.
+        // Nothing is saved or sent, and the form on the preview page does not submit.
+        $ph = fn($v) => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');   // local: $h is defined further down
+        $pform = $formModel->getFormById($lf);
+        $ptitle = CoreMail::eventTitle((string) (($pform['schema']['title'] ?? '') ?: ($pform['form_type'] ?? '')));
+        $pintro = trim(str_replace(["\r\n", "\r"], "\n", (string) ($_POST['confirm_intro'] ?? '')));
+
+        // The deadline is typed in IST; show it the way the live page does (formatIst expects a stored UTC value).
+        $pdl = trim((string) ($_POST['confirm_deadline'] ?? ''));
+        $pts = $pdl !== '' ? FormModel::istInputToTs($pdl) : null;
+        $pdlLabel = $pts !== null ? FormModel::formatIst(gmdate('Y-m-d H:i:s', $pts)) : '';
+
+        try {
+            $pfields = AwardConfirmationModel::parseFields((string) ($_POST['confirm_fields'] ?? ''));
+            $pfieldsError = '';
+        } catch (Throwable $ex) {
+            $pfields = [];
+            $pfieldsError = engage_user_message($ex, 'Award confirmation fields');
+        }
+
+        engage_header([
+            'title'   => 'Preview: Confirm your scholarship - ' . $ptitle,
+            'heading' => $ptitle,
+            'kicker'  => 'Confirm your scholarship',
+            'lead'    => $pdlLabel !== '' ? 'Please submit your response by ' . $pdlLabel . '.' : '',
+            'crumbs'  => [['Home', '/'], ['Confirm your scholarship']],
+            'noindex' => true,
+        ]);
+        ?>
+<style>
+    .fcard .field .error-text { display: block; margin-top: 5px; font-size: 13px; color: var(--accent, #b91c1c); }
+    .choices.stack input { margin: 0; }
+    .confirm-intro { margin: 0 0 22px; line-height: 1.6; }
+    .confirm-hint { margin: 6px 0 0; font-size: 13px; color: var(--muted); }
+    .when-confirming[hidden], .when-declining[hidden], .fcard .field[hidden] { display: none !important; }
+</style>
+<div class="fcard">
+    <div class="action-banner"><strong>Preview only.</strong> Nothing was saved or sent, and this form does not submit. Your own settings are used, whether or not they are saved yet.</div>
+    <?php if ($pfieldsError !== ''): ?><div class="alert error">The questions could not be read: <?= $ph($pfieldsError) ?></div><?php endif; ?>
+    <?php if ($pdlLabel === ''): ?><div class="alert error">No deadline is set yet. Confirmation cannot be turned on without one.</div><?php endif; ?>
+
+    <p class="confirm-intro">Dear <strong>Sample Applicant</strong>,</p>
+    <?php if ($pintro !== ''): ?>
+        <div class="confirm-intro"><?= MiniWikiText::render($pintro) ?></div>
+    <?php endif; ?>
+    <?php if ($pdlLabel !== ''): ?>
+        <p class="confirm-intro">Please submit your response by <strong><?= $ph($pdlLabel) ?></strong>.</p>
+    <?php endif; ?>
+
+    <form id="previewForm" onsubmit="return false;">
+        <fieldset class="group">
+            <legend>Your scholarship</legend>
+            <div class="field">
+                <div class="choices stack">
+                    <label>
+                        <input type="radio" name="response" value="confirmed">
+                        <span>Yes, I confirm that I will accept the scholarship for <?= $ph($ptitle) ?></span>
+                    </label>
+                    <label>
+                        <input type="radio" name="response" value="declined">
+                        <span>No, I am unable to accept the scholarship</span>
+                    </label>
+                </div>
+            </div>
+        </fieldset>
+
+        <div class="when-confirming" id="whenConfirming" hidden>
+            <?php if ($pfields): ?>
+            <fieldset class="group">
+                <legend>Your details</legend>
+                <?php foreach ($pfields as $pf): $psf = $pf['showif'] ?? null; $pn = $pf['name']; ?>
+                    <div class="field"<?= $psf ? ' data-showif-name="' . $ph($psf['name']) . '" data-showif-value="' . $ph($psf['value']) . '"' : '' ?><?= $psf ? ' hidden' : '' ?>>
+                        <label for="<?= $ph($pn) ?>"><?= $ph($pf['label']) ?><?= $pf['required'] ? ' <span class="req-star">*</span>' : '' ?></label>
+                        <?php if ($pf['type'] === 'select'): ?>
+                            <select name="<?= $ph($pn) ?>" id="<?= $ph($pn) ?>">
+                                <option value="">-- Please Select --</option>
+                                <?php foreach ($pf['options'] as $opt): ?>
+                                    <option value="<?= $ph($opt) ?>"><?= $ph($opt) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        <?php elseif ($pf['type'] === 'textarea'): ?>
+                            <textarea name="<?= $ph($pn) ?>" id="<?= $ph($pn) ?>" rows="3"></textarea>
+                        <?php else: ?>
+                            <input type="<?= $ph($pf['type']) ?>" name="<?= $ph($pn) ?>" id="<?= $ph($pn) ?>">
+                        <?php endif; ?>
+                        <?php if ($psf): ?><p class="confirm-hint">Only shown when &ldquo;<?= $ph($psf['label']) ?>&rdquo; is &ldquo;<?= $ph($psf['value']) ?>&rdquo;.</p><?php endif; ?>
+                    </div>
+                <?php endforeach; ?>
+            </fieldset>
+            <?php endif; ?>
+        </div>
+
+        <div class="when-declining" id="whenDeclining" hidden>
+            <div class="field">
+                <label for="reason">Reason (optional)</label>
+                <textarea name="reason" id="reason" rows="3"></textarea>
+                <p class="confirm-hint">Declining your scholarship is final on this page. If you change your mind later, please write to the committee.</p>
+            </div>
+        </div>
+
+        <button type="button" disabled>Save my response</button>
+    </form>
+</div>
+<script>
+    (function () {
+        var form = document.getElementById('previewForm');
+        var yes = document.getElementById('whenConfirming');
+        var no = document.getElementById('whenDeclining');
+
+        // Same rule as the live page: a question shows when the select it depends on is shown and has that answer.
+        function applyConditions() {
+            yes.querySelectorAll('.field').forEach(function (w) {
+                var n = w.getAttribute('data-showif-name');
+                if (!n) return;
+                var c = form.elements[n];
+                var cw = c && c.closest ? c.closest('.field') : null;
+                w.hidden = !(c && cw && !cw.hidden && c.value === w.getAttribute('data-showif-value'));
+            });
+        }
+        function sync() {
+            var r = form.querySelector('input[name=response]:checked');
+            var v = r ? r.value : '';
+            yes.hidden = v !== 'confirmed';
+            no.hidden = v !== 'declined';
+            applyConditions();
+        }
+        form.addEventListener('change', sync);
+        sync();
+    })();
+</script>
+        <?php
+        engage_footer();
+        exit;
     } else {
         $kind = $_POST['action'] === 'preview_award' ? 'award' : 'decline';
         $pf = $formModel->getFormById($lf);
@@ -197,10 +409,12 @@ if (!$id && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') ==
 
     $bulkAct = (string) ($_POST['bulk_action'] ?? '');
     $isResend = $bulkAct === 'resend_letter';
-    $ids = array_values(array_unique(array_filter(array_map('intval', (array) ($_POST['ids'] ?? [])))));
+    $isRemind = $bulkAct === 'remind_confirm';   // email the awardee's confirmation link again (or for the first time)
+    $isDecl = $bulkAct === 'mark_declined';      // record a decline that arrived by email or phone (nothing is sent)
+    $ids =array_values(array_unique(array_filter(array_map('intval', (array) ($_POST['ids'] ?? [])))));
     $note = trim((string) ($_POST['note'] ?? ''));
 
-    if (!isset(APP_ACTIONS[$bulkAct]) && !$isResend) {
+    if (!isset(APP_ACTIONS[$bulkAct]) && !$isResend && !$isRemind && !$isDecl) {
         $error = 'Choose an action to apply.';
     } elseif (!$ids) {
         $error = 'Tick at least one application first.';
@@ -212,7 +426,9 @@ if (!$id && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') ==
         $by = currentAdminIdentifier();
         // 'links' now holds only the applicants whose send-back email could NOT be sent.
         // 'letters' counts scholarship letters emailed; 'letter_failed' lists the ones that could not be sent.
+        // 'reminded' counts confirmation links emailed; 'remind_failed' lists the ones that could not be sent.
         $result = ['act' => $bulkAct, 'done' => 0, 'skipped' => [], 'links' => [], 'letters' => 0, 'letter_failed' => [],
+                   'reminded' => 0, 'remind_failed' => [],
                    'message' => $bulkAct === 'info' ? $note : ''];
 
         // Enough time for a few dozen emails (each one opens its own SMTP connection).
@@ -245,8 +461,50 @@ if (!$id && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') ==
                 } else {
                     $result['letter_failed'][] = ['who' => $who, 'email' => $row['email']];
                 }
-                app_log("Application bulk resend_letter: #{$row['id']} ({$row['tracking_id']}, {$row['form_type']}) by $by");
+                AuditLog::record('scholarship.letter_resent', Auth::id(), Auth::email(), 'Application #' . $row['id'], (string) $row['tracking_id']);
                 $result['done']++;
+                continue;
+            }
+
+            // Email the confirmation link: only for an awarded application on a program that uses confirmation,
+            // and not to someone who has already answered.
+            if ($isRemind) {
+                $cs = $confState($row);
+                if ($row['status'] !== 'Accepted' || !$confOn($row['form_id'])) {
+                    $result['skipped'][] = "$who: not an accepted application on a program with confirmation turned on";
+                } elseif (in_array($cs, ['confirmed', 'declined'], true)) {
+                    $result['skipped'][] = "$who: has already " . $cs;
+                } elseif (!$srcReady) {
+                    $result['skipped'][] = "$who: the committee address (mail.src_reply_to) is not set in config.php";
+                } else {
+                    if ($sendConfirmLink($row)) {
+                        $result['reminded']++;
+                    } else {
+                        $result['remind_failed'][] = ['who' => $who, 'email' => $row['email']];
+                    }
+                    AuditLog::record('award.reminder_sent', Auth::id(), Auth::email(), 'Application #' . $row['id'], (string) $row['tracking_id']);
+                    $result['done']++;
+                }
+                continue;
+            }
+
+            // Record a decline that reached the committee some other way. Nothing is emailed and no place is
+            // released. Only for an awarded application on a program that uses confirmation, and not twice.
+            if ($isDecl) {
+                if ($row['status'] !== 'Accepted' || !$confOn($row['form_id'])) {
+                    $result['skipped'][] = "$who: not an accepted application on a program with confirmation turned on";
+                } elseif ($confState($row) === 'declined') {
+                    $result['skipped'][] = "$who: has already declined";
+                } else {
+                    try {
+                        $confModel->recordReviewerDecline((int) $row['id'], $note, $by);
+                        AuditLog::record('award.marked_declined', Auth::id(), Auth::email(), 'Application #' . $row['id'], $row['tracking_id'] . ' (bulk)');
+                        $result['done']++;
+                    } catch (Throwable $e) {
+                        app_log("Mark declined failed for application #{$row['id']}: " . $e->getMessage());
+                        $result['skipped'][] = "$who: could not be recorded";
+                    }
+                }
                 continue;
             }
 
@@ -271,7 +529,7 @@ if (!$id && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') ==
             try {
                 if ($bulkAct === 'info') {
                     $token = $model->generateMagicLink((int) $row['id'], true);
-                    $model->updateStatus((int) $row['id'], 'Draft');
+                    $model->sendBack((int) $row['id']);
                     if (!$emailSentBack($row, $note, $token)) {
                         // Email failed: keep the link so the organizer can pass it on by hand.
                         $result['links'][] = ['who' => $who, 'email' => $row['email'], 'url' => $resumeUrl($token)];
@@ -288,7 +546,7 @@ if (!$id && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') ==
                         $notifyApplicant($row, APP_ACTIONS[$bulkAct], $note);
                     }
                 }
-                app_log("Application bulk $bulkAct: #{$row['id']} ({$row['tracking_id']}, {$row['form_type']}) by $by");
+                AuditLog::record('application.' . $bulkAct, Auth::id(), Auth::email(), 'Application #' . $row['id'], $row['tracking_id'] . ' (bulk)');
                 $result['done']++;
             } catch (Throwable $e) {
                 $result['skipped'][] = "$who: " . $e->getMessage();
@@ -324,6 +582,20 @@ if ($app && $_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!$srcReady) throw new Exception('The committee address (mail.src_reply_to) is not set in config.php, so the letter cannot be sent.');
             if (!$letterModel->claimResend((int) $app['id'])) throw new Exception('This letter is already being sent.');
             if (!$sendLetter($app, $app['status'])) throw new Exception('The letter could not be sent. Please try again in a moment.');
+        } elseif ($act === 'remind_confirm') {
+            if ($app['status'] !== 'Accepted' || !$confOn($app['form_id'])) {
+                throw new Exception('Confirmation is not turned on for this application\'s program, or it is not an accepted application.');
+            }
+            if (in_array($confState($app), ['confirmed', 'declined'], true)) throw new Exception('This awardee has already answered.');
+            if (!$srcReady) throw new Exception('The committee address (mail.src_reply_to) is not set in config.php, so the email cannot be sent.');
+            if (!$sendConfirmLink($app)) throw new Exception('The email could not be sent. Please try again in a moment.');
+        } elseif ($act === 'mark_declined') {
+            // A decline that reached the committee some other way. Nothing is emailed and no place is released.
+            if ($app['status'] !== 'Accepted' || !$confOn($app['form_id'])) {
+                throw new Exception('Confirmation is not turned on for this application\'s program, or it is not an accepted application.');
+            }
+            if ($confState($app) === 'declined') throw new Exception('This awardee has already declined.');
+            $confModel->recordReviewerDecline((int) $app['id'], trim((string) ($_POST['reason'] ?? '')), $by);
         } elseif (isset(APP_ACTIONS[$act])) {
             // Restore only works on discarded applications; everything else only on open ones.
             $need = $act === 'restore' ? ['Discarded'] : APP_OPEN;
@@ -336,7 +608,7 @@ if ($app && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 $msg = trim((string) ($_POST['message'] ?? ''));
                 if ($msg === '') throw new Exception('Say what you need from the applicant.');
                 $token = $model->generateMagicLink((int) $app['id'], true);
-                $model->updateStatus((int) $app['id'], 'Draft');
+                $model->sendBack((int) $app['id']);
                 if (!$emailSentBack($app, $msg, $token)) {
                     // Email failed: show the link and message so the decision is not wasted.
                     $_SESSION['application_link'] = ['who' => $app['applicant_name'] ?: $app['email'], 'email' => $app['email'],
@@ -360,10 +632,10 @@ if ($app && $_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             throw new Exception('Unknown action.');
         }
-        app_log("Application $act: #{$app['id']} ({$app['tracking_id']}, {$app['form_type']}) by $by");
+        AuditLog::record('application.' . $act, Auth::id(), Auth::email(), 'Application #' . $app['id'], (string) $app['tracking_id']);
         header('Location: /admin/application-review?id=' . $app['id'] . '&done=' . urlencode($doneKey));
         exit;
-    } catch (Throwable $e) { $error = $e->getMessage(); }
+    } catch (Throwable $e) { $error = engage_user_message($e, 'Application decision'); }
     $app = $model->getApplicationById($id);   // fresh state after an error
 }
 
@@ -373,12 +645,70 @@ $doneText = ['approve' => 'Accepted.', 'reject' => 'Rejected.', 'review' => 'Mar
              'approve_unsent' => 'Accepted, but the award letter could not be sent. Use "Send letter again" below.',
              'reject_unsent' => 'Rejected, but the decline letter could not be sent. Use "Send letter again" below.',
              'resend_letter' => 'Letter sent.',
+             'remind_confirm' => 'Confirmation link emailed to the awardee.',
+             'mark_declined' => 'Marked as declined. Nothing was emailed, and no place was released automatically.',
              'info' => 'Sent back to the applicant. They were emailed your message and a link to update their application.',
              'info_manual' => 'Sent back to the applicant, but the email could not be sent. See below.',
              'resend' => 'New link created.',
              'discard' => 'Discarded. The applicant was not notified.', 'restore' => 'Restored to the queue.'];
 if (!empty($_GET['done'])) $notice = $doneText[$_GET['done']] ?? 'Saved.';
 if (($_GET['letters'] ?? '') === 'saved') $notice = 'Scholarship letters saved.';
+if (($_GET['confirm'] ?? '') === 'saved') $notice = 'Award confirmation settings saved.';
+
+// ---------------------------------------------------------------------------
+// CSV of one program's awardees and their confirmation answers (organizers and owners only, like this page).
+// Must run before any output. Only accepted applications are listed. Names and answers are typed by people, so
+// a cell that starts with = + - @ is prefixed with an apostrophe to stop a spreadsheet running it as a formula.
+// ---------------------------------------------------------------------------
+if (!$id && isset($_GET['export_confirm'])) {
+    $ef = (int) $_GET['export_confirm'];
+    if (!isset($allowed[$ef])) { http_response_code(404); die('Program not found.'); }
+
+    $safe = function ($v) {
+        $v = (string) $v;
+        return ($v !== '' && strpos("=+-@\t\r", $v[0]) !== false) ? "'" . $v : $v;
+    };
+    $awardees = array_values(array_filter($model->getAllApplications(),
+        fn($r) => (int) $r['form_id'] === $ef && $r['status'] === 'Accepted'));
+    usort($awardees, fn($a, $b) => strcasecmp((string) $a['applicant_name'], (string) $b['applicant_name']));
+
+    // Columns: the fixed ones, then every question asked (current questions first, then any older ones answered).
+    $labels = [];
+    try {
+        foreach (AwardConfirmationModel::parseFields((string) ($confSettings[$ef]['fields_text'] ?? '')) as $f) $labels[$f['label']] = true;
+    } catch (Throwable $e) { app_log_ignored('application_review.php:644', $e);}
+    $perApp = [];
+    foreach ($awardees as $r) {
+        $blob = AwardConfirmationModel::decrypt($confByApp[(int) $r['id']]['answers_enc'] ?? '');
+        $map = [];
+        foreach ($blob['answers'] as $a) {
+            $map[(string) ($a['label'] ?? '')] = (string) ($a['value'] ?? '');
+            $labels[(string) ($a['label'] ?? '')] = true;
+        }
+        $perApp[(int) $r['id']] = ['map' => $map, 'reason' => $blob['reason']];
+    }
+    $labels = array_keys($labels);
+
+    $slug = preg_replace('/[^a-zA-Z0-9]+/', '_', (string) ($allForms[array_search($ef, array_column($allForms, 'id'))]['form_type'] ?? 'program'));
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="' . $slug . '_award_confirmations.csv"');
+    $out = fopen('php://output', 'w');
+    fwrite($out, "\xEF\xBB\xBF");   // so Excel reads the UTF-8 names correctly
+    fputcsv($out, array_merge(['Name', 'Email', 'Tracking ID', 'Response', 'Responded (IST)', 'Reminders sent', 'Reason for declining'], $labels));
+    foreach ($awardees as $r) {
+        $c = $confByApp[(int) $r['id']] ?? null;
+        $state = $confState($r);
+        $row = [$safe($r['applicant_name']), $safe($r['email']), $safe($r['tracking_id']),
+                ['confirmed' => 'Confirmed', 'declined' => 'Declined', 'awaiting' => 'Awaiting', 'overdue' => 'Overdue', 'none' => 'Not asked yet'][$state],
+                $c && !empty($c['responded_at']) ? FormModel::formatIst($c['responded_at']) : '',
+                (int) ($c['reminder_count'] ?? 0), $safe($perApp[(int) $r['id']]['reason'])];
+        foreach ($labels as $label) $row[] = $safe($perApp[(int) $r['id']]['map'][$label] ?? '');
+        fputcsv($out, $row);
+    }
+    fclose($out);
+    AuditLog::record('award.confirmations_exported', Auth::id(), Auth::email(), 'Form #' . $ef);
+    exit;
+}
 
 // One-time link(s) to hand to the applicant: a new link from "Create a new link" (never emailed),
 // or the link from a send-back whose email could not be sent.
@@ -388,7 +718,12 @@ $bulk = $_SESSION['application_bulk'] ?? null;
 unset($_SESSION['application_bulk']);
 $bulkVerb = ['approve' => 'accepted', 'reject' => 'rejected', 'review' => 'marked under review',
              'info' => 'sent back for more information', 'discard' => 'discarded (no one was notified)',
-             'restore' => 'restored to the queue', 'resend_letter' => 'had their letter sent again'];
+             'restore' => 'restored to the queue', 'resend_letter' => 'had their letter sent again',
+             'remind_confirm' => 'sent their confirmation link',
+             'mark_declined' => 'marked as declined (no email sent)'];
+// Pill for an awarded row: Confirmed / Declined / Awaiting / Overdue. Overdue and Declined are the two to act on.
+$confLabel = ['confirmed' => 'Confirmed', 'declined' => 'Declined', 'awaiting' => 'Awaiting confirmation', 'overdue' => 'Overdue'];
+$confTone  = ['confirmed' => 'st-ok', 'declined' => 'st-off', 'awaiting' => 'st-wait', 'overdue' => 'st-bad'];
 
 $fForm = (string) ($_GET['form'] ?? ''); $fStatus = (string) ($_GET['status'] ?? '');
 $h = fn($v) => htmlspecialchars((string) $v);
@@ -439,6 +774,7 @@ engage_header([
     .bulkbar .count { min-width: 90px; font-size: 14px; font-weight: 800; color: var(--primary-dark); }
     .bulkbar input[type=text] { flex: 1 1 240px; min-width: 200px; }
     .rowform { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 0; }
+    .rowform + .rowform { margin-top: 6px; }
     .rowform input[type=text] { width: 170px; padding: 6px 10px; font-size: 13px; }
     .rowform select { padding: 6px 8px; font-size: 13px; }
     .tbl th.pick, .tbl td.pick { width: 36px; padding-right: 0; }
@@ -503,7 +839,15 @@ engage_header([
         <?php if (!empty($bulk['letters'])): ?>
             <?= (int) $bulk['letters'] ?> letter<?= $bulk['letters'] === 1 ? '' : 's' ?> emailed.
         <?php endif; ?>
+        <?php if (!empty($bulk['reminded'])): ?>
+            <?= (int) $bulk['reminded'] ?> confirmation link<?= $bulk['reminded'] === 1 ? '' : 's' ?> emailed.
+        <?php endif; ?>
     </div>
+    <?php if (!empty($bulk['remind_failed'])): ?>
+        <div class="action-banner"><strong>These confirmation emails could not be sent.</strong> Tick them and try again, or write to them yourself:
+            <ul><?php foreach ($bulk['remind_failed'] as $l): ?><li><?= $h($l['who']) ?> (<?= $h($l['email']) ?>)</li><?php endforeach; ?></ul>
+        </div>
+    <?php endif; ?>
     <?php if ($bulk['skipped']): ?>
         <div class="action-banner"><strong>Skipped</strong><ul><?php foreach ($bulk['skipped'] as $s): ?><li><?= $h($s) ?></li><?php endforeach; ?></ul></div>
     <?php endif; ?>
@@ -611,6 +955,62 @@ engage_header([
             </form>
         </section>
         <?php endif; ?>
+
+        <?php
+        // Award confirmation: what the awardee answered, a button to email their link again, and a way to record
+        // a decline that arrived by email or phone.
+        $cState = $confState($app);
+        $cRow = $confByApp[(int) $app['id']] ?? null;
+        if ($app['status'] === 'Accepted' && ($cState !== 'none' || $confOn($app['form_id']))):
+            $cBlob = AwardConfirmationModel::decrypt($cRow['answers_enc'] ?? ''); ?>
+        <section class="sect">
+            <div class="qhead">
+                <h3>Award confirmation</h3>
+                <?php if ($cState !== 'none'): ?><span class="pill <?= $confTone[$cState] ?>"><?= $h($confLabel[$cState]) ?></span><?php endif; ?>
+            </div>
+            <p class="qmeta">
+                <?php if ($cState === 'confirmed' || $cState === 'declined'): ?>
+                    <?= $cState === 'confirmed' ? 'Confirmed' : 'Declined' ?> on <?= $h(FormModel::formatIst($cRow['responded_at'] ?? null)) ?>
+                <?php elseif ($cState === 'overdue'): ?>
+                    No answer, and the deadline (<?= $h(FormModel::formatIst($confSettings[(int) $app['form_id']]['deadline_at'] ?? null)) ?>) has passed. Nothing has been changed: the place is yours to keep or offer to someone else.
+                <?php elseif ($cState === 'awaiting'): ?>
+                    Waiting for an answer. Deadline <?= $h(FormModel::formatIst($confSettings[(int) $app['form_id']]['deadline_at'] ?? null)) ?>.
+                <?php else: ?>
+                    This awardee has not been sent a confirmation link yet.
+                <?php endif; ?>
+                <?php if (!empty($cRow['reminder_count'])): ?> &middot; Link emailed <?= (int) $cRow['reminder_count'] ?> time<?= (int) $cRow['reminder_count'] === 1 ? '' : 's' ?> as a reminder<?php endif; ?>
+            </p>
+            <?php if ($cBlob['answers']): ?>
+                <dl class="answers">
+                <?php foreach ($cBlob['answers'] as $a): ?>
+                    <dt><?= $h($a['label'] ?? '') ?></dt>
+                    <dd><?= (string) ($a['value'] ?? '') === '' ? '&mdash;' : $h($a['value']) ?></dd>
+                <?php endforeach; ?>
+                </dl>
+            <?php endif; ?>
+            <?php if ($cBlob['reason'] !== ''): ?>
+                <dl class="answers"><dt>Reason given for declining</dt><dd><?= $h($cBlob['reason']) ?></dd></dl>
+            <?php endif; ?>
+            <?php if ($confOn($app['form_id']) && !in_array($cState, ['confirmed', 'declined'], true)): ?>
+                <form method="POST" style="margin-top:16px;"><?= CSRF::getInputField() ?>
+                    <input type="hidden" name="id" value="<?= (int) $app['id'] ?>">
+                    <button name="action" value="remind_confirm" class="btn-ghost"
+                            onclick="return confirm('Email this awardee their confirmation link?');"><?= $cState === 'none' ? 'Send confirmation link' : 'Send reminder' ?></button>
+                </form>
+            <?php endif; ?>
+            <?php if ($confOn($app['form_id']) && $cState !== 'declined'): ?>
+                <form method="POST" class="actform"><?= CSRF::getInputField() ?>
+                    <input type="hidden" name="id" value="<?= (int) $app['id'] ?>">
+                    <div class="field">
+                        <label>Declined by email or phone? Record it here (reason optional, nothing is emailed)</label>
+                        <input type="text" name="reason" style="width:100%">
+                    </div>
+                    <button name="action" value="mark_declined" class="btn-bad"
+                            onclick="return confirm('Mark this awardee as declined? Nothing is emailed and no place is released automatically. If they had confirmed, their travel and stay answers are removed.');">Mark as declined</button>
+                </form>
+            <?php endif; ?>
+        </section>
+        <?php endif; ?>
     <?php endif; ?>
 
 <?php else:
@@ -638,6 +1038,8 @@ engage_header([
         $groups[$fid]['rows'][] = $r;
         $groups[$fid]['counts'][$r['status']] = ($groups[$fid]['counts'][$r['status']] ?? 0) + 1;
         if (in_array($r['status'], ['New', 'Submitted'], true)) $groups[$fid]['waiting']++;
+        $cs = $confState($r);
+        if ($cs !== 'none') $groups[$fid]['conf'][$cs] = ($groups[$fid]['conf'][$cs] ?? 0) + 1;
     }
     $groups = array_filter($groups, fn($g) => $g['rows']);
     uasort($groups, fn($a, $b) => ($b['waiting'] <=> $a['waiting']) ?: (count($b['rows']) <=> count($a['rows'])));
@@ -679,9 +1081,11 @@ engage_header([
                 <option value="discard">Discard (no email)</option>
                 <option value="restore">Restore discarded</option>
                 <option value="resend_letter">Resend unsent letter</option>
+                <option value="remind_confirm">Email confirmation link / reminder</option>
+                <option value="mark_declined">Mark awardees as declined (no email)</option>
             </select>
             <input type="text" name="note" id="bulkNote"
-                placeholder="Note emailed with the decision (optional) / what you need (required for Needs information)">
+                placeholder="Note emailed with the decision (optional) / what you need (required for Needs information) / reason for a recorded decline">
             <button type="submit" id="bulkApply" class="btn-solid sm">Apply to selected</button>
         </form>
 
@@ -692,7 +1096,19 @@ engage_header([
 
     <?php foreach ($groups as $g):
         $f = $g['form']; $c = $g['counts']; $n = count($g['rows']);
-        $isOpen = $filtering || $g['waiting'] > 0 || $keepLetters !== null;
+        $isOpen = $filtering || $g['waiting'] > 0 || $keepLetters !== null || $keepConfirm !== null;
+        $cc = $g['conf'] ?? [];
+        $CS = $confSettings[(int) $f['id']] ?? null;
+        $keepC = ($keepConfirm !== null && (int) ($keepConfirm['form_id'] ?? 0) === (int) $f['id']) ? $keepConfirm : null;
+        // Confirmation panel values: what was just posted (if a save was refused), else what is stored, else a default.
+        $cv = function (string $postKey, string $col, string $default = '') use ($keepC, $CS): string {
+            if ($keepC !== null) return (string) ($keepC[$postKey] ?? '');
+            $v = (string) ($CS[$col] ?? '');
+            return $v !== '' ? $v : $default;
+        };
+        $cChecked = $keepC !== null ? !empty($keepC['confirm_enabled']) : !empty($CS['enabled']);
+        $cDeadline = $keepC !== null ? (string) ($keepC['confirm_deadline'] ?? '') : FormModel::utcToIstInput($CS['deadline_at'] ?? null);
+        $cMin = (new DateTimeImmutable('now', new DateTimeZone(FormModel::DISPLAY_TZ)))->format('Y-m-d\TH:i');
         $L = $letters[(int) $f['id']] ?? null;
         $keepL = ($keepLetters !== null && (int) ($keepLetters['form_id'] ?? 0) === (int) $f['id']) ? $keepLetters : null;
         // Value for a letter field: what was just posted (if a save was refused), else what is stored, else a default.
@@ -709,6 +1125,9 @@ engage_header([
             <span class="pg-slug">/<?= $h($f['form_type']) ?></span>
             <span class="pg-stats">
                 <?php if ($lActive): ?><span class="pill st-ok">letters on</span><?php endif; ?>
+                <?php if (!empty($cc['overdue'])): ?><span class="pill badge-attn"><?= (int) $cc['overdue'] ?> overdue</span><?php endif; ?>
+                <?php if (!empty($cc['declined'])): ?><span class="pill st-off"><?= (int) $cc['declined'] ?> declined</span><?php endif; ?>
+                <?php if (!empty($cc['confirmed']) || !empty($cc['awaiting'])): ?><span class="pill st-wait"><?= (int) ($cc['confirmed'] ?? 0) ?> confirmed &middot; <?= (int) ($cc['awaiting'] ?? 0) ?> awaiting</span><?php endif; ?>
                 <?php if ($g['waiting']): ?><span class="pill badge-attn"><?= (int) $g['waiting'] ?> waiting</span><?php endif; ?>
                 <?php if (!empty($c['Under Review'])): ?><span class="pill st-review"><?= (int) $c['Under Review'] ?> under review</span><?php endif; ?>
                 <?php if (!empty($c['Draft'])): ?><span class="pill st-wait"><?= (int) $c['Draft'] ?> awaiting applicant</span><?php endif; ?>
@@ -726,14 +1145,19 @@ engage_header([
             $rowDiscarded = $r['status'] === 'Discarded';
             $rowLetter = $letterOn($r['form_id']);   // Accept / Reject send the committee letter on this program
             $rowResend = $rowLetter && !empty($r['letter_failed']) && in_array($r['status'], ['Accepted', 'Rejected'], true);
-            $rowPick = $rowOpen || $rowDiscarded || $rowResend; ?>
+            $rowConf = $confState($r);   // confirmed | declined | awaiting | overdue | none
+            $rowRemind = $r['status'] === 'Accepted' && $confOn($r['form_id']) && in_array($rowConf, ['awaiting', 'overdue'], true);
+            // An awardee who has not already declined can be recorded as declined (also one who had confirmed).
+            $rowDecl = $r['status'] === 'Accepted' && $confOn($r['form_id']) && $rowConf !== 'declined';
+            $rowPick = $rowOpen || $rowDiscarded || $rowResend || $rowRemind || $rowDecl; ?>
             <tr>
                 <td class="pick"><input type="checkbox" class="pick-row" value="<?= (int) $r['id'] ?>" data-letters="<?= $rowLetter ? '1' : '0' ?>"
                     <?= $rowPick ? '' : 'disabled title="Already decided or waiting on the applicant"' ?>></td>
                 <td><a class="dl" href="?id=<?= (int) $r['id'] ?>"><?= $h($r['applicant_name'] ?: $r['email']) ?></a>
                     <span class="sub"><?= $h($r['email']) ?></span></td>
                 <td><code><?= $h($r['tracking_id']) ?></code></td>
-                <td><span class="pill <?= $tone($r['status']) ?>"><?= $h($label($r['status'])) ?></span></td>
+                <td><span class="pill <?= $tone($r['status']) ?>"><?= $h($label($r['status'])) ?></span>
+                    <?php if ($rowConf !== 'none'): ?><span class="pill <?= $confTone[$rowConf] ?>"><?= $h($confLabel[$rowConf]) ?></span><?php endif; ?></td>
                 <td><?= $h($r['created_at']) ?></td>
                 <td>
                 <?php if ($rowOpen): ?>
@@ -765,11 +1189,66 @@ engage_header([
                         <span class="unsent">Letter not sent</span>
                         <button type="submit" class="btn-ghost sm">Resend letter</button>
                     </form>
+                <?php elseif ($rowRemind || $rowDecl): ?>
+                    <?php if ($rowRemind): ?>
+                    <form method="POST" class="rowform"><?= CSRF::getInputField() ?>
+                        <input type="hidden" name="action" value="bulk">
+                        <input type="hidden" name="bulk_action" value="remind_confirm">
+                        <input type="hidden" name="ids[]" value="<?= (int) $r['id'] ?>">
+                        <button type="submit" class="btn-ghost sm">Send reminder</button>
+                    </form>
+                    <?php endif; ?>
+                    <?php if ($rowDecl): ?>
+                    <form method="POST" class="rowform"
+                          onsubmit="return confirm('Mark this awardee as declined? Nothing is emailed and no place is released automatically. If they had confirmed, their travel and stay answers are removed.');"><?= CSRF::getInputField() ?>
+                        <input type="hidden" name="action" value="bulk">
+                        <input type="hidden" name="bulk_action" value="mark_declined">
+                        <input type="hidden" name="ids[]" value="<?= (int) $r['id'] ?>">
+                        <input type="text" name="note" placeholder="Reason (optional)" aria-label="Reason for the decline">
+                        <button type="submit" class="btn-ghost sm">Mark declined</button>
+                    </form>
+                    <?php endif; ?>
                 <?php else: ?><span class="dash">&mdash;</span><?php endif; ?>
                 </td></tr>
         <?php endforeach; ?>
         </tbody></table>
         </div>
+
+        <details class="letters"<?= $keepC !== null ? ' open' : '' ?>>
+            <summary>Award confirmation <?= AwardConfirmationModel::isOn($CS) ? '<span class="pill st-ok">on</span>' : '<span class="pill st-off">off</span>' ?></summary>
+            <form method="POST" class="letterform"><?= CSRF::getInputField() ?>
+                <input type="hidden" name="form_id" value="<?= (int) $f['id'] ?>">
+                <label class="chk"><input type="checkbox" name="confirm_enabled" value="1" <?= $cChecked ? 'checked' : '' ?>>
+                    <span>Turn on for this program: the award letter carries each awardee&rsquo;s private link, where they accept or decline the place and share their travel and stay details.</span></label>
+
+                <div class="field">
+                    <label for="cd-<?= (int) $f['id'] ?>">Respond by (IST)</label>
+                    <input type="datetime-local" id="cd-<?= (int) $f['id'] ?>" name="confirm_deadline" value="<?= $h($cDeadline) ?>" min="<?= $h($cMin) ?>">
+                </div>
+                <div class="field">
+                    <label for="ci-<?= (int) $f['id'] ?>">Introduction shown on the confirmation page (optional)</label>
+                    <textarea id="ci-<?= (int) $f['id'] ?>" name="confirm_intro" rows="3" maxlength="<?= (int) AwardConfirmationModel::INTRO_MAX ?>"><?= $h($cv('confirm_intro', 'intro_text')) ?></textarea>
+                </div>
+                <div class="field">
+                    <label for="cf-<?= (int) $f['id'] ?>">Questions, one per line</label>
+                    <textarea id="cf-<?= (int) $f['id'] ?>" name="confirm_fields" rows="9" maxlength="<?= (int) AwardConfirmationModel::FIELDS_MAX_CHARS ?>"><?= $h($cv('confirm_fields', 'fields_text', AwardConfirmationModel::DEFAULT_FIELDS)) ?></textarea>
+                </div>
+
+                <p class="hint">Introduction formatting: <code>'''bold'''</code> <code>''italic''</code> <code>[https://example.org link text]</code> <code>* bullet</code> <code># numbered</code> <code>== heading ==</code>. Use &ldquo;Preview confirmation page&rdquo; to see it as an awardee will.<br>
+                    Question format: <code>Question | type | required or optional | choices</code>. Types: text, textarea, date, tel, number, email, select (a select needs its choices, separated by commas). To ask a question only for some answers, add a fifth part: <code>Do you need accommodation? | select | required | Yes, No | if Are you local? = No</code> (the earlier question must be a select; leave the choices part empty for other types).
+                    The award letter must contain <code>[{confirm_link} Confirm your place]</code> where the link should appear; confirmation can only be turned on once it does, and letters are on.
+                    Answers are stored encrypted. Declining only flags the place as free: nothing is released automatically, and you accept whoever you choose.
+                    If someone declines by email or phone, use &ldquo;Mark declined&rdquo; on their row to record it.
+                    <?php if (!empty($CS['saved_at'])): ?>Last saved <?= $h($CS['saved_at']) ?> by <?= $h($CS['saved_by']) ?>.<?php endif; ?></p>
+                <?php if (!$srcReady): ?><p class="hint" style="color:var(--accent);">Add <code>mail.src_reply_to</code> to config.php before turning confirmation on.</p><?php endif; ?>
+
+                <div class="actrow">
+                    <button type="submit" name="action" value="save_confirm" class="btn-solid sm">Save confirmation settings</button>
+                    <button type="submit" name="action" value="preview_confirm" formtarget="_blank" class="btn-ghost sm">Preview confirmation page</button>
+                    <a class="btn-ghost sm" style="text-decoration:none" href="?export_confirm=<?= (int) $f['id'] ?>">Download responses (CSV)</a>
+                </div>
+            </form>
+        </details>
 
         <details class="letters"<?= $keepL !== null ? ' open' : '' ?>>
             <summary>Scholarship letters <?= $lActive ? '<span class="pill st-ok">on</span>' : '<span class="pill st-off">off</span>' ?></summary>
@@ -879,7 +1358,9 @@ engage_header([
                 reject: 'Reject ' + plural + '? ' + mail + ', they are locked and this cannot be undone.',
                 info: 'Send ' + plural + ' back for more information? Each applicant is emailed your message and a link to update their application.',
                 discard: 'Discard ' + plural + '? The applicants are NOT notified. You can restore them later from the Discarded status filter.',
-                resend_letter: 'Send the committee letter again to ' + plural + '?'
+                resend_letter: 'Send the committee letter again to ' + plural + '?',
+                remind_confirm: 'Email the confirmation link to ' + plural + '? Anyone who has already answered is skipped.',
+                mark_declined: 'Mark ' + plural + ' as declined? Nothing is emailed and no place is released automatically. Any answers from awardees who had confirmed are removed.'
             }[act];
         }
 
@@ -902,7 +1383,8 @@ engage_header([
             apply.disabled = true; apply.textContent = 'Working…';
         });
 
-        // Per-row Apply uses the same checks. (Restore and Resend rows have no dropdown, so they submit straight away.)
+        // Per-row Apply uses the same checks. (Restore, Resend, Reminder and Mark declined rows have no dropdown:
+        // they submit straight away, and Mark declined asks for its own confirmation.)
         document.querySelectorAll('.rowform').forEach(function (f) {
             f.addEventListener('submit', function (e) {
                 var sel = f.querySelector('select');

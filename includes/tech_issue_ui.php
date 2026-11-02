@@ -202,8 +202,9 @@ function tech_handle_reporter_post(TechIssueModel $model, string $type, string $
             $go('?id=' . rawurlencode($tracking));
         }
     } catch (Throwable $e) {
-        error_log('Tech issue post failed: ' . $e->getMessage());
-        tech_flash('error', $e instanceof RuntimeException ? $e->getMessage() : 'Something went wrong on our side. Please try again in a moment.');
+        // Messages meant for the reporter (UserFacingException, InvalidArgumentException) are shown; anything else
+        // is logged with a reference and replaced by a generic message.
+        tech_flash('error', engage_user_message($e, 'Tech issue post'));
         $go();
     }
     $go();

@@ -104,21 +104,51 @@ class ReimbursementModel {
     }
 
     /**
+     * One spelling of an event name for storing and comparing: trimmed, and any run of whitespace
+     * (spaces, tabs, line breaks, non-breaking spaces) collapsed to a single space. Without this,
+     * "Wiki Meetup" and "Wiki  Meetup" counted as two different events.
+     */
+    public static function normalizeEventName($name) {
+        return trim(preg_replace('/\s+/u', ' ', (string) $name));
+    }
+
+    /**
      * True if this email already has a non-Rejected, non-Discarded request
      * for THIS event name specifically. Scoped per (email, event_name)
      * rather than globally per email, since the same person can legitimately
      * claim reimbursement for two different events they attended — the
      * duplicate-payment risk this guards against is filing twice for the
      * *same* event, not ever submitting more than once at all.
+     *
+     * Names are compared after normalizeEventName(). Requests saved before names were normalized can
+     * still hold doubled spaces, so the member's other open requests are compared the same way.
      */
     public function hasOpenOrPaidRequest($email, $eventName) {
+        $email = strtolower(trim($email));
+        $eventName = self::normalizeEventName($eventName);
+
         $stmt = $this->db->prepare(
             "SELECT 1 FROM reimbursement_requests
              WHERE email = :email AND event_name = :event_name
                AND status NOT IN ('Rejected', 'Discarded')"
         );
-        $stmt->execute(['email' => strtolower(trim($email)), 'event_name' => trim($eventName)]);
-        return (bool) $stmt->fetchColumn();
+        $stmt->execute(['email' => $email, 'event_name' => $eventName]);
+        if ($stmt->fetchColumn()) {
+            return true;
+        }
+
+        $others = $this->db->prepare(
+            "SELECT event_name FROM reimbursement_requests
+             WHERE email = :email AND status NOT IN ('Rejected', 'Discarded')"
+        );
+        $others->execute(['email' => $email]);
+        $wanted = mb_strtolower($eventName);
+        foreach ($others->fetchAll(PDO::FETCH_COLUMN) as $existing) {
+            if (mb_strtolower(self::normalizeEventName($existing)) === $wanted) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // ------------------------------------------------------------------
@@ -151,7 +181,7 @@ class ReimbursementModel {
      * @return array ['id' => int, 'tracking_id' => string, 'total_paise' => int]
      */
     public function createRequest($settings, $email, $applicantName, $eventName, $eventDate, array $payment, array $lineItems) {
-        $eventName = trim($eventName);
+        $eventName = self::normalizeEventName($eventName);
         if ($eventName === '') {
             throw new \InvalidArgumentException('Please enter the name of the event.');
         }
@@ -224,6 +254,30 @@ class ReimbursementModel {
 
         $trackingId = $this->generateTrackingId();
 
+        // Check-then-insert is not safe on its own: two submissions that arrive together (same member on two
+        // devices, or a host whose sessions do not serialize requests) both see "no claim yet" and both insert.
+        // A named lock, one per member and event, makes the second one wait and then find the first.
+        // GET_LOCK is per connection, so it also frees itself if this request dies.
+        $lockName = 'reimb_' . md5(strtolower(trim($email)) . '|' . mb_strtolower($eventName));
+        $gotLock = (int) $this->db->query('SELECT GET_LOCK(' . $this->db->quote($lockName) . ', 10)')->fetchColumn();
+        if ($gotLock !== 1) {
+            throw new \RuntimeException('Could not take the duplicate-claim lock for ' . $lockName);
+        }
+
+        try {
+            if ($this->hasOpenOrPaidRequest($email, $eventName)) {
+                throw new \InvalidArgumentException('You already have a reimbursement request registered for "' . $eventName . '".');
+            }
+            return $this->insertRequest($trackingId, $email, $applicantName, $eventName, $eventDate, $method,
+                $totalPaise, $upiId, $bankAccountName, $bankAccountNumberEnc, $bankIfsc, $lineItems);
+        } finally {
+            $this->db->query('SELECT RELEASE_LOCK(' . $this->db->quote($lockName) . ')');
+        }
+    }
+
+    /** The INSERT half of createRequest(): the request and its line items in one transaction. */
+    private function insertRequest($trackingId, $email, $applicantName, $eventName, $eventDate, $method,
+                                   $totalPaise, $upiId, $bankAccountName, $bankAccountNumberEnc, $bankIfsc, array $lineItems) {
         $this->db->beginTransaction();
         try {
             $stmt = $this->db->prepare(
@@ -680,7 +734,7 @@ class ReimbursementModel {
     public function resubmitDraft($trackingId, $email, $eventName, $eventDate, array $items, $note) {
         $note = $this->cleanMessage($note);
 
-        $eventName = trim(preg_replace('/\s+/', ' ', (string) $eventName));
+        $eventName = self::normalizeEventName($eventName);
         if ($eventName === '') {
             throw new \InvalidArgumentException('Please enter the name of the event.');
         }

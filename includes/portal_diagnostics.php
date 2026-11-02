@@ -7,6 +7,7 @@
  * values, secrets, file paths or raw exception messages (a PDO message can contain the DB host).
  * Details of a failure go to the server log instead.
  */
+require_once __DIR__ . '/app_log.php';
 class PortalDiagnostics {
     /** Tables the portal needs. Add any others your install relies on. */
     const EXPECTED_TABLES = [
@@ -25,7 +26,7 @@ class PortalDiagnostics {
             try {
                 $out[$title] = self::$method();
             } catch (Throwable $e) {
-                error_log('Diagnostics group "' . $title . '" failed: ' . $e->getMessage());
+                app_log('Diagnostics group "' . $title . '" failed: ' . $e->getMessage());
                 $out[$title] = [self::c('This group could not run', 'fail', 'Unexpected error (' . get_class($e) . '). See the server log.')];
             }
         }

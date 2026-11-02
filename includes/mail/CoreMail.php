@@ -9,6 +9,7 @@
 if (file_exists(__DIR__ . '/../../vendor/autoload.php')) {
     require_once __DIR__ . '/../../vendor/autoload.php';
 }
+require_once __DIR__ . '/../app_log.php';
 
 class CoreMail {
     /** HTML-escape for anything that lands inside an email body. Never use on a Subject line. */
@@ -21,9 +22,10 @@ class CoreMail {
      * Some forms ask for the age, and people put it in the name field:
      *   "Name, 20"   "Name (20)"   "Name (20 years)"   "Name [20 yrs old]"   "Name - 20"
      *   "Name 20"    "Name 20 years"   "Name, age 20"   "Name aged 20"   "20, Name"
+     *   "Name and 21 years"   "Name & 21"   "Name, and 21"   "Name and I am 21"
      *   "Name, 20, Male"  (everything from the age onwards is dropped)
      * A field label typed before the name is removed too: "Name: Aafi Khan, Age: 21" -> "Aafi Khan".
-     * Names that legitimately contain a comma ("Khan, Mohammad") or other text are left alone.
+     * Names that legitimately contain a comma ("Khan, Mohammad") or other text ("Ali and Sara") are left alone.
      * Returns '' when nothing usable is left (callers then use their own fallback greeting).
      * Use this only for what goes into an email; never to change what is stored.
      */
@@ -40,6 +42,9 @@ class CoreMail {
         $n = preg_replace('/(?:\s*[,;|\/:]\s*|\s+[-–—]\s*)(?:aged?\s*[:\-]?\s*)?\d.*$/isu', '', $n);
         // "Name aged 20", "Name age 20"
         $n = preg_replace('/\s+aged?\s*[:\-]?\s*\d.*$/isu', '', $n);
+        // "Name and 21", "Name & 21 years", "Name, and 21", "Name and I am 21", "Name and aged 21":
+        // "and" (or "&") joining the name to an age. Needs a digit after it, so "Ali and Sara" is left alone.
+        $n = preg_replace('/(?:\s*,\s*|\s+)(?:and\s+|&\s*)(?:(?:i\s*am|i\'m|aged?)\s*[:\-]?\s*)?\d.*$/isu', '', $n);
         // "20, Name": age first.
         $n = preg_replace('/^\d{1,3}\s*[,;:|\/\-–—]\s*/u', '', $n);
         // "Name 20", "Name 20 years", "Name 20 yrs old".
@@ -55,11 +60,13 @@ class CoreMail {
      * Short event name from a form title, for wording aimed at the respondent/applicant:
      *   "Scholarship Application Form: Train-a-Wikipedian, 4th Edition" -> "Train-a-Wikipedian"
      *   "Community Input: AI, Composition, Pedagogy, and Wiki Panel (January 2027)" -> "AI, Composition, Pedagogy, and Wiki Panel"
+     *   "Call for Fellows: Heritage Lens Fellowship (9th Iteration)" -> "Heritage Lens Fellowship"
      * Strips, in this order:
-     *   1. a leading form-type label that ends in form / application / feedback / input / survey /
-     *      registration / rsvp, up to the first colon ("Wikimedia Hackathon: Delhi" is left alone);
+     *   1. a leading form-type label up to the first colon: either one that ends in form / application /
+     *      feedback / input / survey / registration / rsvp, or one that starts with "Call for"
+     *      ("Call for Fellows:", "Call for Applications:"). "Wikimedia Hackathon: Delhi" is left alone;
      *   2. a trailing bracket that contains a digit, e.g. "(January 2027)" ("(AMU)" survives);
-     *   3. a trailing "4th Edition" (with or without a comma or dash before it).
+     *   3. a trailing "4th Edition" or "9th Iteration" (with or without a comma or dash before it).
      * Falls back to the full title if nothing would be left.
      * Use this only for what goes into an email to the respondent/applicant; organizer alerts and
      * dev logs keep the full title, and it must never be used to change what is stored.
@@ -67,13 +74,13 @@ class CoreMail {
     public static function eventTitle($formTitle) {
         $full = trim((string) $formTitle);
         $t = $full;
-        if (preg_match('/^[^:]*\b(?:form|application|feedback|input|survey|registration|rsvp)s?\s*:\s*(\S.*)$/isu', $t, $m)) {
+        if (preg_match('/^(?:call\s+for\b[^:]*|[^:]*\b(?:form|application|feedback|input|survey|registration|rsvp)s?)\s*:\s*(\S.*)$/isu', $t, $m)) {
             $t = trim($m[1]);
         }
-        // Trailing "(January 2027)" or "(2027)": only brackets containing a digit, so "(AMU)" survives.
+        // Trailing "(January 2027)" or "(2027)" or "(9th Iteration)": only brackets containing a digit, so "(AMU)" survives.
         $t = preg_replace('/\s*\([^()]*\d[^()]*\)\s*$/u', '', $t);
-        // Trailing ", 4th Edition" / " - 4th Edition".
-        $t = preg_replace('/\s*[,\-–—:]?\s*\b\d+(?:st|nd|rd|th)\s+edition\s*$/iu', '', $t);
+        // Trailing ", 4th Edition" / " - 9th Iteration".
+        $t = preg_replace('/\s*[,\-–—:]?\s*\b\d+(?:st|nd|rd|th)\s+(?:edition|iteration)\s*$/iu', '', $t);
         $t = trim($t, " \t\n\r,;:-–—");
         return $t !== '' ? $t : $full;
     }
@@ -155,11 +162,22 @@ class CoreMail {
         $devLog = $o['dev_log'] ?? ('Email to ' . implode(', ', $to) . ': ' . $o['subject']);
 
         if (!class_exists('PHPMailer\PHPMailer\PHPMailer') || $mailConfig['host'] === 'smtp.example.com') {
-            error_log("DEV MODE: $devLog");
+            // The full dev_log line (recipient, codes, links) is only written when app.debug is on, i.e. on a
+            // developer's machine. Otherwise a short line without personal data still shows that mail is off.
+            if (!empty($config['app']['debug'])) {
+                app_log("DEV MODE: $devLog", false);   // unredacted: the developer needs the code or link
+            } else {
+                app_log('Email not sent (mailer not configured): ' . $o['subject']);
+            }
             return $devResult;
         }
 
         $mail = new PHPMailer\PHPMailer\PHPMailer(true);
+        // PHPMailer defaults to ISO-8859-1, which mislabels our UTF-8 subject and body
+        // (an en dash showed up as "â€“", and ₹ would break too). Must be set before
+        // Subject/Body/AltBody are used.
+        $mail->CharSet  = 'UTF-8';
+        $mail->Encoding = 'base64';
         try {
             $mail->isSMTP();
             $mail->Host       = $mailConfig['host'];
@@ -193,7 +211,7 @@ class CoreMail {
             $mail->send();
             return true;
         } catch (Exception $e) {
-            error_log("Email could not be sent ({$o['subject']}). Mailer Error: {$mail->ErrorInfo}");
+            app_log("Email could not be sent ({$o['subject']}). Mailer Error: {$mail->ErrorInfo}");
             return false;
         }
     }
@@ -224,6 +242,7 @@ class CoreMail {
         <!DOCTYPE html>
         <html>
         <head>
+            <meta charset='UTF-8'>
             <style>
                 body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background-color: #f4f6f8; margin: 0; padding: 0; color: #1e293b; }
                 .email-container { max-width: 600px; margin: 40px auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; }

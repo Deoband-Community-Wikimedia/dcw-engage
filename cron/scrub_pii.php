@@ -206,3 +206,16 @@ try {
 } catch (Exception $e) {
     echo "[-] FATAL ERROR during orphan sweep: " . $e->getMessage() . "\n";
 }
+
+// ---------------------------------------------------------------------------
+// 3. Goodies: clear delivery details from finished orders
+// ---------------------------------------------------------------------------
+// Name, phone and address are kept only until an order is Delivered or Cancelled, then 30 days more.
+try {
+    require_once __DIR__ . '/../models/PointsModel.php';
+    $cleared = (new PointsModel($db))->scrubShipping(30);
+    echo "[+] Cleared delivery details from $cleared finished goodies order(s).\n";
+} catch (Throwable $e) {
+    // Before the goodies tables exist this simply has nothing to do.
+    echo "[-] Goodies delivery-details scrub skipped: " . $e->getMessage() . "\n";
+}

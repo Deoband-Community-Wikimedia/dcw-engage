@@ -7,15 +7,20 @@
  * renderer.php itself refuses to run its submission-handling branch
  * whenever $previewSchema is set (see the guard there), so this can never
  * accidentally create a real application no matter what's in the POST body.
+ *
+ * Because the preview goes through renderer.php, it also shows the form the way applicants
+ * will see it: the applicant's name is asked once, at the email gate, and carried forward, so a
+ * question that only asks for the name is left out of the preview too.
  */
 require_once __DIR__ . '/../../includes/init.php';
 require_once __DIR__ . '/../../includes/auth.php';
 require_once __DIR__ . '/../../includes/require_role.php';
 require_once __DIR__ . '/../../models/FormModel.php';
 
-// Same people who can open the builder (builder.php): organizers and owners.
+// Same people who can open the builder (builder.php): owners, organizers and membership coordinators.
+// Nothing is read from or written to the database here, so this grants no access to any form.
 Auth::requireLogin();
-requireRole(['owner', 'organizer']);
+requireRole(['owner', 'organizer', 'membership_coordinator']);
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !CSRF::validate($_POST['csrf_token'] ?? '')) {
     http_response_code(400);

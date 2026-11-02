@@ -193,6 +193,7 @@ class Auth {
                 $held[] = $role;
             }
         } catch (Throwable $e) {
+            app_log_ignored('auth.php:195', $e);
             // Fall through with the primary role only.
         }
 

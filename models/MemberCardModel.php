@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/../includes/app_log.php';
+require_once __DIR__ . '/../includes/audit.php';
 require_once __DIR__ . '/MemberAuthModel.php';
 require_once __DIR__ . '/MemberModel.php';
 require_once __DIR__ . '/MemberProfileModel.php';
@@ -233,7 +234,7 @@ class MemberCardModel
             $token = $this->liveToken($memberId);
             if ($token === null) {
                 $token = $this->insertCard($memberId);
-                app_log("Member card issued: $memberId");
+                AuditLog::activity('member.card_issued', $memberId);
             }
             return $token;
         });
@@ -246,7 +247,7 @@ class MemberCardModel
             $this->db->prepare('UPDATE member_cards SET replaced_at = ? WHERE member_id = ? AND replaced_at IS NULL')
                      ->execute([gmdate('Y-m-d H:i:s'), $memberId]);
             $token = $this->insertCard($memberId);
-            app_log("Member card replaced: $memberId by $by");
+            AuditLog::activity('member.card_replaced', $memberId, null, (string) $by);
             return $token;
         });
     }

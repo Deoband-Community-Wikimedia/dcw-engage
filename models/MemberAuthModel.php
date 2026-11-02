@@ -15,6 +15,8 @@
  * Needs the password columns on `members` and the `member_password_tokens` table (both in database.sql).
  * This class only deals with credentials; sessions, pages and CSRF belong in the views.
  */
+require_once __DIR__ . '/MemberStrikeModel.php';
+
 class MemberAuthModel {
     const MIN_PASSWORD_LENGTH = 10;
     const MAX_PASSWORD_BYTES  = 72;     // bcrypt ignores everything after 72 bytes, so refuse longer ones
@@ -145,6 +147,11 @@ class MemberAuthModel {
             return ['status' => 'invalid', 'member' => null];
         }
 
+        // Only after a correct password, so this answer gives nothing away to someone guessing IDs.
+        if ((new MemberStrikeModel())->isStruck((string) $m['member_id'])) {
+            return ['status' => 'struck', 'member' => null];
+        }
+
         $now = self::utcNow();
         $sql = 'UPDATE members SET failed_logins = 0, locked_until = NULL, last_login_at = :n';
         $args = ['n' => $now, 'id' => $m['id']];
@@ -200,6 +207,7 @@ class MemberAuthModel {
     public function requestLink(string $memberId, string $email): ?array {
         $m = $this->findByMemberId($memberId);
         if (!$m || strcasecmp((string) $m['email'], trim($email)) !== 0) return null;
+        if ((new MemberStrikeModel())->isStruck((string) $m['member_id'])) return null;   // no links while struck off
 
         $st = $this->db->prepare('SELECT COUNT(*) FROM member_password_tokens WHERE member_row_id = :m AND created_at > :t');
         $st->execute(['m' => $m['id'], 't' => self::utcIn('-' . self::RESET_COOLDOWN_SECONDS . ' seconds')]);

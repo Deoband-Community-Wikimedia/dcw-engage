@@ -25,7 +25,7 @@ if (!headers_sent()) {
 // stripped of control characters and cut short so it cannot forge log lines.
 $nfPath = (string) parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
 $nfNote = (isset($notFoundWhat) && is_string($notFoundWhat)) ? ' (' . $notFoundWhat . ')' : '';
-error_log('DCW Engage: 404 ' . substr(preg_replace('/[^\x20-\x7E]/', '?', $nfPath . $nfNote), 0, 200));
+app_log('404 ' . substr(preg_replace('/[^\x20-\x7E]/', '?', $nfPath . $nfNote), 0, 200));
 
 // Signed-in members see their chapter colours and menu, like on every other member page. The member
 // session is read only if a session is already running (this file must never start one), and any failure

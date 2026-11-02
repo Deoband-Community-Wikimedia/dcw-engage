@@ -180,7 +180,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 try {
                     $members->setChapters($result['email'], $chapters);
                 } catch (Throwable $e) {
-                    $chapterError = $e->getMessage();
+                    $chapterError = engage_user_message($e, 'Team chapters');
                 }
             }
 

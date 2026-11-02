@@ -14,6 +14,7 @@ require_once __DIR__ . '/../../models/MemberTicketModel.php';
 require_once __DIR__ . '/../../models/TechIssueModel.php';
 require_once __DIR__ . '/../../models/MemberCertificateModel.php';
 require_once __DIR__ . '/../../models/MemberProfileModel.php';
+require_once __DIR__ . '/../../models/PointsModel.php';
 require_once __DIR__ . '/../../includes/member_session.php';
 require_once __DIR__ . '/../../includes/member_requests.php';
 require_once __DIR__ . '/../../includes/cert_rows.php';
@@ -29,6 +30,9 @@ require_once __DIR__ . '/../../includes/cert_rows.php';
  *
  * Certificates: only the latest few are shown here. The full list, with search and paging,
  * is /member/certificates.
+ *
+ * Goodies: the points balance is a chip in the quick links, and a tile in "More from DCW", both
+ * linking to /member/goodies. They only appear once the goodies tables exist.
  *
  * Link-only forms (schema "unlisted": true) are never listed. Feedback forms (schema "kind": "feedback")
  * are not applications, so they are kept out of "More from DCW" and get their own "Share your feedback"
@@ -69,7 +73,7 @@ $firstName    = $fullName !== '' ? explode(' ', $fullName)[0] : (string) $member
 // Drafts on forms that are still open. Read first so the "send resume link" POST below can only
 // ever act on one of the member's own drafts. (/member/applications posts here too.)
 $drafts = [];
-try { $drafts = (new FormModel())->draftsForEmail($email); } catch (Throwable $e) { /* leave the list empty */ }
+try { $drafts = (new FormModel())->draftsForEmail($email); } catch (Throwable $e) { app_log_ignored('dashboard.php:72', $e); /* leave the list empty */ }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'send_draft_link') {
     if (!CSRF::validate($_POST['csrf_token'] ?? '')) {
@@ -86,7 +90,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'send_
             Mailer::sendMagicLink($email, $fullName !== '' ? $fullName : 'Member', $token);
             $sent = true;
         } catch (Throwable $e) {
-            error_log('Engage dashboard resume link failed: ' . $e->getMessage());
+            app_log('Member dashboard: resume link failed: ' . $e->getMessage());
         }
         break;
     }
@@ -130,7 +134,7 @@ function dash_member_state(array $m, DateTimeZone $utc, DateTimeZone $ist): arra
 
 // Every membership under this Member ID. Falls back to the signed-in row if the lookup fails.
 $memberships = [];
-try { $memberships = (new MemberModel())->membershipsFor((string) $member['member_id']); } catch (Throwable $e) { /* use the session row */ }
+try { $memberships = (new MemberModel())->membershipsFor((string) $member['member_id']); } catch (Throwable $e) { app_log_ignored('dashboard.php:133', $e); /* use the session row */ }
 if (!$memberships) $memberships = [$member];
 
 $strips = [];
@@ -145,9 +149,13 @@ foreach ($memberships as $m) {
 
 // ---- The member's profile (Wikimedia username status), read once for the identity card and the nudge ----
 $dashProfile = null;
-try { $dashProfile = (new MemberProfileModel())->get((string) $member['member_id']); } catch (Throwable $e) { /* table not created yet: stay quiet */ }
+try { $dashProfile = (new MemberProfileModel())->get((string) $member['member_id']); } catch (Throwable $e) { app_log_ignored('dashboard.php:148', $e); /* table not created yet: stay quiet */ }
 $wmName = (string) ($dashProfile['wikimedia_username'] ?? '');
 $wmOk   = $wmName !== '' && !empty($dashProfile['username_verified_at']);
+
+// ---- Goodies points balance (null until the goodies tables exist, so nothing shows before then) ----
+$pointsBalance = null;
+try { $pointsBalance = (new PointsModel())->balance((string) $member['member_id']); } catch (Throwable $e) { app_log_ignored('dashboard.php:points', $e); /* tables not created yet */ }
 
 // ---- What is open (each guarded so the page never breaks) -------------------------------------
 try { $internetOpen = (new InternetSupportModel())->isOpen(); } catch (Throwable $e) { $internetOpen = false; }
@@ -171,7 +179,7 @@ try {
     ));
     $feedbackPrograms = array_values(array_filter($listedForms, fn($f) => FeedbackModel::isFeedbackRow($f)));
     $programs         = array_values(array_filter($listedForms, fn($f) => !FeedbackModel::isFeedbackRow($f)));
-} catch (Throwable $e) { /* leave both lists empty */ }
+} catch (Throwable $e) { app_log_ignored('dashboard.php:174', $e); /* leave both lists empty */ }
 
 // ---- The member's own requests -----------------------------------------------------------------
 // Needs InternetSupportModel::listForMember() and ReimbursementModel::listForMember().
@@ -194,7 +202,7 @@ try {
             'tracking' => $r['tracking_id'], 'created' => $r['created_at'],
             'label' => $label, 'tone' => $tone, 'act' => $act];
     }
-} catch (Throwable $e) { /* method not added yet, or table missing: show nothing rather than break */ }
+} catch (Throwable $e) { app_log_ignored('dashboard.php:197', $e); /* method not added yet, or table missing: show nothing rather than break */ }
 try {
     foreach ((new ReimbursementModel())->listForMember($email) as $r) {
         [$label, $tone, $act] = dash_status('reimbursement', (string) $r['status']);
@@ -206,7 +214,7 @@ try {
             'tracking' => $r['tracking_id'], 'created' => $r['created_at'],
             'label' => $label, 'tone' => $tone, 'act' => $act];
     }
-} catch (Throwable $e) { }
+} catch (Throwable $e) { app_log_ignored('dashboard.php:209', $e); }
 usort($requests, fn($a, $b) => strcmp((string) $b['created'], (string) $a['created']));
 $totalRequests = count($requests);
 $requests = array_slice($requests, 0, 8);
@@ -228,7 +236,7 @@ try {
         $applications[] = ['id' => $id, 'title' => $title, 'tracking' => (string) $a['tracking_id'],
             'created' => $a['created_at'], 'label' => $label, 'tone' => $tone, 'act' => $act];
     }
-} catch (Throwable $e) { error_log('Engage applications lookup failed: ' . $e->getMessage()); }
+} catch (Throwable $e) { app_log('Member dashboard: applications lookup failed: ' . $e->getMessage()); }
 // Needs the member first, then newest first.
 usort($applications, fn($a, $b) => [(int) $b['act'], (string) $b['created']] <=> [(int) $a['act'], (string) $a['created']]);
 $totalApplications = count($applications);
@@ -236,13 +244,13 @@ $applications      = array_slice($applications, 0, DASH_APP_PREVIEW);
 
 // ---- The member's conversations with DCW Support (looked up by Member ID from the session) ------
 $tickets = [];
-try { $tickets = (new MemberTicketModel())->listForMember((string) $member['member_id']); } catch (Throwable $e) { /* table not created yet */ }
+try { $tickets = (new MemberTicketModel())->listForMember((string) $member['member_id']); } catch (Throwable $e) { app_log_ignored('dashboard.php:239', $e); /* table not created yet */ }
 $ticketsWaiting = array_values(array_filter($tickets,
     fn($t) => $t['last_sender'] === 'staff' && !MemberTicketModel::isClosed((string) $t['status'])));
 
 // ---- Technical reports where the technical team answered last ----------------------------------
 $techWaiting = [];
-try { $techWaiting = (new TechIssueModel())->awaitingReporter('member', (string) $member['member_id']); } catch (Throwable $e) { /* table not created yet */ }
+try { $techWaiting = (new TechIssueModel())->awaitingReporter('member', (string) $member['member_id']); } catch (Throwable $e) { app_log_ignored('dashboard.php:245', $e); /* table not created yet */ }
 
 // ---- Certificates issued on certificates.dcwwiki.org, matched by the member's verified email -----
 // Only the total and the latest few are read here; the full list is /member/certificates.
@@ -254,7 +262,7 @@ try {
     $certModel  = new MemberCertificateModel();
     $certCount  = $certModel->countForMember($email);
     $certLatest = $certCount > 0 ? $certModel->latestForMember($email, DASH_CERT_PREVIEW) : [];
-} catch (Throwable $e) { error_log('Engage certificates lookup failed: ' . $e->getMessage()); }
+} catch (Throwable $e) { app_log('Member dashboard: certificates lookup failed: ' . $e->getMessage()); }
 $certBase = 'https://certificates.dcwwiki.org';
 
 // ---- One combined "requires your attention" list ---------------------------------------------------
@@ -437,6 +445,9 @@ cert_rows_css();   // icons, buttons and certificate rows shared with /member/ce
             <a class="d-chip" style="--tone: var(--leaf-dark);" href="#certificates"><?= cert_icon('award') ?><b><?= (int) $certCount ?></b> certificate<?= $certCount === 1 ? '' : 's' ?></a>
             <a class="d-chip" style="--tone: var(--primary);" href="/member/applications"><?= dash_svg($icons, 'doc') ?><b><?= (int) $totalApplications ?></b> application<?= $totalApplications === 1 ? '' : 's' ?></a>
             <a class="d-chip" style="--tone: var(--primary);" href="#requests"><?= dash_svg($icons, 'card') ?><b><?= (int) $totalRequests ?></b> request<?= $totalRequests === 1 ? '' : 's' ?></a>
+            <?php if ($pointsBalance !== null): ?>
+                <a class="d-chip" style="--tone: var(--accent);" href="/member/goodies"><?= dash_svg($icons, 'star') ?><b><?= number_format($pointsBalance) ?></b> point<?= $pointsBalance === 1 ? '' : 's' ?></a>
+            <?php endif; ?>
             <a class="d-chip" style="--tone: <?= $wmName === '' ? 'var(--muted)' : ($wmOk ? 'var(--leaf-dark)' : '#b45309') ?>;" href="/member/profile#wikimedia"><?= dash_svg($icons, 'user') ?><?php if ($wmName === ''): ?>Add Wikimedia username<?php else: ?><b><?= htmlspecialchars($wmName) ?></b> <?= $wmOk ? 'Verified' : 'Not verified' ?><?php endif; ?></a>
             <a class="d-chip" style="--tone: var(--accent);" href="#conversations"><?= dash_svg($icons, 'chat') ?><b><?= count($tickets) ?></b> conversation<?= count($tickets) === 1 ? '' : 's' ?></a>
         </nav>
@@ -663,6 +674,9 @@ cert_rows_css();   // icons, buttons and certificate rows shared with /member/ce
             <?php
             dash_tile($icons, '#106b9a', 'search', 'Track an application', 'Check the status of a public application (ID begins with DCW-).', '/track');
             dash_tile($icons, '#97161b', 'people', $memberActive ? 'Membership' : 'Renew membership', 'Join a club or renew your membership.', '/membership');
+            if ($pointsBalance !== null) {
+                dash_tile($icons, '#106b9a', 'star', 'My goodies', 'Redeem the points you have earned for contributing to DCW.', '/member/goodies');
+            }
             foreach ($programs as $p) {
                 $title = $p['title'] ?: ucwords(str_replace(['-', '_'], ' ', $p['form_type']));
                 $desc = !empty($p['description']) ? MiniWikiText::stripToPlainText($p['description']) : 'Currently open for applications.';

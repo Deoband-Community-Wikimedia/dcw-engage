@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/../../includes/init.php';
+require_once __DIR__ . '/../../includes/audit.php';
 require_once __DIR__ . '/../../includes/require_role.php';
 require_once __DIR__ . '/../../includes/app_log.php';
 require_once __DIR__ . '/../../includes/engage_page.php';
@@ -38,13 +39,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         switch ($act) {
             case 'session_create':
                 $newId = $records->createSession((string) ($_POST['title'] ?? ''), (string) ($_POST['held_on'] ?? ''), $by);
-                app_log("Conversation Hour session #$newId created by $by");
+                AuditLog::record('records.session_created', Auth::id(), Auth::email(), 'Session #' . $newId);
                 ch_redirect('/admin/community-records?session=' . $newId, 'Session created. Now add who attended.');
 
             case 'session_update':
                 if (!$session) throw new InvalidArgumentException('Session not found.');
                 $records->updateSession($sid, (string) ($_POST['title'] ?? ''), (string) ($_POST['held_on'] ?? ''), $by);
-                app_log("Conversation Hour session #$sid edited by $by");
+                AuditLog::record('records.session_edited', Auth::id(), Auth::email(), 'Session #' . $sid);
                 ch_redirect('/admin/community-records?session=' . $sid, 'Session saved.');
 
             case 'attendance_preview':
@@ -57,7 +58,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if (!$preview) throw new InvalidArgumentException('Paste at least one line.');
                 if ($act === 'attendance_commit') {
                     $n = $records->saveAttendance($sid, $preview, $by);
-                    app_log("Conversation Hour #$sid: $n attendance rows logged by $by");
+                    AuditLog::record('records.attendance_logged', Auth::id(), Auth::email(), 'Session #' . $sid, "$n rows");
                     ch_redirect('/admin/community-records?session=' . $sid, "$n " . ($n === 1 ? 'person' : 'people') . ' logged.');
                 }
                 break;
@@ -65,22 +66,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             case 'attendance_remove':
                 if (!$session) throw new InvalidArgumentException('Session not found.');
                 $records->removeAttendance((int) ($_POST['row_id'] ?? 0));
-                app_log("Conversation Hour #$sid: attendance row " . (int) $_POST['row_id'] . " removed by $by");
+                AuditLog::record('records.attendance_removed', Auth::id(), Auth::email(), 'Session #' . $sid, 'Row #' . (int) ($_POST['row_id'] ?? 0));
                 ch_redirect('/admin/community-records?session=' . $sid, 'Removed from this session.');
 
             case 'tech_add':
                 $mid = $records->techAdd((string) ($_POST['who'] ?? ''), (string) ($_POST['reason'] ?? ''), (string) ($_POST['until'] ?? ''), $by);
-                app_log("Technical contributor $mid added by $by");
+                AuditLog::record('records.tech_added', Auth::id(), Auth::email(), (string) $mid);
                 ch_redirect('/admin/community-records?tab=tech', "$mid is on the technical list.");
 
             case 'tech_confirm':
                 $records->techConfirm((int) ($_POST['row_id'] ?? 0), (string) ($_POST['until'] ?? ''), $by);
-                app_log("Technical contributor row " . (int) $_POST['row_id'] . " re-confirmed by $by");
+                AuditLog::record('records.tech_reconfirmed', Auth::id(), Auth::email(), 'Row #' . (int) ($_POST['row_id'] ?? 0));
                 ch_redirect('/admin/community-records?tab=tech', 'Confirmation date updated.');
 
             case 'tech_remove':
                 $records->techRemove((int) ($_POST['row_id'] ?? 0), (string) ($_POST['reason'] ?? ''), $by);
-                app_log("Technical contributor row " . (int) $_POST['row_id'] . " removed by $by");
+                AuditLog::record('records.tech_removed', Auth::id(), Auth::email(), 'Row #' . (int) ($_POST['row_id'] ?? 0));
                 ch_redirect('/admin/community-records?tab=tech', 'Removed from the technical list.');
 
             default:

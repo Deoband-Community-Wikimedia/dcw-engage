@@ -93,3 +93,63 @@ function resolveApplicantName(array $postData, array $schema = [], string $fallb
 
     return $fallback;
 }
+
+/*
+ * ---------------------------------------------------------------------------------------------
+ * Name carried from the email-verification gate
+ *
+ * The name is asked once, at the gate (or comes from the signed-in member's record), so forms must
+ * not ask for it again. The two helpers below let the renderer and the resume page take the form's
+ * own name field out of the form before it is shown or validated. The verified name is then written
+ * back into the answers on save, so reviewers and exports still see it.
+ * ---------------------------------------------------------------------------------------------
+ */
+
+/**
+ * The schema field that resolveApplicantName() treats as the applicant's name, or null when the form
+ * has none. Asking resolveApplicantName() keeps one source of truth for "which field is the name".
+ *
+ * Returns null for a combined "Name and age" field: that question also collects the age, so it must
+ * stay on the form (the gate name is still used for the application and emails).
+ */
+function applicantNameField(array $schema): ?string
+{
+    $probe = [];
+    $map = [];
+    foreach (($schema['fields'] ?? []) as $f) {
+        $n = (string) ($f['name'] ?? '');
+        if ($n === '') {
+            continue;
+        }
+        // Letters only, so nothing in resolveApplicantName() can alter it.
+        $token = 'zzprobe' . str_repeat('x', count($map) + 1);
+        $probe[$n] = $token;
+        $map[$token] = ['name' => $n, 'label' => (string) ($f['label'] ?? '')];
+    }
+    if (!$map) {
+        return null;
+    }
+
+    $got = strtolower(trim(resolveApplicantName($probe, $schema, '')));
+    if (!isset($map[$got])) {
+        return null;
+    }
+
+    $field = $map[$got];
+    if (preg_match('/(^|_)age($|_)/i', $field['name']) || preg_match('/\bage\b/i', $field['label'])) {
+        return null;
+    }
+    return $field['name'];
+}
+
+/** Returns [$schema, $sections] with one field removed from the flat field list and every section. */
+function schemaWithoutField(array $schema, array $sections, string $fieldName): array
+{
+    $keep = fn($f) => (string) ($f['name'] ?? '') !== $fieldName;
+    $schema['fields'] = array_values(array_filter($schema['fields'] ?? [], $keep));
+    foreach ($sections as &$s) {
+        $s['fields'] = array_values(array_filter($s['fields'] ?? [], $keep));
+    }
+    unset($s);
+    return [$schema, $sections];
+}

@@ -26,6 +26,22 @@ jobs:
         php-version: '8.2'
         extensions: gd, mbstring   # mpdf/mpdf (member card and receipt PDFs) needs both
 
+    # A merge that doesn't even parse must never reach the server. The PR check (verify.yml) normally catches
+    # this first, but a direct push to main or a manual run skips it, so check again right before uploading.
+    - name: PHP syntax check (lint)
+      run: |
+        status=0
+        while IFS= read -r file; do
+          if ! out=$(php -l "$file" 2>&1); then
+            echo "$out"
+            status=1
+          fi
+        done < <(find . -type f -name "*.php" -not -path "./vendor/*" -not -path "./.git/*")
+        if [ "$status" -ne 0 ]; then
+          echo "Syntax errors found. Deployment stopped before anything was uploaded."
+        fi
+        exit $status
+
     - name: Cache Composer dependencies
       uses: actions/cache@v3
       with:

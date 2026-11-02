@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/../../includes/init.php';
+require_once __DIR__ . '/../../includes/audit.php';
 require_once __DIR__ . '/../../includes/require_role.php';
 require_once __DIR__ . '/../../includes/wikitext.php';
 require_once __DIR__ . '/../../includes/app_log.php';
@@ -121,7 +122,7 @@ if (!$id && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') ==
                     }
                 }
 
-                app_log("Membership bulk $bulkAct: application #{$row['id']} ({$row['tracking_id']}) by $by");
+                AuditLog::record('membership.' . $bulkAct, Auth::id(), Auth::email(), 'Application #' . $row['id'], $row['tracking_id'] . ' (bulk)');
                 $result['done']++;
 
                 if ($mail) {
@@ -157,7 +158,7 @@ if (!$id && $_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?
         $profiles->setVerified($mid, currentAdminIdentifier(), $verify);
         $_SESSION['membership_flash'] = ['ok', $verify ? 'Wikimedia username verified.' : 'Verification removed.'];
     } catch (Throwable $e) {
-        $_SESSION['membership_flash'] = ['error', $e->getMessage()];
+        $_SESSION['membership_flash'] = ['error', engage_user_message($e, 'Membership action')];
     }
     $keep = array_filter(['tab' => 'members', 'form' => $_GET['form'] ?? '', 'q' => $_GET['q'] ?? ''], 'strlen');
     header('Location: /admin/membership-review?' . http_build_query($keep));
@@ -175,7 +176,7 @@ if (!$id && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') ==
         $strikes->reinstate((string) ($_POST['member_id'] ?? ''), (string) ($_POST['reason'] ?? ''), currentAdminIdentifier());
         $_SESSION['membership_flash'] = ['ok', 'Member reinstated. They get a new card on their next visit.'];
     } catch (Throwable $e) {
-        $_SESSION['membership_flash'] = ['error', $e->getMessage()];
+        $_SESSION['membership_flash'] = ['error', engage_user_message($e, 'Membership action')];
     }
     header('Location: /admin/membership-review?tab=struck');
     exit;
@@ -277,13 +278,13 @@ if ($app && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 $model->unlinkMemberId((int) $app['id']);
             } else {
                 $old = $model->relinkApproved($app, $given, $by, $confirm);
-                app_log("Membership ID changed: application #{$app['id']} ({$app['tracking_id']}) $old -> "
-                    . strtoupper(trim($given)) . " by $by");
+                AuditLog::record('membership.id_changed', Auth::id(), Auth::email(), 'Application #' . $app['id'],
+                    "$old -> " . strtoupper(trim($given)));
             }
             $mail = null;
         } else { throw new Exception('Unknown action.'); }
 
-        app_log("Membership $act: application #{$app['id']} ({$app['tracking_id']}) by $by");
+        AuditLog::record('membership.' . $act, Auth::id(), Auth::email(), 'Application #' . $app['id'], (string) $app['tracking_id']);
         // Email failure must never undo a decision that is already saved.
         if (!empty($mail)) {
             try {
@@ -295,7 +296,7 @@ if ($app && $_SERVER['REQUEST_METHOD'] === 'POST') {
             : (preg_match('/^(strike|link_id|unlink_id|relink_id)/', $act) ? '#advanced' : '');
         header('Location: /admin/membership-review?id=' . $app['id'] . '&done=' . urlencode($act) . $anchor);
         exit;
-    } catch (Throwable $e) { $error = $e->getMessage(); }
+    } catch (Throwable $e) { $error = engage_user_message($e, 'Membership decision'); }
     $app = $model->getApplication($id, $scope);   // show fresh state after an error
 }
 $doneText = ['approve' => 'Approved.', 'reject' => 'Rejected.', 'review' => 'Marked under review.',

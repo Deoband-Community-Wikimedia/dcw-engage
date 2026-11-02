@@ -40,7 +40,7 @@ try {
     }
     $rows = $res['rows'];
 } catch (Throwable $e) {
-    error_log('Engage certificates page failed: ' . $e->getMessage());
+    app_log('Member certificates page failed: ' . $e->getMessage());
     $failed = true;
 }
 $pages     = max(1, (int) ceil($total / CERT_PER_PAGE));

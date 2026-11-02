@@ -16,6 +16,7 @@
  * the message text itself is not stored.
  */
 require_once __DIR__ . '/../../includes/init.php';
+require_once __DIR__ . '/../../includes/audit.php';
 require_once __DIR__ . '/../../includes/auth.php';
 require_once __DIR__ . '/../../includes/require_role.php';
 require_once __DIR__ . '/../../includes/engage_page.php';
@@ -156,7 +157,7 @@ if ($form && $resp && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action']
         }
 
         if ($sent) {
-            app_log("Feedback reply sent: response #{$resp['id']} (form #{$formId}) by " . currentAdminIdentifier());
+            AuditLog::record('feedback.reply_sent', Auth::id(), Auth::email(), 'Response #' . (int) $resp['id'], 'Form #' . (int) $formId);
             header('Location: /admin/feedback-review?form=' . $formId . '&id=' . (int) $resp['id'] . '&emailed=1');
             exit;
         }

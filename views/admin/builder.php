@@ -275,7 +275,7 @@ engage_header([
             </div>
 
             <div class="b-notice" id="notice_application">
-                <strong>Notice:</strong> An <em>Email Address</em> field is automatically added to the top of every form to support Magic Links. You do not need to create one below.
+                <strong>Notice:</strong> Applicants give their <em>Name</em> and <em>Email Address</em> when they verify their email, before the form opens, and both are carried into the application automatically (the email is also used for Magic Links). You do not need to add questions for them below. A question that only asks for the applicant's name is hidden from applicants and filled in from that verified name. A combined "Name and age" question is kept, since it also collects the age.
             </div>
             <div class="b-notice" id="notice_feedback" style="display:none;">
                 <strong>Notice:</strong> <em>Name</em> and <em>Email Address</em> fields are added automatically to the top of a feedback form. The email is used only to send a receipt, and organizers can write back from the Feedback page if they need to. Feedback forms cannot have file uploads.

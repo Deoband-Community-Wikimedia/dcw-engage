@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/../../includes/init.php';
+require_once __DIR__ . '/../../includes/audit.php';
 require_once __DIR__ . '/../../includes/require_role.php';
 require_once __DIR__ . '/../../includes/app_log.php';
 require_once __DIR__ . '/../../includes/member_card_pdf.php';
@@ -40,7 +41,7 @@ try {
     if ($data === null) {
         throw new RuntimeException('No membership found.');
     }
-    app_log("Membership card PDF printed for $memberId (application #{$app['id']}) by $by");
+    AuditLog::record('member.card_printed', Auth::id(), Auth::email(), $memberId, 'Application #' . $app['id']);
     member_card_pdf_send($memberId, $token, $data);
 } catch (\Throwable $e) {
     app_log("Staff card PDF failed for $memberId by $by: " . $e->getMessage());

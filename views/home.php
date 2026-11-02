@@ -6,6 +6,7 @@ require_once __DIR__ . '/../models/FeedbackModel.php';
 require_once __DIR__ . '/../includes/member_session.php';
 require_once __DIR__ . '/../includes/member_stats.php';
 require_once __DIR__ . '/../includes/dcw_events.php';
+require_once __DIR__ . '/../models/PublicDirectoryModel.php';
 
 $formModel = new FormModel();
 $activeForms = $formModel->getActiveForms();
@@ -58,6 +59,22 @@ try {
 } catch (Throwable $e) {
     $events = [];
 }
+
+// "Meet our members" strip: a few current members picked at random on each visit, from the same public
+// directory as /members (verified usernames only; members who opted out are already left out).
+// Never throws: if the list can't be read, or has fewer than 3 people, the strip is left out.
+$stripMembers = [];
+$stripTotal   = 0;
+try {
+    $directory  = (new PublicDirectoryModel())->cached();
+    $allCurrent = is_array($directory['current'] ?? null) ? $directory['current'] : [];
+    $stripTotal = count($allCurrent);
+    shuffle($allCurrent);
+    $stripMembers = array_slice($allCurrent, 0, 10);
+} catch (Throwable $e) {
+    $stripMembers = [];
+}
+$stripMore = max(0, $stripTotal - count($stripMembers));
 
 // Selected community reflections (DCW@5). The list is hand-approved, so the text may carry
 // trusted <a> links. If the file is missing or malformed, the card is simply left out.
@@ -414,6 +431,32 @@ $onBand = !$signedInMember;
                     <div class="grid"><?= $reflectionCard ?></div>
                 </section>
             <?php endif; ?>
+        <?php endif; ?>
+
+        <?php /* Meet our members: a few random current members, linking to their Meta-Wiki user pages and to the full list. */ ?>
+        <?php if (count($stripMembers) >= 3): ?>
+            <?php $cmTitleClass = 'section-title' . (empty($cards) && empty($programs) && empty($feedbackCards) && empty($events) && $reflectionCard === '' && $onBand ? ' first' : ''); ?>
+            <section class="cm" id="members" aria-label="Meet our members">
+                <h2 class="<?= $cmTitleClass ?>">Meet our members</h2>
+                <div class="cm-card">
+                    <ul class="cm-list">
+                        <?php foreach ($stripMembers as $m): ?>
+                            <?php $mn = (string) $m['name']; ?>
+                            <li><a class="cm-chip" href="https://meta.wikimedia.org/wiki/User:<?= $h(rawurlencode(str_replace(' ', '_', $mn))) ?>" target="_blank" rel="noopener noreferrer">
+                                <span class="cm-av" aria-hidden="true"><?= $h(mb_strtoupper(mb_substr($mn, 0, 1))) ?></span>
+                                <span class="cm-name"><?= $h($mn) ?></span>
+                            </a></li>
+                        <?php endforeach; ?>
+                        <?php if ($stripMore > 0): ?>
+                            <li><a class="cm-chip cm-more" href="/members">+<?= number_format($stripMore) ?> more</a></li>
+                        <?php endif; ?>
+                    </ul>
+                    <p class="cm-foot">
+                        <span>The Wikimedians of the DCW community.</span>
+                        <a class="btn-pill" href="/members">See all members</a>
+                    </p>
+                </div>
+            </section>
         <?php endif; ?>
 
         <?php /* Member numbers: one quiet line, shown to everyone, so the page ends on the photos. */ ?>

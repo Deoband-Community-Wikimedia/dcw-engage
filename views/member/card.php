@@ -35,7 +35,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             header('Location: /member/card?saved=replaced');
             exit;
         } catch (Throwable $e) {
-            error_log('Engage card replace failed: ' . $e->getMessage());
+            app_log('Member card replace failed: ' . $e->getMessage());
             $error = 'We could not replace your card just now. Please try again in a moment.';
         }
     }
@@ -52,7 +52,7 @@ try {
     $url   = MemberCardModel::url($token);
     $svg   = QrCode::svg($url, 'QR code for your DCW membership card');
 } catch (Throwable $e) {
-    error_log('Engage card load failed: ' . $e->getMessage());
+    app_log('Member card load failed: ' . $e->getMessage());
     if ($error === '') {
         $error = 'We could not load your card just now. Please try again in a moment.';
     }
@@ -67,7 +67,7 @@ try {
     // TODO: confirm the real profile field for the member's main project (same field as the PDF).
     $cardProject = member_card_project_line((string) ($profileRow['main_project'] ?? ''), 40);
 } catch (Throwable $e) {
-    error_log('Engage card profile read failed: ' . $e->getMessage());
+    app_log('Member card profile read failed: ' . $e->getMessage());
 }
 
 // Who signs the card, shown in the "Issued by" block as on the PDF.

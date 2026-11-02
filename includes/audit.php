@@ -11,6 +11,8 @@
  * log rather than throwing. The trade-off is accepted on purpose: the action
  * matters more than its footnote.
  */
+require_once __DIR__ . '/app_log.php';
+
 class AuditLog {
     /**
      * Record one action. $actorId may be null for a self-serve event (a
@@ -18,6 +20,21 @@ class AuditLog {
      * rather than a signed-in owner. $actorEmail is always stored so the row
      * still names someone after their account is gone.
      */
+    /**
+     * Record something that happened, from code that doesn't know who is signed in (models).
+     * The actor is the signed-in staff account when there is one, otherwise $by (e.g. a member's own
+     * Member ID when they edit their profile), otherwise 'system'.
+     */
+    public static function activity(string $action, ?string $target = null, ?string $detail = null, string $by = ''): void {
+        $id = null;
+        $who = $by;
+        if (class_exists('Auth') && Auth::id()) {
+            $id = Auth::id();
+            $who = (string) Auth::email();
+        }
+        self::record($action, $id, $who !== '' ? $who : 'system', $target, $detail);
+    }
+
     public static function record($action, $actorId, $actorEmail, $target = null, $detail = null) {
         try {
             $db = DB::getInstance()->getConnection();
@@ -34,7 +51,7 @@ class AuditLog {
                 'ip'          => $_SERVER['REMOTE_ADDR'] ?? null,
             ]);
         } catch (Throwable $e) {
-            error_log("Audit log write failed for action '$action': " . $e->getMessage());
+            app_log("Audit log write failed for action '$action': " . $e->getMessage());
         }
     }
 
@@ -54,7 +71,7 @@ class AuditLog {
                  LIMIT $limit"
             )->fetchAll();
         } catch (Throwable $e) {
-            error_log("Audit log read failed: " . $e->getMessage());
+            app_log("Audit log read failed: " . $e->getMessage());
             return [];
         }
     }

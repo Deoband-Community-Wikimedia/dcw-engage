@@ -9,7 +9,7 @@
 // Initialize application (Session, DB, CSRF, Configuration).
 // The session is started inside init.php so that every entry point gets the
 // same hardened cookie flags. Starting one here first would win and quietly
-// drop SameSite=Strict, which the admin login depends on.
+// drop them (HttpOnly, SameSite), which the admin login depends on.
 require_once __DIR__ . '/includes/init.php';
 
 $requestPath = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
@@ -83,6 +83,19 @@ if ($route === '/' || $route === '/index.php') {
 } elseif ($route === '/membership') {
     require __DIR__ . '/views/membership.php';
 
+// Public directory of DCW members: Wikimedia usernames and clubs only, current members and alumni.
+// No sign-in. Not indexed by search engines (the view sends X-Robots-Tag: noindex). Members can opt
+// out from /member/profile. A literal route, so it must come before the catch-all dynamic form route
+// below or 'members' would be treated as a form slug of its own.
+} elseif ($route === '/members') {
+    require __DIR__ . '/views/members.php';
+
+// Organisers' view of the public members list: counts, and who opted out. Read-only. Role check is
+// inside the view: requireRole(['membership_reviewer', 'organizer', 'owner']). Under /admin so
+// Auth::isSafeNext() lets the login redirect bring people back.
+} elseif ($route === '/admin/public-directory') {
+    require __DIR__ . '/views/admin/public_directory.php';
+
 // --- Member login (Member ID + password) -------------------------------
 // Public pages for members: sign in, sign out, and set or reset a password
 // from an emailed one-time link. Separate from /admin: members and organizers
@@ -103,6 +116,11 @@ if ($route === '/' || $route === '/index.php') {
 // Signed-in members only. Wikimedia username (verified by a reviewer or coordinator).
 } elseif ($route === '/member/profile') {
     require __DIR__ . '/views/member/profile.php';
+
+// Signed-in members only. Points earned for contributing to DCW, and goodies redeemed with them.
+// The view calls MemberSession::requireLogin() itself. Reviewers manage this at /admin/goodies.
+} elseif ($route === '/member/goodies') {
+    require __DIR__ . '/views/member/goodies.php';
 
 // Signed-in members only. The member's own membership card (QR code), and the same card as a PDF
 // that is built in memory and downloaded. The public page the QR code opens is /card/{token} below.
@@ -157,6 +175,15 @@ if ($route === '/' || $route === '/index.php') {
     $cardToken = $matches[1];
     require __DIR__ . '/views/card_check.php';
 
+// Public event card check, opened by scanning the QR code on an event participation card (Train a Wikipedian
+// and other events). Same idea as /card/{token} above: no sign-in, and the 32-character token is what
+// identifies the card (see EventCardModel). Shows only first name and last initial, role and event.
+// A literal pattern, so it must come before the catch-all dynamic form route below.
+} elseif (preg_match('/^\/event-card\/([a-f0-9]{32})$/', $route, $matches)) {
+    global $eventCardToken;
+    $eventCardToken = $matches[1];
+    require __DIR__ . '/views/event_card_check.php';
+
 // Coordinator / reviewer queue for membership applications. Role check is
 // inside the view: requireRole(['membership_coordinator', 'membership_reviewer',
 // 'organizer', 'owner']); coordinators only ever see their assigned chapters.
@@ -169,6 +196,12 @@ if ($route === '/' || $route === '/index.php') {
 } elseif ($route === '/admin/community-records') {
     require __DIR__ . '/views/admin/community_records.php';
 
+// Goodies: award points to members, manage the catalogue, fulfil orders. Role check is inside the view:
+// support_reviewer or owner (a signed-in person without either role gets a 403 page). Under /admin so
+// Auth::isSafeNext() lets the login redirect bring people back.
+} elseif ($route === '/admin/goodies') {
+    require __DIR__ . '/views/admin/goodies.php';
+
 // Old address: coordinators' chapters are now managed on the Team page (the separate view was removed).
 } elseif ($route === '/admin/membership-access') {
     header('Location: /admin/team', true, 302);
@@ -177,6 +210,12 @@ if ($route === '/' || $route === '/index.php') {
 // Admin view for membership card management.
 } elseif ($route === '/admin/membership-card') {
     require __DIR__ . '/views/admin/membership_card.php';
+
+// Event participation cards: create an event, add its people (confirmed scholarship mentees, organisers,
+// facilitators) and download the print file. Role check is inside the view: requireRole(['organizer', 'owner']).
+// Under /admin so Auth::isSafeNext() lets the login redirect bring people back.
+} elseif ($route === '/admin/event-cards') {
+    require __DIR__ . '/views/admin/event_cards.php';
 
 // DCW Support queue for member complaints, suggestions and questions.
 // Role check is inside the view: requireRole(['member_support', 'owner']).
@@ -193,6 +232,12 @@ if ($route === '/' || $route === '/index.php') {
 // the view checks who is asking before it sends anything.
 } elseif ($route === '/file') {
     require __DIR__ . '/views/file.php';
+// Scholarship award confirmation: the private link in an award letter (see AwardConfirmationModel). The 64-character
+// token identifies one awarded application; no sign-in. Literal pattern, so it must come before the catch-all form route.
+} elseif (preg_match('/^\/confirm\/([a-f0-9]{64})$/', $route, $matches)) {
+    global $confirmToken;
+    $confirmToken = $matches[1];
+    require __DIR__ . '/views/forms/confirm.php';
 } elseif (preg_match('/^\/resume\/([a-zA-Z0-9_-]+)$/', $route, $matches)) {
     $token = $matches[1];
     global $resumeToken;
