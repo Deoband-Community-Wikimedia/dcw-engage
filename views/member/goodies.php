@@ -82,6 +82,20 @@ try {
 $ist  = new DateTimeZone('Asia/Kolkata');
 $when = fn($ts) => $ts ? (new DateTimeImmutable((string) $ts, new DateTimeZone('UTC')))->setTimezone($ist)->format('j M Y') : '';
 
+// The nearest goody the member cannot afford yet: the hero shows how close they are to it.
+$next = null;
+foreach ($goodies as $g) {
+    $c = (int) $g['points_cost'];
+    if ($c > $balance && ($next === null || $c < (int) $next['points_cost'])) $next = $g;
+}
+$affordable = 0;
+foreach ($goodies as $g) if ($canRedeem && $balance >= (int) $g['points_cost']) $affordable++;
+
+// A steady colour for each goody, from its name, so the catalogue is easy to tell apart at a glance.
+$mgHue = fn(string $s): int => abs(crc32($s)) % 360;
+$mgInitial = fn(string $s): string => mb_strtoupper(mb_substr(trim($s), 0, 1)) ?: '★';
+$steps = ['Requested', 'Ordered', 'Shipped', 'Delivered'];
+
 engage_header([
     'title'   => 'My goodies',
     'heading' => 'My goodies',
@@ -93,26 +107,98 @@ engage_header([
 cert_rows_css();
 ?>
 <style>
-    .mg-bal { margin: 0 0 24px; padding: 22px; background: var(--card); border: 1px solid var(--border); border-radius: 16px; box-shadow: 0 6px 18px rgba(15,23,42,.06); }
-    .mg-bal b { display: block; font-size: 40px; line-height: 1.1; font-variant-numeric: tabular-nums; color: var(--primary-dark); }
-    .mg-bal span { color: var(--muted); font-size: 14px; }
-    .mg-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
-    .mg-card { padding: 16px; background: var(--card); border: 1px solid var(--border); border-radius: 14px; }
-    .mg-card h3 { margin: 0 0 4px; font-size: 17px; }
-    .mg-card p { margin: 0 0 10px; color: var(--muted); font-size: 14px; }
-    .mg-cost { font-weight: 700; font-variant-numeric: tabular-nums; }
-    .mg-card details { margin-top: 10px; }
-    .mg-card summary { cursor: pointer; font-weight: 600; color: var(--primary); }
-    .mg-card label { display: block; margin: 8px 0 0; font-size: 13px; font-weight: 600; }
-    .mg-card input[type=text], .mg-card input[type=tel], .mg-card select, .mg-card textarea { width: 100%; box-sizing: border-box; padding: 8px 10px; font: inherit; border: 1px solid var(--border); border-radius: 8px; }
-    .mg-card button { margin-top: 12px; padding: 8px 16px; font: inherit; font-weight: 600; border: 0; border-radius: 999px; background: var(--primary); color: #fff; cursor: pointer; }
-    .mg-card .need { color: #b45309; font-size: 13.5px; font-weight: 600; }
-    .mg-hist { width: 100%; border-collapse: collapse; font-size: 14px; }
-    .mg-hist td { padding: 9px 4px; border-top: 1px solid var(--border); vertical-align: top; }
-    .mg-hist td.n { text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
-    .mg-hist .pos { color: #0f766e; } .mg-hist .neg { color: #97161b; }
-    .mg-hist .d { color: var(--muted); white-space: nowrap; }
-    .mg-empty { padding: 20px; text-align: center; color: var(--muted); background: var(--card); border: 1px dashed #c3d0dc; border-radius: 14px; }
+    [hidden] { display: none !important; }
+
+    /* Hero: the balance, and how far it goes. This is the one loud thing on the page. */
+    .mg-hero { position: relative; overflow: hidden; margin: 0 0 28px; padding: 28px 30px; border-radius: 22px; color: #fff;
+        background: radial-gradient(circle at 92% 12%, rgba(255,255,255,.22) 0 8%, transparent 8.5%),
+                    radial-gradient(circle at 92% 12%, rgba(255,255,255,.12) 0 18%, transparent 18.5%),
+                    radial-gradient(circle at 92% 12%, rgba(255,255,255,.07) 0 30%, transparent 30.5%),
+                    linear-gradient(135deg, #0b4f73 0%, #106b9a 55%, #1b8fb8 100%);
+        box-shadow: 0 14px 34px rgba(16,107,154,.28); }
+    .mg-hero .who { margin: 0; font-size: 14px; opacity: .85; }
+    .mg-hero .big { display: flex; align-items: baseline; gap: 10px; margin: 6px 0 0; }
+    .mg-hero .big b { font-size: clamp(48px, 9vw, 76px); line-height: 1; font-weight: 800; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+    .mg-hero .big span { font-size: 18px; font-weight: 600; opacity: .9; }
+    .mg-goal { margin: 20px 0 0; max-width: 520px; }
+    .mg-goal p { margin: 0 0 8px; font-size: 14.5px; }
+    .mg-bar { height: 10px; border-radius: 999px; background: rgba(255,255,255,.25); overflow: hidden; }
+    .mg-bar i { display: block; height: 100%; border-radius: 999px; background: #ffd166; }
+    .mg-hero .go { display: inline-block; margin-top: 18px; padding: 9px 20px; border-radius: 999px; background: #fff; color: #0b4f73; font-weight: 700; font-size: 14px; text-decoration: none; }
+
+    .mg-title { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 16px; margin: 0 0 14px; }
+    .mg-title h2 { margin: 0; font-size: 21px; }
+    .mg-title p { margin: 0; color: var(--muted); font-size: 13.5px; max-width: 520px; }
+
+    /* Catalogue */
+    .mg-grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); margin: 0 0 34px; }
+    .mg-card { display: flex; flex-direction: column; overflow: hidden; background: var(--card); border: 1px solid var(--border); border-radius: 18px; transition: transform .18s, box-shadow .18s; }
+    .mg-card:hover { transform: translateY(-3px); box-shadow: 0 12px 28px rgba(15,23,42,.12); }
+    .mg-card.locked { opacity: .92; }
+    .mg-art { display: flex; align-items: center; justify-content: center; height: 116px; background: linear-gradient(135deg, hsl(var(--h) 70% 90%), hsl(calc(var(--h) + 35) 75% 82%)); }
+    .mg-art span { display: grid; place-items: center; width: 64px; height: 64px; border-radius: 50%; background: #fff; color: hsl(var(--h) 60% 32%); font-size: 30px; font-weight: 800; box-shadow: 0 6px 16px rgba(15,23,42,.14); }
+    .mg-body { display: flex; flex: 1; flex-direction: column; padding: 16px 18px 18px; }
+    .mg-body h3 { margin: 0 0 4px; font-size: 17px; }
+    .mg-body p { margin: 0 0 12px; color: var(--muted); font-size: 14px; line-height: 1.45; }
+    .mg-opts { display: flex; flex-wrap: wrap; gap: 5px; margin: 0 0 12px; }
+    .mg-opts span { padding: 1px 9px; border-radius: 999px; background: #f1f5f9; color: #475569; font-size: 12px; font-weight: 600; }
+    .mg-foot { margin-top: auto; }
+    .mg-cost { display: flex; align-items: baseline; gap: 5px; font-variant-numeric: tabular-nums; }
+    .mg-cost b { font-size: 24px; font-weight: 800; color: hsl(var(--h) 60% 28%); }
+    .mg-cost span { color: var(--muted); font-size: 13px; }
+    .mg-mini { height: 6px; margin: 10px 0 6px; border-radius: 999px; background: #e8edf2; overflow: hidden; }
+    .mg-mini i { display: block; height: 100%; background: hsl(var(--h) 60% 50%); border-radius: 999px; }
+    .mg-need { margin: 0 !important; color: #92400e !important; font-size: 13px !important; font-weight: 600; }
+    .mg-btn { width: 100%; margin-top: 12px; padding: 10px 16px; font: inherit; font-weight: 700; border: 0; border-radius: 999px; background: var(--primary); color: #fff; cursor: pointer; }
+    .mg-btn:hover { background: var(--primary-dark); }
+    .mg-btn.ghost { background: #fff; color: var(--primary); border: 1px solid var(--border); }
+    .mg-btn:focus-visible, .mg-dlg input:focus-visible, .mg-dlg select:focus-visible, .mg-dlg textarea:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+
+    /* Redeem dialog */
+    .mg-dlg { width: min(460px, calc(100vw - 32px)); padding: 0; border: 0; border-radius: 20px; box-shadow: 0 24px 60px rgba(15,23,42,.35); }
+    .mg-dlg::backdrop { background: rgba(15,23,42,.5); }
+    .mg-dlg header { padding: 20px 22px 14px; background: linear-gradient(135deg, hsl(var(--h) 70% 92%), hsl(calc(var(--h) + 35) 75% 86%)); }
+    .mg-dlg header h3 { margin: 0 0 2px; font-size: 19px; }
+    .mg-dlg header p { margin: 0; color: #475569; font-size: 13.5px; }
+    .mg-dlg form { padding: 8px 22px 22px; }
+    .mg-dlg label { display: block; margin: 12px 0 0; font-size: 13px; font-weight: 600; }
+    .mg-dlg input[type=text], .mg-dlg input[type=tel], .mg-dlg select, .mg-dlg textarea { width: 100%; box-sizing: border-box; margin-top: 4px; padding: 10px 12px; font: inherit; border: 1px solid var(--border); border-radius: 10px; }
+    .mg-dlg .fine { margin: 12px 0 0; color: var(--muted); font-size: 12.5px; }
+    .mg-dlg .acts { display: flex; gap: 10px; margin-top: 16px; }
+    .mg-dlg .acts .mg-btn { margin: 0; }
+
+    .mg-empty { padding: 26px; text-align: center; color: var(--muted); background: var(--card); border: 1px dashed #c3d0dc; border-radius: 16px; }
+
+    /* History */
+    .mg-hist { margin: 0; padding: 0; list-style: none; }
+    .mg-hist li { display: grid; grid-template-columns: 38px 1fr auto; gap: 12px; align-items: center; padding: 11px 0; border-top: 1px solid var(--border); }
+    .mg-hist li:first-child { border-top: 0; }
+    .mg-hist .ic { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 50%; font-weight: 800; font-size: 18px; }
+    .mg-hist .pos .ic { background: #d9f3ee; color: #0f766e; }
+    .mg-hist .neg .ic { background: #fbe4e5; color: #97161b; }
+    .mg-hist .why { font-size: 14.5px; font-weight: 600; overflow-wrap: anywhere; }
+    .mg-hist .on { display: block; color: var(--muted); font-size: 12.5px; font-weight: 400; margin-top: 1px; }
+    .mg-hist .n { font-weight: 800; font-size: 17px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .mg-hist .pos .n { color: #0f766e; } .mg-hist .neg .n { color: #97161b; }
+
+    /* Orders */
+    .mg-orders { display: grid; gap: 12px; }
+    .mg-order { padding: 14px 16px; background: var(--card); border: 1px solid var(--border); border-radius: 14px; }
+    .mg-order .top { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 12px; align-items: baseline; }
+    .mg-order h3 { margin: 0; font-size: 15.5px; }
+    .mg-order .meta { margin: 3px 0 0; color: var(--muted); font-size: 13px; }
+    .mg-order .st { padding: 2px 11px; border-radius: 999px; background: #e8f3f9; color: #0b4f73; font-size: 12.5px; font-weight: 700; }
+    .mg-order .st.done { background: #d9f3ee; color: #0f766e; }
+    .mg-order .st.cx { background: #fbe4e5; color: #97161b; }
+    .mg-track { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin: 14px 0 0; padding: 0; list-style: none; }
+    .mg-track li { position: relative; padding-top: 16px; text-align: center; color: #94a3b8; font-size: 12px; font-weight: 600; }
+    .mg-track li::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 6px; border-radius: 999px; background: #e2e8f0; }
+    .mg-track li.on { color: var(--primary-dark); }
+    .mg-track li.on::before { background: var(--primary); }
+    .mg-order .note { margin: 10px 0 0; color: #97161b; font-size: 13px; }
+
+    @media (prefers-reduced-motion: reduce) { .mg-card { transition: none; } .mg-card:hover { transform: none; } }
+    @media (max-width: 520px) { .mg-hero { padding: 22px 20px; border-radius: 18px; } }
 </style>
 
 <div class="dash">
@@ -124,88 +210,126 @@ cert_rows_css();
         <div class="alert error">Goodies are not available just now. Please check back soon.</div>
     <?php endif; ?>
 
-    <section class="mg-bal" aria-label="Points balance">
-        <b><?= number_format($balance) ?></b>
-        <span>points · Member ID <?= htmlspecialchars($memberId) ?></span>
+    <section class="mg-hero" aria-label="Points balance">
+        <p class="who">Member ID <?= htmlspecialchars($memberId) ?></p>
+        <div class="big"><b><?= number_format($balance) ?></b><span>points</span></div>
+        <?php if ($next): $cost = (int) $next['points_cost']; $pct = max(3, min(100, (int) floor($balance / $cost * 100))); ?>
+            <div class="mg-goal">
+                <p><strong><?= number_format($cost - $balance) ?> more points</strong> to get <?= htmlspecialchars($next['name']) ?></p>
+                <div class="mg-bar" role="progressbar" aria-valuemin="0" aria-valuemax="<?= $cost ?>" aria-valuenow="<?= max(0, $balance) ?>"><i style="width:<?= $pct ?>%"></i></div>
+            </div>
+        <?php elseif ($goodies && $affordable): ?>
+            <div class="mg-goal"><p>You have enough for every goody below.</p></div>
+        <?php elseif (!$goodies): ?>
+            <div class="mg-goal"><p>Your points are safe while the catalogue is empty.</p></div>
+        <?php endif; ?>
+        <?php if ($affordable): ?><a class="go" href="#catalogue">You can redeem <?= $affordable ?> goodies now</a><?php endif; ?>
     </section>
 
-    <section class="panel" id="catalogue">
-        <div class="panel-head">
-            <h2>Goodies you can redeem</h2>
+    <section id="catalogue" aria-labelledby="mg-cat-h">
+        <div class="mg-title">
+            <h2 id="mg-cat-h">Goodies you can redeem</h2>
             <p>Points have no cash value and cannot be transferred. The catalogue and point costs may change; points you have earned do not expire.</p>
         </div>
         <?php if (!$goodies): ?>
-            <div class="mg-empty">No goodies are available right now. Your points are safe; check back soon.</div>
+            <div class="mg-empty" style="margin-bottom:34px">No goodies are available right now. Your points are safe; check back soon.</div>
         <?php else: ?>
             <div class="mg-grid">
-                <?php foreach ($goodies as $g): $cost = (int) $g['points_cost']; $can = $canRedeem && $balance >= $cost; ?>
-                    <article class="mg-card">
-                        <h3><?= htmlspecialchars($g['name']) ?></h3>
-                        <p><?= htmlspecialchars((string) $g['description']) ?></p>
-                        <div class="mg-cost"><?= number_format($cost) ?> points</div>
-                        <?php if (!$can): ?>
-                            <p class="need" style="margin-top:8px"><?= !$canRedeem ? 'Redeeming is not available on your account. Please contact DCW Support.' : 'You need ' . number_format(max(0, $cost - $balance)) . ' more points.' ?></p>
-                        <?php else: ?>
-                            <details>
-                                <summary>Redeem</summary>
-                                <form method="POST" action="/member/goodies">
-                                    <?= CSRF::getInputField() ?>
-                                    <input type="hidden" name="action" value="redeem">
-                                    <input type="hidden" name="goody_id" value="<?= (int) $g['id'] ?>">
-                                    <?php if ($g['variants']): ?>
-                                        <label>Size or option
-                                            <select name="variant" required>
-                                                <option value="">Choose…</option>
-                                                <?php foreach ($g['variants'] as $v): ?><option value="<?= htmlspecialchars($v) ?>"><?= htmlspecialchars($v) ?></option><?php endforeach; ?>
-                                            </select>
-                                        </label>
-                                    <?php endif; ?>
-                                    <label>Name for delivery<input type="text" name="ship_name" required maxlength="120" value="<?= htmlspecialchars((string) ($member['full_name'] ?? '')) ?>" autocomplete="name"></label>
-                                    <label>Phone<input type="tel" name="ship_phone" required maxlength="20" autocomplete="tel"></label>
-                                    <label>Delivery address<textarea name="ship_address" required maxlength="400" rows="3" autocomplete="street-address"></textarea></label>
-                                    <p style="margin:8px 0 0;font-size:12.5px">Your address is used only to send this order and is cleared after delivery.</p>
-                                    <button type="submit">Spend <?= number_format($cost) ?> points</button>
-                                </form>
-                            </details>
-                        <?php endif; ?>
+                <?php foreach ($goodies as $g): $cost = (int) $g['points_cost']; $can = $canRedeem && $balance >= $cost; $h = $mgHue((string) $g['name']); $dlg = 'redeem-' . (int) $g['id']; ?>
+                    <article class="mg-card<?= $can ? '' : ' locked' ?>" style="--h:<?= $h ?>">
+                        <div class="mg-art" aria-hidden="true"><span><?= htmlspecialchars($mgInitial((string) $g['name'])) ?></span></div>
+                        <div class="mg-body">
+                            <h3><?= htmlspecialchars($g['name']) ?></h3>
+                            <?php if ((string) $g['description'] !== ''): ?><p><?= htmlspecialchars((string) $g['description']) ?></p><?php endif; ?>
+                            <?php if ($g['variants']): ?><div class="mg-opts" aria-label="Options"><?php foreach ($g['variants'] as $v): ?><span><?= htmlspecialchars($v) ?></span><?php endforeach; ?></div><?php endif; ?>
+                            <div class="mg-foot">
+                                <div class="mg-cost"><b><?= number_format($cost) ?></b><span>points</span></div>
+                                <?php if (!$canRedeem): ?>
+                                    <p class="mg-need" style="margin-top:8px !important">Redeeming is not available on your account. Please contact DCW Support.</p>
+                                <?php elseif (!$can): $pct = max(0, min(100, (int) floor($balance / $cost * 100))); ?>
+                                    <div class="mg-mini" aria-hidden="true"><i style="width:<?= $pct ?>%"></i></div>
+                                    <p class="mg-need">You need <?= number_format(max(0, $cost - $balance)) ?> more points.</p>
+                                <?php else: ?>
+                                    <button type="button" class="mg-btn" data-open="<?= $dlg ?>">Redeem</button>
+                                <?php endif; ?>
+                            </div>
+                        </div>
                     </article>
+
+                    <?php if ($can): ?>
+                        <dialog class="mg-dlg" id="<?= $dlg ?>" style="--h:<?= $h ?>" aria-labelledby="<?= $dlg ?>-t">
+                            <header>
+                                <h3 id="<?= $dlg ?>-t"><?= htmlspecialchars($g['name']) ?></h3>
+                                <p><?= number_format($cost) ?> points · you will have <?= number_format($balance - $cost) ?> left</p>
+                            </header>
+                            <form method="POST" action="/member/goodies">
+                                <?= CSRF::getInputField() ?>
+                                <input type="hidden" name="action" value="redeem">
+                                <input type="hidden" name="goody_id" value="<?= (int) $g['id'] ?>">
+                                <?php if ($g['variants']): ?>
+                                    <label>Size or option
+                                        <select name="variant" required>
+                                            <option value="">Choose…</option>
+                                            <?php foreach ($g['variants'] as $v): ?><option value="<?= htmlspecialchars($v) ?>"><?= htmlspecialchars($v) ?></option><?php endforeach; ?>
+                                        </select>
+                                    </label>
+                                <?php endif; ?>
+                                <label>Name for delivery<input type="text" name="ship_name" required maxlength="120" value="<?= htmlspecialchars((string) ($member['full_name'] ?? '')) ?>" autocomplete="name"></label>
+                                <label>Phone<input type="tel" name="ship_phone" required maxlength="20" autocomplete="tel"></label>
+                                <label>Delivery address<textarea name="ship_address" required maxlength="400" rows="3" autocomplete="street-address"></textarea></label>
+                                <p class="fine">Your address is used only to send this order and is cleared after delivery.</p>
+                                <div class="acts">
+                                    <button type="button" class="mg-btn ghost" data-close>Cancel</button>
+                                    <button type="submit" class="mg-btn">Spend <?= number_format($cost) ?> points</button>
+                                </div>
+                            </form>
+                        </dialog>
+                    <?php endif; ?>
                 <?php endforeach; ?>
             </div>
         <?php endif; ?>
     </section>
 
     <div class="d-two">
-        <section class="panel" id="history">
-            <div class="panel-head"><h2>Points history</h2><p>Every award and redemption, newest first.</p></div>
+        <section id="history" aria-labelledby="mg-hist-h">
+            <div class="mg-title"><h2 id="mg-hist-h">Points history</h2><p>Every award and redemption, newest first.</p></div>
             <?php if (!$history): ?>
                 <div class="mg-empty">No points yet. They are awarded for attending sessions, mentoring and contributing.</div>
             <?php else: ?>
-                <table class="mg-hist"><tbody>
+                <ul class="mg-hist">
                     <?php foreach ($history as $h): $p = (int) $h['points']; ?>
-                        <tr>
-                            <td class="d"><?= htmlspecialchars($when($h['created_at'])) ?></td>
-                            <td><?= htmlspecialchars((string) $h['reason']) ?></td>
-                            <td class="n <?= $p >= 0 ? 'pos' : 'neg' ?>"><?= $p >= 0 ? '+' : '−' ?><?= number_format(abs($p)) ?></td>
-                        </tr>
+                        <li class="<?= $p >= 0 ? 'pos' : 'neg' ?>">
+                            <span class="ic" aria-hidden="true"><?= $p >= 0 ? '+' : '−' ?></span>
+                            <span class="why"><?= htmlspecialchars((string) $h['reason']) ?><span class="on"><?= htmlspecialchars($when($h['created_at'])) ?></span></span>
+                            <span class="n"><?= $p >= 0 ? '+' : '−' ?><?= number_format(abs($p)) ?></span>
+                        </li>
                     <?php endforeach; ?>
-                </tbody></table>
+                </ul>
             <?php endif; ?>
         </section>
 
-        <section class="panel" id="orders">
-            <div class="panel-head"><h2>My orders</h2><p>Goodies you have redeemed.</p></div>
+        <section id="orders" aria-labelledby="mg-ord-h">
+            <div class="mg-title"><h2 id="mg-ord-h">My orders</h2><p>Goodies you have redeemed.</p></div>
             <?php if (!$orders): ?>
-                <div class="mg-empty">No orders yet.</div>
+                <div class="mg-empty">No orders yet. Pick a goody above to place your first one.</div>
             <?php else: ?>
-                <div class="reqs">
-                    <?php foreach ($orders as $o): ?>
-                        <div class="req" style="--tone: #106b9a;">
-                            <span class="tick"></span>
-                            <div>
-                                <h3><?= htmlspecialchars($o['goody_name']) ?><?= $o['variant'] ? ' (' . htmlspecialchars((string) $o['variant']) . ')' : '' ?></h3>
-                                <p class="meta"><?= number_format((int) $o['points_spent']) ?> points · <?= htmlspecialchars($when($o['created_at'])) ?> · <code><?= htmlspecialchars((string) $o['tracking_id']) ?></code><button type="button" class="copy" data-copy="<?= htmlspecialchars((string) $o['tracking_id']) ?>">Copy</button></p>
+                <div class="mg-orders">
+                    <?php foreach ($orders as $o): $status = (string) $o['status']; $at = array_search($status, $steps, true); $cx = $status === 'Cancelled'; ?>
+                        <div class="mg-order">
+                            <div class="top">
+                                <div>
+                                    <h3><?= htmlspecialchars($o['goody_name']) ?><?= $o['variant'] ? ' (' . htmlspecialchars((string) $o['variant']) . ')' : '' ?></h3>
+                                    <p class="meta"><?= number_format((int) $o['points_spent']) ?> points · <?= htmlspecialchars($when($o['created_at'])) ?> · <code><?= htmlspecialchars((string) $o['tracking_id']) ?></code><button type="button" class="copy" data-copy="<?= htmlspecialchars((string) $o['tracking_id']) ?>">Copy</button></p>
+                                </div>
+                                <span class="st<?= $status === 'Delivered' ? ' done' : '' ?><?= $cx ? ' cx' : '' ?>"><?= htmlspecialchars($status) ?></span>
                             </div>
-                            <div class="side"><span class="pill"><?= htmlspecialchars((string) $o['status']) ?></span></div>
+                            <?php if ($cx): ?>
+                                <p class="note">This order was cancelled and the points were refunded.</p>
+                            <?php else: ?>
+                                <ol class="mg-track" aria-label="Order progress">
+                                    <?php foreach ($steps as $i => $s): ?><li<?= $at !== false && $i <= $at ? ' class="on"' : '' ?>><?= $s ?></li><?php endforeach; ?>
+                                </ol>
+                            <?php endif; ?>
                         </div>
                     <?php endforeach; ?>
                 </div>
@@ -215,5 +339,15 @@ cert_rows_css();
 
 </div>
 
+<script>
+// Redeem dialogs: open from the card, close with Cancel, Escape or a click on the backdrop.
+document.querySelectorAll('[data-open]').forEach(function (b) {
+    b.addEventListener('click', function () { document.getElementById(b.dataset.open).showModal(); });
+});
+document.querySelectorAll('dialog.mg-dlg').forEach(function (d) {
+    d.addEventListener('click', function (e) { if (e.target === d) d.close(); });
+    var c = d.querySelector('[data-close]'); if (c) c.addEventListener('click', function () { d.close(); });
+});
+</script>
 <?php cert_rows_js(); /* copy buttons */ ?>
 <?php engage_footer(); ?>
