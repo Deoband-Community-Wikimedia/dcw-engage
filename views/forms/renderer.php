@@ -135,8 +135,9 @@ if ($loggedMember !== null && $isMembershipForm && !$isRenewalForm) {
 // Proofpoint, ...) have nothing to burn, and old ?verify=<token> URLs still in inboxes are simply ignored.
 // Wrong guesses are capped per code inside EmailVerificationModel::consume().
 //
-// The code screen looks the same whether or not a code was really issued (rate limit hit, or the address
-// already holds this membership), so the page does not reveal what the system knows about an address.
+// The code screen looks the same whether or not a code was really issued (rate limit hit, the address
+// already holds this membership, or the address belongs to a member and is asked to sign in instead), so
+// the page does not reveal what the system knows about an address.
 //
 // NAME: asked once, at the gate, and carried forward (verified_names in the session). The form's own
 // name field is taken out of the form below, so nobody types it twice. Signed-in members use the name
@@ -188,16 +189,43 @@ if ($carriedName !== '' || !empty($previewSchema)) {
 /**
  * Send a verification for this address, whichever way applies. Used by the gate and by "Resend".
  *
+ *  - NON-membership form and the address belongs to a member (the visitor is logged out, or the gate would
+ *    not be showing): no code is issued. The member gets a private email asking them to sign in, with a
+ *    link back to this form. The caller shows the same code screen either way.
  *  - Membership JOIN form and the address already holds THIS chapter: no application is needed, so no code is
  *    issued; the person gets the "account details" email instead (sign in or renew).
  *  - Membership JOIN form and the address holds ANOTHER chapter: a code is issued as usual, and the email
  *    also explains their existing Member ID will be kept.
  *  - Everything else: the normal verification-code email.
- * A rate-limited address (cooldown / hourly cap) simply gets no new code; the caller shows the same screen.
+ * A rate-limited address (cooldown / hourly cap) simply gets no new code or nudge; the caller shows the same screen.
  */
 $sendVerification = function (string $email, string $name) use ($form, $formType, $schema, $isMembershipForm, $isRenewalForm) {
     require_once __DIR__ . '/../../includes/mailer.php';
     $formTitle = $schema['title'] ?? $formType;
+
+    // Normal (non-membership) forms: a logged-out visitor whose address already has a member account gets no
+    // code, only a private nudge to sign in. Membership forms keep their own flow below (a guest may join a
+    // second chapter with a code).
+    if (!$isMembershipForm) {
+        try {
+            require_once __DIR__ . '/../../models/MemberModel.php';
+            $account = (new MemberModel())->accountForEmail($email);
+        } catch (Throwable $ex) {
+            app_log_ignored('renderer.php:account-lookup', $ex);
+            $account = null;   // lookup failed: fall through to the normal code flow
+        }
+        if ($account !== null) {
+            if ((new EmailVerificationModel())->requestNudge($form['id'], $email)) {
+                require_once __DIR__ . '/../../includes/mail/ApplicationMail.php';
+                $path = (string) parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+                $base = CoreMail::appUrl();
+                $signInUrl = $base . '/member/login?next=' . rawurlencode($path);
+                $forgotUrl = $base . '/member/forgot';
+                ApplicationMail::memberSignInNudge($email, (string) $account['full_name'], $formTitle, $signInUrl, $forgotUrl);
+            }
+            return;
+        }
+    }
 
     $held = [];
     $joinChapter = null;
@@ -329,6 +357,26 @@ if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST') {
         // substituting an unverified address.
         $email = $verifiedEmail;
         $gatePassed = true;
+
+        // Backstop: a logged-out visitor cannot submit with an address that belongs to a member, even if
+        // they verified it before it became one, or hold a stale verified session. They are sent back to
+        // the gate, and sign in. The visitor has already proven they control this address, so saying so is safe.
+        if (!$memberAutoVerified && !$isMembershipForm) {
+            try {
+                require_once __DIR__ . '/../../models/MemberModel.php';
+                $isMember = (new MemberModel())->accountForEmail($email) !== null;
+            } catch (Throwable $ex) {
+                app_log_ignored('renderer.php:backstop', $ex);
+                $isMember = false;   // lookup failed: do not block a genuine applicant
+            }
+            if ($isMember) {
+                $gatePassed = false;
+                unset($_SESSION['verified_emails'][$form['id']], $_SESSION['verified_names'][$form['id']], $_SESSION['otp_pending'][$form['id']]);
+                $verifiedEmail = '';
+                $verifiedName = '';
+                $errors['system'] = "This email address belongs to a member account. Please sign in to continue.";
+            }
+        }
     }
 
     if (!$gatePassed) {
@@ -703,8 +751,9 @@ engage_header([
             <div class="boxed">
                 <h3 style="margin:0 0 8px; font-size:17px;">Enter your verification code</h3>
                 <p style="margin:0 0 14px; font-size:14.5px;">
-                    If <strong><?= htmlspecialchars((string) $otpPending['email']) ?></strong> can receive incoming mail, a verification code is on its
-                    way. Enter it below to commence your application. The code is single-use and will expire shortly.
+                    If <strong><?= htmlspecialchars((string) $otpPending['email']) ?></strong> can receive incoming mail, we have emailed it.
+                    The message contains either a verification code to enter below, or instructions to sign in if the address belongs to a member.
+                    A code is single-use and expires shortly.
                 </p>
                 <form method="POST">
                     <?= CSRF::getInputField() ?>

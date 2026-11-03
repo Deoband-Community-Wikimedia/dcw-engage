@@ -177,6 +177,37 @@ class EmailVerificationModel {
     }
 
     /**
+     * Throttle for emails that are NOT a code (for example the "sign in instead" nudge sent to an
+     * address that already belongs to a member). It shares the resend cooldown and the hourly cap with
+     * request(), so such an email can never be used to flood an inbox.
+     *
+     * It writes a row that is already invalidated and already expired, so consume() can never match it,
+     * and stores no name. It does not touch any real code that is outstanding.
+     *
+     * Returns true when the email may be sent, false when the cooldown or the hourly cap says no.
+     * The caller must respond identically either way.
+     */
+    public function requestNudge($formId, $email): bool {
+        if ($this->resendWaitSeconds($formId, $email) > 0) {
+            return false;
+        }
+        if ($this->recentRequestCount($formId, $email) >= self::MAX_REQUESTS_PER_HOUR) {
+            return false;
+        }
+
+        $this->db->prepare(
+            "INSERT INTO email_verifications (form_id, email, name, token_hash, attempts, expires_at, invalidated_at)
+             VALUES (:form, :email, NULL, :hash, 0, NOW(), NOW())"
+        )->execute([
+            'form'  => $formId,
+            'email' => $email,
+            'hash'  => hash_hmac('sha256', bin2hex(random_bytes(16)), $this->secret),
+        ]);
+
+        return true;
+    }
+
+    /**
      * Seconds the applicant still has to wait before another code can be sent
      * (0 when they can ask now). Use it to drive the "Resend" countdown on the
      * code-entry page. Safe to expose: it reveals only the caller's own timer.
