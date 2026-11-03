@@ -10,6 +10,10 @@
  *    an owner (to anyone, including themselves) are approved straight away, because the community has too
  *    few organisers to always find a second reviewer. An owner awarding their own Member ID is logged as
  *    goodies.award_self so it stays easy to review.
+ *  - The same exemption applies when approving: an owner may approve any award waiting for a second
+ *    reviewer, including one they created and one made to their own Member ID. That is logged as
+ *    goodies.approve_self so it stays easy to review. Non-owners still need a different reviewer and can
+ *    never approve awards to their own Member IDs.
  *  - Redemption is one transaction under a per-member lock, so two quick clicks cannot spend the
  *    same points twice.
  *  - Reviewer actions are written to the audit log (AuditLog::activity). The ledger carries the actor's email as a snapshot.
@@ -218,8 +222,14 @@ class PointsModel
         return ['ok' => true, 'status' => $status, 'points' => $points];
     }
 
-    /** The second reviewer approves a large award. Never the person who created it. */
-    public function approveAward(int $awardId, string $actorEmail): array
+    /**
+     * The second reviewer approves a large award. For a non-owner it must never be the person who created it.
+     *
+     * $actorIsOwner is true only when the caller has checked that the actor is an owner (the model only
+     * receives an email, so the page decides). An owner may approve an award they created themselves; that
+     * is logged as goodies.approve_self so it stays easy to review.
+     */
+    public function approveAward(int $awardId, string $actorEmail, bool $actorIsOwner = false): array
     {
         $this->pdo->beginTransaction();
         try {
@@ -233,7 +243,8 @@ class PointsModel
                 $this->pdo->rollBack();
                 return ['ok' => false, 'error' => 'That award is no longer waiting for approval.'];
             }
-            if (strcasecmp((string) $a['first_reviewer_email'], $actorEmail) === 0) {
+            $isCreator = strcasecmp((string) $a['first_reviewer_email'], $actorEmail) === 0;
+            if ($isCreator && !$actorIsOwner) {
                 $this->pdo->rollBack();
                 return ['ok' => false, 'error' => 'A different reviewer must approve this award.'];
             }
@@ -246,24 +257,27 @@ class PointsModel
             $this->log('approveAward failed: ' . $e->getMessage());
             return ['ok' => false, 'error' => 'Could not approve the award.'];
         }
-        $this->audit($actorEmail, 'goodies.approve', (string) $a['member_id'], $a['activity_name'] . ' (' . $a['points'] . ' pts)');
+        $this->audit($actorEmail, ($actorIsOwner && $isCreator) ? 'goodies.approve_self' : 'goodies.approve', (string) $a['member_id'],
+            $a['activity_name'] . ' (' . $a['points'] . ' pts' . ($actorIsOwner ? ', owner approval' : '') . ')');
         return ['ok' => true];
     }
 
     /**
      * Approve several awards waiting for a second reviewer. Each is approved on its own (its own transaction
      * and audit entry), so one that cannot be approved does not stop the others.
-     * $ownIds are Member IDs the actor may not approve for (a non-owner reviewer's own IDs; an owner passes none).
+     * $ownIds are Member IDs the actor may not approve for (a non-owner reviewer's own IDs).
+     * $actorIsOwner is true when the page has checked that the actor is an owner: $ownIds is then ignored and
+     * awards the owner created themselves can be approved too.
      * @return array{approved:int, skipped:int}
      */
-    public function approveAwards(array $awardIds, string $actorEmail, array $ownIds = []): array
+    public function approveAwards(array $awardIds, string $actorEmail, array $ownIds = [], bool $actorIsOwner = false): array
     {
-        $own = array_fill_keys(array_map(fn($m) => strtoupper(trim((string) $m)), $ownIds), true);
+        $own = $actorIsOwner ? [] : array_fill_keys(array_map(fn($m) => strtoupper(trim((string) $m)), $ownIds), true);
         $approved = $skipped = 0;
         foreach (array_unique(array_map('intval', $awardIds)) as $id) {
             $a = $id > 0 ? $this->award($id) : null;
             if (!$a || isset($own[strtoupper((string) $a['member_id'])])) { $skipped++; continue; }
-            if ($this->approveAward($id, $actorEmail)['ok']) $approved++; else $skipped++;
+            if ($this->approveAward($id, $actorEmail, $actorIsOwner)['ok']) $approved++; else $skipped++;
         }
         return ['approved' => $approved, 'skipped' => $skipped];
     }
