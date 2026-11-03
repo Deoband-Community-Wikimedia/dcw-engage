@@ -60,6 +60,57 @@ class ApplicationMail {
         return CoreMail::send($mail);
     }
 
+    /**
+     * Private nudge for a LOGGED-OUT visitor who typed an email address that belongs to a member.
+     * No code is issued. The visitor sees the same neutral screen as everyone else; this email is the
+     * only place the membership is mentioned, and it goes to the owner of the address.
+     *
+     * $memberName comes from the member record, NOT from the gate form: the gate name is typed by
+     * whoever entered the address, so it must never be echoed into this email.
+     * $signInUrl is the member sign-in URL carrying a return path back to the form (built by the caller;
+     * the sign-in page accepts only paths that MemberSession::isSafeNext() allows).
+     * $forgotUrl is the set/reset password page (optional): members who never set a password need it.
+     * The link carries no token, so a forwarded copy gives nothing away.
+     * dev_result is false for the same reason as emailVerification(): the caller must not let the
+     * result change what the visitor sees.
+     */
+    public static function memberSignInNudge($email, $memberName, $formTitle, $signInUrl, $forgotUrl = '') {
+        $e = fn($s) => CoreMail::e($s);
+        $name = CoreMail::cleanName($memberName);
+        $greetName = $name !== '' ? $name : 'Member';
+        $event = CoreMail::eventTitle($formTitle);
+        $url = $e($signInUrl);
+
+        $forgotHtml = $forgotUrl !== ''
+            ? "<p>First time signing in, or forgot your password? <a href='" . $e($forgotUrl) . "' style='color:#106b9a;'>Set or reset it here</a>.</p>"
+            : '';
+
+        $inner = "
+            <p>Dear <strong>" . $e($greetName) . "</strong>,</p>
+            <p>Someone, hopefully you, started an application for <strong>" . $e($event) . "</strong> using this email address. This address already belongs to a DCW member account, so no verification code was sent. Please sign in with your Member ID instead, and you can continue your application from there.</p>
+            " . CoreMail::button($signInUrl, 'Sign in to continue') . "
+            <p>If the button does not work, copy this link into your browser:<br><a href='$url' style='color:#106b9a; word-break:break-all;'>$url</a></p>
+            $forgotHtml
+            <p style='margin-bottom:0;'>If you did not start this application, you can safely ignore this email. Nothing has been created.</p>";
+
+        $alt = "Dear $greetName,\n\nSomeone, hopefully you, started an application for $event using this email address. This address already belongs to a DCW member account, so no verification code was sent. Please sign in with your Member ID instead, and you can continue your application from there:\n$signInUrl\n"
+             . ($forgotUrl !== '' ? "\nFirst time signing in, or forgot your password? Set or reset it here: $forgotUrl\n" : '')
+             . "\nIf you did not start this application, you can safely ignore this email. Nothing has been created.\n\nDeoband Community Wikimedia";
+
+        $mail = [
+            'to' => $email,
+            'subject' => 'Sign in to continue your application - DCW Engage',
+            'html' => $inner, 'alt' => $alt,
+            'dev_result' => false,
+            'dev_log' => "Member sign-in nudge for $email ($formTitle): $signInUrl",
+        ];
+        if ($name !== '') {
+            $mail['to_name'] = $name;
+        }
+
+        return CoreMail::send($mail);
+    }
+
     /** Magic link so an applicant can return and edit a saved application. */
     public static function magicLink($email, $applicantName, $token) {
         $e = fn($s) => CoreMail::e($s);
