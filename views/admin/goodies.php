@@ -19,11 +19,16 @@ require_once __DIR__ . '/../../models/PointsModel.php';
  *   catalogue    add and edit goodies and their point costs
  *   redemptions  the order queue: Requested > Ordered > Shipped > Delivered (or Cancelled, which refunds)
  *
- * Awards made by an owner (to anyone) are approved when created and never wait for a second reviewer.
- * An award made by a support_reviewer who is not an owner is approved at once under
- * PointsModel::SECOND_APPROVAL_AT; a larger one waits for a different reviewer. Owners awarding their own
- * Member ID are logged as goodies.award_self. A non-owner still cannot award, approve or take back their
- * own points. Every state-changing action is a CSRF-checked POST and is written to audit_log.
+ * Owner discretion (one rule, applied the same way everywhere on this page):
+ *   - Awards made by an owner (to anyone) are approved when created and never wait for a second reviewer.
+ *     An owner awarding their own Member ID is logged as goodies.award_self.
+ *   - An owner may approve ANY award waiting for a second reviewer, one by one or in bulk, including one they
+ *     created and one made to their own Member ID. The page passes $isOwner to PointsModel::approveAward() and
+ *     approveAwards(); an owner approving an award they created is logged as goodies.approve_self.
+ *   - A support_reviewer who is not an owner is approved at once under PointsModel::SECOND_APPROVAL_AT; a larger
+ *     award waits for a different reviewer. A non-owner can never award, approve or take back points for their
+ *     own Member ID, and can never approve an award they created.
+ * Every state-changing action is a CSRF-checked POST and is written to audit_log.
  *
  * Bulk award flow (award tab, "Several people"):
  *   1. bulk_preview  - the typed/pasted people and one activity go to PointsModel::bulkPlan(). Nothing is saved.
@@ -58,11 +63,11 @@ $actor = strtolower((string) Auth::email());
 $model = new PointsModel();
 $isOwner = Auth::isOwner();
 
-// The reviewer's own Member IDs. A non-owner leaves Conversation Hour awards for these to another reviewer;
-// an owner may award themselves (and every owner award skips second approval).
+// The reviewer's own Member IDs. A non-owner leaves Conversation Hour awards for these to another reviewer
+// and cannot approve awards made to them; an owner may do all of it (and every owner award skips second approval).
 $ownIds = [];
 try { $ownIds = array_column((new MemberModel())->membershipsForEmail($actor), 'member_id'); } catch (Throwable $e) { app_log_ignored('goodies.php:own', $e); }
-$planOwn = $isOwner ? [] : $ownIds;   // what chPlan() should treat as "left for another reviewer"
+$planOwn = $isOwner ? [] : $ownIds;   // what chPlan() and approveAwards() should treat as "left for another reviewer"
 
 const GOODIES_TABS = ['award' => 'Award points', 'guide' => 'Points guide', 'activities' => 'Activities and points', 'catalogue' => 'Catalogue', 'redemptions' => 'Orders'];
 $tab = isset(GOODIES_TABS[$_GET['tab'] ?? '']) ? (string) $_GET['tab'] : 'award';
@@ -268,8 +273,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($do === 'approve' && $owner && goodies_is_own($owner) && !$isOwner) {
                 goodies_flash('error', 'You cannot approve points awarded to yourself.');
             } elseif ($do === 'approve') {
-                $r = $model->approveAward($awardId, $actor);
-                goodies_flash($r['ok'] ? 'ok' : 'error', $r['ok'] ? 'Approved. The points are now in the member’s balance.' : $r['error']);
+                // $isOwner lets an owner approve an award they created, or one made to their own Member ID.
+                // The model still refuses a non-owner who created the award.
+                $r = $model->approveAward($awardId, $actor, $isOwner);
+                $ownerSelf = $isOwner && $award && (strcasecmp((string) $award['first_reviewer_email'], $actor) === 0 || ($owner && goodies_is_own($owner)));
+                goodies_flash($r['ok'] ? 'ok' : 'error', $r['ok']
+                    ? 'Approved. The points are now in the member’s balance.' . ($ownerSelf ? ' Logged as an owner approval of your own award.' : '')
+                    : $r['error']);
             } else {
                 goodies_flash($model->rejectAward($awardId, $actor) ? 'ok' : 'error', 'Award rejected.');
             }
@@ -280,9 +290,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 goodies_flash('error', 'Tick at least one award first.');
             } elseif ($do === 'bulk_approve') {
                 // $planOwn: a non-owner cannot approve points awarded to their own Member ID (an owner passes none).
-                $r = $model->approveAwards($ids, $actor, $planOwn);
+                // $isOwner: an owner may also approve awards they created themselves.
+                $r = $model->approveAwards($ids, $actor, $planOwn, $isOwner);
+                $why = $isOwner ? 'already decided' : 'your own, one you created, or already decided';
                 goodies_flash($r['approved'] > 0 ? 'ok' : 'error',
-                    $r['approved'] . ' approved.' . ($r['skipped'] ? ' ' . $r['skipped'] . ' skipped (your own, one you created, or already decided).' : ''));
+                    $r['approved'] . ' approved.' . ($r['skipped'] ? ' ' . $r['skipped'] . ' skipped (' . $why . ').' : ''));
             } else {
                 $r = $model->rejectAwards($ids, $actor);
                 goodies_flash($r['rejected'] > 0 ? 'ok' : 'error',
@@ -567,9 +579,6 @@ engage_header([
     .bk-group h4 span { margin-left: 6px; padding: 1px 9px; border-radius: 999px; background: hsl(var(--h) 80% 93%); color: hsl(var(--h) 65% 24%); font-size: 12px; }
     .bk-group ul { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 6px 8px; }
     .bk-group li { padding: 3px 11px; border-radius: 999px; background: #f1f5f9; font-size: 13px; overflow-wrap: anywhere; }
-    .bk-group.stack ul { display: block; }
-    .bk-group.stack li { display: block; padding: 6px 0; border-radius: 0; background: none; border-top: 1px solid #eef2f6; }
-    .bk-group.stack li:first-child { border-top: 0; }
     .bk-confirm { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; justify-content: space-between; margin: 16px 0 0; padding: 16px 18px; border-radius: 14px; background: #fff; border: 1px solid #9cc7dd; }
     .bk-sum { font-size: 19px; font-weight: 800; font-variant-numeric: tabular-nums; }
     .bk-sum small { display: block; margin-top: 2px; font-size: 13px; font-weight: 500; color: var(--muted); }
@@ -606,6 +615,7 @@ engage_header([
     .gd-wait-bar label { display: inline-flex; gap: 6px; align-items: center; font-size: 13.5px; font-weight: 600; cursor: pointer; }
     .gd-wait-bar .gd-btn { padding: 6px 14px; font-size: 13px; }
     .gd-tick { display: inline-flex; margin-right: 10px; }
+    .gd-tags { display: inline-flex; flex-wrap: wrap; gap: 4px; margin-left: 8px; vertical-align: middle; }
 
     /* ---- Points guide: read-only, one colourful card per activity ---- */
     .pg-hero { display: flex; flex-wrap: wrap; gap: 8px 24px; align-items: center; justify-content: space-between; margin: 0 0 22px; padding: 22px 24px; border-radius: 18px; color: #fff; background: linear-gradient(135deg, #106b9a 0%, #1f8fc4 55%, #36b3a0 100%); }
@@ -729,6 +739,8 @@ engage_header([
     <?php
     $awardMode = $bulk !== null ? 'many' : 'one';
     $bkType = $bulk['type'] ?? 0;
+    // The reviewer's own Member IDs as a lookup, for the "waiting for a second reviewer" list.
+    $ownSet = array_fill_keys(array_map(fn($m) => strtoupper(trim((string) $m)), $ownIds), true);
     ?>
 
     <datalist id="gd-members">
@@ -834,7 +846,6 @@ engage_header([
                         gd_group('Struck off (skipped)', 0, array_map('gd_h', $pl['struck']));
                         gd_group('Already has it (once per member)', 215, array_map('gd_h', $pl['already']));
                         ?>
-                        <?php foreach (['ambiguous', 'invalid'] as $stackKey): endforeach; ?>
                         <?php if ($pl['dupes'] > 0): ?><p class="gd-note"><?= (int) $pl['dupes'] ?> repeated entr<?= $pl['dupes'] === 1 ? 'y was' : 'ies were' ?> ignored.</p><?php endif; ?>
 
                         <form method="POST" action="/admin/goodies?tab=award" class="bk-confirm" data-once>
@@ -945,6 +956,13 @@ engage_header([
 
     <section class="gd-card">
         <h3>Waiting for a second reviewer (<?= count($awaiting) ?>)</h3>
+        <?php if ($awaiting): ?>
+            <?php if ($isOwner): ?>
+                <p class="gd-note">As an owner you can approve any of these, including awards you created or awards made to your own Member ID. Those approvals are marked in the audit log so they stay easy to review.</p>
+            <?php else: ?>
+                <p class="gd-note">A different reviewer or an owner must approve each award. You cannot approve awards you created or awards made to your own Member ID.</p>
+            <?php endif; ?>
+        <?php endif; ?>
         <?php if (!$awaiting): ?>
             <div class="gd-empty">Nothing is waiting.</div>
         <?php else: ?>
@@ -955,10 +973,21 @@ engage_header([
                 <button type="submit" form="bulk-wait" name="do" value="bulk_reject" class="gd-btn red"
                         onclick="return confirm('Reject the selected awards?')">Reject selected</button>
             </div>
-            <?php foreach ($awaiting as $a): $mine = strcasecmp((string) $a['first_reviewer_email'], $actor) === 0; ?>
+            <?php foreach ($awaiting as $a):
+                $mine = strcasecmp((string) $a['first_reviewer_email'], $actor) === 0;      // I created it
+                $toMe = isset($ownSet[strtoupper((string) $a['member_id'])]);               // it is for one of my Member IDs
+                $blocked = !$isOwner && ($mine || $toMe);                                   // owners are never blocked
+                $blockWhy = $toMe ? 'You cannot approve points awarded to yourself' : 'A different reviewer must approve this';
+            ?>
                 <div class="gd-row">
                     <div>
                         <strong><label class="gd-tick"><input type="checkbox" class="wait-pick" form="bulk-wait" name="award_ids[]" value="<?= (int) $a['id'] ?>" aria-label="Select award <?= (int) $a['id'] ?>"></label><?= htmlspecialchars($a['activity_name']) ?> · <?= (int) $a['points'] ?> pts · <?= htmlspecialchars((string) $a['member_id']) ?></strong>
+                        <?php if ($mine || $toMe): ?>
+                            <span class="gd-tags">
+                                <?php if ($mine): ?><span class="ac-tag warn">Created by you</span><?php endif; ?>
+                                <?php if ($toMe): ?><span class="ac-tag warn">For your Member ID</span><?php endif; ?>
+                            </span>
+                        <?php endif; ?>
                         <p>Created by <?= htmlspecialchars((string) $a['first_reviewer_email']) ?> on <?= htmlspecialchars($when($a['created_at'])) ?>
                             <?php if (!empty($a['evidence_url'])): ?> · <a href="<?= htmlspecialchars((string) $a['evidence_url']) ?>" target="_blank" rel="noopener noreferrer">evidence</a><?php endif; ?>
                             <?php if (!empty($a['note'])): ?> · <?= htmlspecialchars((string) $a['note']) ?><?php endif; ?></p>
@@ -966,7 +995,7 @@ engage_header([
                     <div>
                         <form method="POST" action="/admin/goodies?tab=award"><?= CSRF::getInputField() ?>
                             <input type="hidden" name="do" value="approve"><input type="hidden" name="award_id" value="<?= (int) $a['id'] ?>">
-                            <button type="submit" class="gd-btn"<?= $mine ? ' disabled title="A different reviewer must approve this"' : '' ?>>Approve</button>
+                            <button type="submit" class="gd-btn"<?= $blocked ? ' disabled title="' . htmlspecialchars($blockWhy) . '"' : '' ?>>Approve</button>
                         </form>
                         <form method="POST" action="/admin/goodies?tab=award"><?= CSRF::getInputField() ?>
                             <input type="hidden" name="do" value="reject"><input type="hidden" name="award_id" value="<?= (int) $a['id'] ?>">
