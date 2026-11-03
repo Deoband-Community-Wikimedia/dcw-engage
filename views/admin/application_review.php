@@ -694,7 +694,7 @@ if (!$id && isset($_GET['export_confirm'])) {
     header('Content-Disposition: attachment; filename="' . $slug . '_award_confirmations.csv"');
     $out = fopen('php://output', 'w');
     fwrite($out, "\xEF\xBB\xBF");   // so Excel reads the UTF-8 names correctly
-    fputcsv($out, array_merge(['Name', 'Email', 'Tracking ID', 'Response', 'Responded (IST)', 'Reminders sent', 'Reason for declining'], $labels));
+    fputcsv($out, array_merge(['Name', 'Email', 'Tracking ID', 'Response', 'Responded (IST)', 'Reminders sent', 'Reason for declining'], array_map($safe, $labels)));
     foreach ($awardees as $r) {
         $c = $confByApp[(int) $r['id']] ?? null;
         $state = $confState($r);
