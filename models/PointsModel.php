@@ -20,6 +20,9 @@
  *  - Bulk awards (several members, one activity) go through the same rules, one member at a time, under one
  *    batch reference so a double click cannot award twice. Bulk point edits revise past awards exactly like a
  *    single edit does, all in one transaction.
+ *  - Stock (optional per goody, per size when the goody has sizes) lives in goodies.stock_json. NULL means
+ *    not tracked (unlimited). A redemption takes one item from stock inside its transaction, under a row lock
+ *    on the goody, so the last item cannot be sold twice. Cancelling an order puts the item back.
  *
  * Assumes PDO is in ERRMODE_EXCEPTION, as the other models do. Keep every query a prepared statement.
  * A Member ID is one person across every chapter they hold (letter + 8 digits, e.g. A48213977), so
@@ -45,6 +48,9 @@ class PointsModel
         'Delivered' => [],
         'Cancelled' => [],
     ];
+
+    /** Key used in goodies.stock_json for a goody that has no sizes/options. */
+    public const STOCK_ALL = '_all';
 
     /**
      * Activities the code looks up by their code (Conversation Hour awards, the TaW edition check). Reviewers
@@ -1031,16 +1037,49 @@ class PointsModel
 
     // ---- Catalogue -----------------------------------------------------------------------------
 
+    /** goodies.stock_json as [variant or STOCK_ALL => qty], or null when stock is not tracked. */
+    public static function decodeStock($json): ?array
+    {
+        if ($json === null || $json === '' || $json === false) return null;
+        $a = json_decode((string) $json, true);
+        if (!is_array($a)) return null;
+        return array_map(fn($n) => max(0, (int) $n), $a);
+    }
+
+    /** Items left for one variant ('' when the goody has no sizes). Null = stock is not tracked. */
+    public static function stockFor(array $goody, string $variant = ''): ?int
+    {
+        $s = $goody['stock'] ?? null;
+        if ($s === null) return null;
+        $key = !empty($goody['variants']) ? $variant : self::STOCK_ALL;
+        return (int) ($s[$key] ?? 0);
+    }
+
+    /** False only when stock is tracked and nothing is left in any size. */
+    public static function inStock(array $goody): bool
+    {
+        $s = $goody['stock'] ?? null;
+        return $s === null || array_sum($s) > 0;
+    }
+
     public function goodies(bool $onlyActive = true): array
     {
         $sql = 'SELECT * FROM goodies' . ($onlyActive ? ' WHERE is_active = 1' : '') . ' ORDER BY points_cost, name';
         $rows = $this->pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC);
-        foreach ($rows as &$r) $r['variants'] = $r['variants_json'] ? (json_decode((string) $r['variants_json'], true) ?: []) : [];
+        foreach ($rows as &$r) {
+            $r['variants'] = $r['variants_json'] ? (json_decode((string) $r['variants_json'], true) ?: []) : [];
+            $r['stock'] = self::decodeStock($r['stock_json'] ?? null);
+        }
+        unset($r);
         return $rows;
     }
 
-    /** Create ($id = null) or update a goody. $variantsCsv is "S, M, L". */
-    public function saveGoody(?int $id, string $name, string $description, int $cost, string $variantsCsv, bool $active, string $actorEmail): array
+    /**
+     * Create ($id = null) or update a goody. $variantsCsv is "S, M, L".
+     * $stock is null when stock is not tracked, otherwise [size => quantity] (or [STOCK_ALL => quantity] when
+     * the goody has no sizes). Sizes missing from $stock count as 0.
+     */
+    public function saveGoody(?int $id, string $name, string $description, int $cost, string $variantsCsv, bool $active, string $actorEmail, ?array $stock = null): array
     {
         $name = trim($name);
         if ($name === '' || mb_strlen($name) > 120) return ['ok' => false, 'error' => 'Give the goody a name (up to 120 characters).'];
@@ -1048,20 +1087,33 @@ class PointsModel
         $variants = array_values(array_unique(array_filter(array_map(fn($v) => mb_substr(trim($v), 0, 60), explode(',', $variantsCsv)), fn($v) => $v !== '')));
         $json = $variants ? json_encode($variants, JSON_UNESCAPED_UNICODE) : null;
         $desc = mb_substr(trim($description), 0, 500);
+
+        $stockJson = null;
+        if ($stock !== null) {
+            $clean = [];
+            if ($variants) {
+                foreach ($variants as $v) $clean[$v] = max(0, min(1000000, (int) ($stock[$v] ?? 0)));
+            } else {
+                $clean[self::STOCK_ALL] = max(0, min(1000000, (int) ($stock[self::STOCK_ALL] ?? 0)));
+            }
+            $stockJson = json_encode($clean, JSON_UNESCAPED_UNICODE);
+        }
+
         try {
             if ($id) {
-                $st = $this->pdo->prepare('UPDATE goodies SET name = :n, description = :d, points_cost = :c, variants_json = :v, is_active = :a WHERE id = :id');
-                $st->execute([':n' => $name, ':d' => $desc, ':c' => $cost, ':v' => $json, ':a' => $active ? 1 : 0, ':id' => $id]);
+                $st = $this->pdo->prepare('UPDATE goodies SET name = :n, description = :d, points_cost = :c, variants_json = :v, stock_json = :k, is_active = :a WHERE id = :id');
+                $st->execute([':n' => $name, ':d' => $desc, ':c' => $cost, ':v' => $json, ':k' => $stockJson, ':a' => $active ? 1 : 0, ':id' => $id]);
             } else {
-                $st = $this->pdo->prepare('INSERT INTO goodies (name, description, points_cost, variants_json, is_active) VALUES (:n, :d, :c, :v, :a)');
-                $st->execute([':n' => $name, ':d' => $desc, ':c' => $cost, ':v' => $json, ':a' => $active ? 1 : 0]);
+                $st = $this->pdo->prepare('INSERT INTO goodies (name, description, points_cost, variants_json, stock_json, is_active) VALUES (:n, :d, :c, :v, :k, :a)');
+                $st->execute([':n' => $name, ':d' => $desc, ':c' => $cost, ':v' => $json, ':k' => $stockJson, ':a' => $active ? 1 : 0]);
             }
         } catch (PDOException $e) {
             // goodies.name is unique (uniq_goody_name). Any other database error goes up to the page as usual.
             if (($e->errorInfo[1] ?? 0) === 1062) return ['ok' => false, 'error' => 'A goody with that name already exists.'];
             throw $e;
         }
-        $this->audit($actorEmail, $id ? 'goodies.catalogue_edit' : 'goodies.catalogue_add', $name, $cost . ' pts, ' . ($active ? 'active' : 'inactive'));
+        $this->audit($actorEmail, $id ? 'goodies.catalogue_edit' : 'goodies.catalogue_add', $name,
+            $cost . ' pts, ' . ($active ? 'active' : 'inactive') . ', stock ' . ($stockJson ?? 'not tracked'));
         return ['ok' => true];
     }
 
@@ -1069,6 +1121,7 @@ class PointsModel
 
     /**
      * A member spends points. $shipping holds name, phone and address (already validated by the page).
+     * When the goody tracks stock, one item is taken from stock in the same transaction.
      * @return array{ok:bool, error?:string, tracking_id?:string}
      */
     public function redeem(string $memberId, int $goodyId, string $variant, array $shipping): array
@@ -1094,6 +1147,21 @@ class PointsModel
 
             $this->pdo->beginTransaction();
             try {
+                // Stock is shared by every member, so lock the goody row (the per-member lock is not enough).
+                $sk = $this->pdo->prepare('SELECT stock_json FROM goodies WHERE id = :id FOR UPDATE');
+                $sk->execute([':id' => $goodyId]);
+                $stock = self::decodeStock($sk->fetchColumn());
+                if ($stock !== null) {
+                    $key = $variants ? $variant : self::STOCK_ALL;
+                    if (($stock[$key] ?? 0) < 1) {
+                        $this->pdo->rollBack();
+                        return ['ok' => false, 'error' => 'Sorry, this goody is out of stock. Your points have not been spent.'];
+                    }
+                    $stock[$key]--;
+                    $this->pdo->prepare('UPDATE goodies SET stock_json = :s WHERE id = :id')
+                        ->execute([':s' => json_encode($stock, JSON_UNESCAPED_UNICODE), ':id' => $goodyId]);
+                }
+
                 $tracking = $this->insertRedemption($memberId, $goodyId, $variant, $cost, $shipping);
                 $rid = (int) $this->pdo->lastInsertId();
                 $lg = $this->pdo->prepare("INSERT INTO points_ledger (member_id, points, entry_type, redemption_id, reason, actor_email) VALUES (:m, :p, 'redemption', :r, :why, :a)");
@@ -1152,10 +1220,11 @@ class PointsModel
         $st->execute($args);
         $rows = $st->fetchAll(PDO::FETCH_ASSOC);
         foreach ($rows as &$r) $r['shipping'] = $r['shipping_json'] ? (json_decode((string) $r['shipping_json'], true) ?: []) : [];
+        unset($r);
         return $rows;
     }
 
-    /** Move a redemption along. Cancelling refunds the points with a new ledger row. */
+    /** Move a redemption along. Cancelling refunds the points with a new ledger row and puts the item back in stock. */
     public function setRedemptionStatus(int $id, string $to, string $actorEmail): array
     {
         $this->pdo->beginTransaction();
@@ -1171,6 +1240,19 @@ class PointsModel
             if ($to === 'Cancelled') {
                 $lg = $this->pdo->prepare("INSERT INTO points_ledger (member_id, points, entry_type, redemption_id, reason, actor_email) VALUES (:m, :p, 'refund', :r, :why, :a)");
                 $lg->execute([':m' => $r['member_id'], ':p' => (int) $r['points_spent'], ':r' => $id, ':why' => 'Refund: ' . $r['tracking_id'], ':a' => $actorEmail]);
+
+                // Put the item back in stock (only when the goody tracks stock and that size still exists).
+                $gs = $this->pdo->prepare('SELECT stock_json FROM goodies WHERE id = :id FOR UPDATE');
+                $gs->execute([':id' => $r['goody_id']]);
+                $stock = self::decodeStock($gs->fetchColumn());
+                if ($stock !== null) {
+                    $key = (string) ($r['variant'] ?? '') !== '' ? (string) $r['variant'] : self::STOCK_ALL;
+                    if (array_key_exists($key, $stock)) {
+                        $stock[$key]++;
+                        $this->pdo->prepare('UPDATE goodies SET stock_json = :s WHERE id = :id')
+                            ->execute([':s' => json_encode($stock, JSON_UNESCAPED_UNICODE), ':id' => $r['goody_id']]);
+                    }
+                }
             }
             $this->pdo->commit();
         } catch (Throwable $e) {

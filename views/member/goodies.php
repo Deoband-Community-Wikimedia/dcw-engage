@@ -15,6 +15,9 @@ require_once __DIR__ . '/../../models/PointsModel.php';
  * member who is struck off (MemberStrikeModel). Change $canRedeem below if the rule is decided differently.
  * Redeeming asks for shipping details, which are kept only until the order is finished and are then
  * cleared by PointsModel::scrubShipping().
+ *
+ * Stock is optional per goody (goodies.stock_json). Sold-out goodies and sizes are shown as out of stock and
+ * cannot be ordered; PointsModel::redeem() re-checks stock inside the same transaction that spends the points.
  */
 MemberSession::requireLogin();
 $member   = MemberSession::current();
@@ -83,13 +86,15 @@ $ist  = new DateTimeZone('Asia/Kolkata');
 $when = fn($ts) => $ts ? (new DateTimeImmutable((string) $ts, new DateTimeZone('UTC')))->setTimezone($ist)->format('j M Y') : '';
 
 // The nearest goody the member cannot afford yet: the hero shows how close they are to it.
+// Sold-out goodies are skipped, so the hero never points at something that cannot be ordered.
 $next = null;
 foreach ($goodies as $g) {
+    if (!PointsModel::inStock($g)) continue;
     $c = (int) $g['points_cost'];
     if ($c > $balance && ($next === null || $c < (int) $next['points_cost'])) $next = $g;
 }
 $affordable = 0;
-foreach ($goodies as $g) if ($canRedeem && $balance >= (int) $g['points_cost']) $affordable++;
+foreach ($goodies as $g) if ($canRedeem && PointsModel::inStock($g) && $balance >= (int) $g['points_cost']) $affordable++;
 
 // A steady colour for each goody, from its name, so the catalogue is easy to tell apart at a glance.
 $mgHue = fn(string $s): int => abs(crc32($s)) % 360;
@@ -153,6 +158,13 @@ cert_rows_css();
     .mg-btn:hover { background: var(--primary-dark); }
     .mg-btn.ghost { background: #fff; color: var(--primary); border: 1px solid var(--border); }
     .mg-btn:focus-visible, .mg-dlg input:focus-visible, .mg-dlg select:focus-visible, .mg-dlg textarea:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+
+    /* Stock */
+    .mg-opts span.out { text-decoration: line-through; opacity: .6; }
+    .mg-tag { padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+    .mg-tag.out { background: #fbe4e5; color: #97161b; text-decoration: none; }
+    .mg-tag.low { background: #fef3c7; color: #92400e; }
+    .mg-card.soldout .mg-art { filter: grayscale(1); opacity: .7; }
 
     /* Redeem dialog */
     .mg-dlg { width: min(460px, calc(100vw - 32px)); padding: 0; border: 0; border-radius: 20px; box-shadow: 0 24px 60px rgba(15,23,42,.35); }
@@ -235,17 +247,27 @@ cert_rows_css();
             <div class="mg-empty" style="margin-bottom:34px">No goodies are available right now. Your points are safe; check back soon.</div>
         <?php else: ?>
             <div class="mg-grid">
-                <?php foreach ($goodies as $g): $cost = (int) $g['points_cost']; $can = $canRedeem && $balance >= $cost; $h = $mgHue((string) $g['name']); $dlg = 'redeem-' . (int) $g['id']; ?>
-                    <article class="mg-card<?= $can ? '' : ' locked' ?>" style="--h:<?= $h ?>">
+                <?php foreach ($goodies as $g):
+                    $cost = (int) $g['points_cost'];
+                    $soldOut = !PointsModel::inStock($g);
+                    $can = $canRedeem && !$soldOut && $balance >= $cost;
+                    $h = $mgHue((string) $g['name']); $dlg = 'redeem-' . (int) $g['id'];
+                    $leftAll = !$g['variants'] ? PointsModel::stockFor($g) : null;   // null = not tracked or has sizes
+                ?>
+                    <article class="mg-card<?= $can ? '' : ' locked' ?><?= $soldOut ? ' soldout' : '' ?>" style="--h:<?= $h ?>">
                         <div class="mg-art" aria-hidden="true"><span><?= htmlspecialchars($mgInitial((string) $g['name'])) ?></span></div>
                         <div class="mg-body">
                             <h3><?= htmlspecialchars($g['name']) ?></h3>
                             <?php if ((string) $g['description'] !== ''): ?><p><?= htmlspecialchars((string) $g['description']) ?></p><?php endif; ?>
-                            <?php if ($g['variants']): ?><div class="mg-opts" aria-label="Options"><?php foreach ($g['variants'] as $v): ?><span><?= htmlspecialchars($v) ?></span><?php endforeach; ?></div><?php endif; ?>
+                            <?php if ($g['variants']): ?><div class="mg-opts" aria-label="Options"><?php foreach ($g['variants'] as $v): $n = PointsModel::stockFor($g, $v); $out = $n !== null && $n < 1; ?><span<?= $out ? ' class="out" title="Out of stock"' : '' ?>><?= htmlspecialchars($v) ?><?= $out ? ' · out of stock' : '' ?></span><?php endforeach; ?></div><?php endif; ?>
+                            <?php if ($soldOut): ?><div class="mg-opts"><span class="mg-tag out">Out of stock</span></div>
+                            <?php elseif ($leftAll !== null && $leftAll <= 5): ?><div class="mg-opts"><span class="mg-tag low">Only <?= $leftAll ?> left</span></div><?php endif; ?>
                             <div class="mg-foot">
                                 <div class="mg-cost"><b><?= number_format($cost) ?></b><span>points</span></div>
                                 <?php if (!$canRedeem): ?>
                                     <p class="mg-need" style="margin-top:8px !important">Redeeming is not available on your account. Please contact DCW Support.</p>
+                                <?php elseif ($soldOut): ?>
+                                    <p class="mg-need" style="margin-top:8px !important">Currently out of stock. Check back soon; your points are safe.</p>
                                 <?php elseif (!$can): $pct = max(0, min(100, (int) floor($balance / $cost * 100))); ?>
                                     <div class="mg-mini" aria-hidden="true"><i style="width:<?= $pct ?>%"></i></div>
                                     <p class="mg-need">You need <?= number_format(max(0, $cost - $balance)) ?> more points.</p>
@@ -270,7 +292,9 @@ cert_rows_css();
                                     <label>Size or option
                                         <select name="variant" required>
                                             <option value="">Choose…</option>
-                                            <?php foreach ($g['variants'] as $v): ?><option value="<?= htmlspecialchars($v) ?>"><?= htmlspecialchars($v) ?></option><?php endforeach; ?>
+                                            <?php foreach ($g['variants'] as $v): $n = PointsModel::stockFor($g, $v); $out = $n !== null && $n < 1; ?>
+                                                <option value="<?= htmlspecialchars($v) ?>"<?= $out ? ' disabled' : '' ?>><?= htmlspecialchars($v) ?><?= $out ? ' (out of stock)' : ($n !== null && $n <= 5 ? ' (only ' . $n . ' left)' : '') ?></option>
+                                            <?php endforeach; ?>
                                         </select>
                                     </label>
                                 <?php endif; ?>

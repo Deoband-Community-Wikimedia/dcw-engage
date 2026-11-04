@@ -16,8 +16,12 @@ require_once __DIR__ . '/../../models/PointsModel.php';
  *   guide        read-only "what earns points" view of every active activity and its points
  *   activities   what can earn points and how many; changing points revises awards already made (#208).
  *                "Edit points in bulk" (?mode=bulk) edits many at once: review first, then one transaction.
- *   catalogue    add and edit goodies and their point costs
- *   redemptions  the order queue: Requested > Ordered > Shipped > Delivered (or Cancelled, which refunds)
+ *   catalogue    add and edit goodies, their point costs and (optionally) their stock
+ *   redemptions  the order queue: Requested > Ordered > Shipped > Delivered (or Cancelled, which refunds
+ *                the points and puts the item back in stock)
+ *
+ * Stock (catalogue tab): optional per goody. "Track stock" off = unlimited. On = one number, or one number
+ * per size when the goody has sizes/options. Stored in goodies.stock_json; see PointsModel::decodeStock().
  *
  * Owner discretion (one rule, applied the same way everywhere on this page):
  *   - Awards made by an owner (to anyone) are approved when created and never wait for a second reviewer.
@@ -366,8 +370,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             goodies_flash($r['ok'] ? 'ok' : 'error', $r['ok'] ? 'Activity deleted.' : $r['error']);
         } elseif ($do === 'save_goody') {
             $back = 'catalogue';
+            // Stock: null = not tracked. Otherwise [size => qty], or [STOCK_ALL => qty] for a goody with no sizes.
+            // The model keeps only the sizes that are in the "Sizes or options" field.
+            $stock = null;
+            if (!empty($_POST['track_stock'])) {
+                $stock = [];
+                $names = (array) ($_POST['stock_name'] ?? []);
+                foreach ((array) ($_POST['stock_qty'] ?? []) as $i => $q) {
+                    $k = is_scalar($names[$i] ?? null) ? trim((string) $names[$i]) : '';
+                    $stock[$k === '' ? PointsModel::STOCK_ALL : $k] = max(0, (int) $q);
+                }
+            }
             $r = $model->saveGoody(((int) ($_POST['id'] ?? 0)) ?: null, (string) ($_POST['name'] ?? ''), (string) ($_POST['description'] ?? ''),
-                (int) ($_POST['points_cost'] ?? 0), (string) ($_POST['variants'] ?? ''), !empty($_POST['is_active']), $actor);
+                (int) ($_POST['points_cost'] ?? 0), (string) ($_POST['variants'] ?? ''), !empty($_POST['is_active']), $actor, $stock);
             goodies_flash($r['ok'] ? 'ok' : 'error', $r['ok'] ? 'Catalogue updated.' : $r['error']);
         } elseif ($do === 'order_status') {
             $back = 'redemptions';
@@ -480,6 +495,22 @@ $gdTiles = function (array $list, string $prefix, int $selected = 0) use ($gdHue
         echo '</div></div>';
     }
     echo '</div>';
+};
+
+/** The "Track stock" toggle and one number per size (or one number when there are no sizes). */
+$gdStock = function (?array $g): void {
+    $stock = $g['stock'] ?? null;
+    $variants = $g['variants'] ?? [];
+    $rows = $variants ?: [''];
+    echo '<div class="wide gd-stock"><label class="gd-tg"><input type="checkbox" name="track_stock" value="1" class="st-track"' . ($stock !== null ? ' checked' : '') . '> Track stock</label>'
+       . '<div class="st-rows"' . ($stock === null ? ' hidden' : '') . '>';
+    foreach ($rows as $v) {
+        $key = $v === '' ? PointsModel::STOCK_ALL : $v;
+        echo '<label class="st-row"><span>' . gd_h($v === '' ? 'In stock' : $v) . '</span>'
+           . '<input type="hidden" name="stock_name[]" value="' . gd_h($v) . '">'
+           . '<input type="number" name="stock_qty[]" min="0" max="1000000" value="' . (int) ($stock[$key] ?? 0) . '"></label>';
+    }
+    echo '</div><p class="gd-note st-help" style="margin:6px 0 0">Members see sold-out goodies and sizes as out of stock and cannot order them. Leave this off for unlimited.</p></div>';
 };
 
 engage_header([
@@ -678,6 +709,12 @@ engage_header([
     .ac-foot { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding-top: 4px; }
     .ac-foot .grow { margin-left: auto; }
     .ac-hint { grid-column: 1 / -1; margin: 0; padding: 10px 12px; border-radius: 10px; background: #f1f7fb; color: #334155; font-size: 13px; }
+
+    /* Catalogue stock */
+    .gd-stock .st-rows { display: flex; flex-wrap: wrap; gap: 8px 14px; margin: 10px 0 0; }
+    .st-row { display: inline-flex !important; flex-direction: row !important; align-items: center; gap: 8px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 10px; background: #fff; }
+    .st-row span { min-width: 2em; font-weight: 700; }
+    .st-row input[type=number] { width: 6em; margin: 0 !important; }
 
     .gd-add > summary { display: inline-flex; align-items: center; gap: 8px; padding: 10px 20px; border-radius: 999px; background: var(--primary); color: #fff; font-weight: 700; font-size: 14px; cursor: pointer; list-style: none; }
     .gd-add > summary::-webkit-details-marker { display: none; }
@@ -1495,13 +1532,14 @@ engage_header([
                 <label>Cost (points)<input type="number" name="points_cost" min="1" max="100000" required></label>
                 <label>Sizes or options<small>Comma separated, optional</small><input type="text" name="variants" placeholder="S, M, L, XL"></label>
                 <label class="wide">Description<input type="text" name="description" maxlength="500"></label>
+                <?php $gdStock(null); ?>
                 <div class="ac-flags"><label class="gd-tg"><input type="checkbox" name="is_active" value="1" checked> Show to members</label></div>
                 <div class="ac-foot"><button type="submit" class="gd-btn">Add goody</button></div>
             </form>
         </section>
     </details>
 
-    <p class="gd-info">Members only see goodies that are switched on. Changing a cost never affects orders already placed.</p>
+    <p class="gd-info">Members only see goodies that are switched on. Changing a cost never affects orders already placed. With <strong>Track stock</strong> on, each order takes one item from stock and a cancelled order puts it back.</p>
 
     <section>
         <h4 style="margin:0 0 10px;font-size:15px">Catalogue <span style="color:var(--muted);font-weight:500;font-size:13px"><?= count($goodies) ?></span></h4>
@@ -1513,7 +1551,14 @@ engage_header([
                         <span class="ac-name"><?= htmlspecialchars($g['name']) ?></span>
                         <span class="ac-meta">
                             <?php if (!$on): ?><span class="ac-tag off">Hidden from members</span><?php endif; ?>
-                            <?php foreach ($g['variants'] as $v): ?><span class="ac-tag"><?= htmlspecialchars($v) ?></span><?php endforeach; ?>
+                            <?php
+                            $tracked = $g['stock'] !== null;
+                            if (!PointsModel::inStock($g)): ?><span class="ac-tag warn">Out of stock</span><?php endif;
+                            if ($g['variants']):
+                                foreach ($g['variants'] as $v): $n = PointsModel::stockFor($g, $v); ?>
+                                    <span class="ac-tag<?= $n !== null && $n < 1 ? ' warn' : '' ?>"><?= htmlspecialchars($v) ?><?= $n !== null ? ': ' . $n : '' ?></span>
+                                <?php endforeach;
+                            elseif ($tracked): ?><span class="ac-tag<?= PointsModel::inStock($g) ? '' : ' warn' ?>"><?= (int) PointsModel::stockFor($g) ?> in stock</span><?php endif; ?>
                             <?php if ((string) $g['description'] !== ''): ?><span><?= htmlspecialchars(mb_strimwidth((string) $g['description'], 0, 90, '…')) ?></span><?php endif; ?>
                         </span>
                     </div>
@@ -1528,12 +1573,39 @@ engage_header([
                     <label>Cost (points)<input type="number" name="points_cost" value="<?= (int) $g['points_cost'] ?>" min="1" max="100000" required></label>
                     <label>Options<small>Comma separated</small><input type="text" name="variants" value="<?= htmlspecialchars(implode(', ', $g['variants'])) ?>"></label>
                     <label class="wide">Description<input type="text" name="description" value="<?= htmlspecialchars((string) $g['description']) ?>" maxlength="500"></label>
+                    <?php $gdStock($g); ?>
                     <div class="ac-flags"><label class="gd-tg"><input type="checkbox" name="is_active" value="1"<?= $on ? ' checked' : '' ?>> Show to members</label></div>
                     <div class="ac-foot"><button type="submit" class="gd-btn">Save changes</button></div>
                 </form>
             </details>
         <?php endforeach; ?>
     </section>
+
+    <script>
+    // Stock rows follow the "Sizes or options" field: one number per size, or one number when there are no sizes.
+    document.querySelectorAll('.gd-stock').forEach(function (box) {
+        var form = box.closest('form'), vin = form.querySelector('input[name=variants]');
+        var track = box.querySelector('.st-track'), rows = box.querySelector('.st-rows');
+        track.addEventListener('change', function () { rows.hidden = !track.checked; });
+        vin.addEventListener('input', function () {
+            var old = {};
+            rows.querySelectorAll('.st-row').forEach(function (r) {
+                old[r.querySelector('[name="stock_name[]"]').value] = r.querySelector('[name="stock_qty[]"]').value;
+            });
+            var names = vin.value.split(',').map(function (s) { return s.trim(); }).filter(function (s, i, a) { return s && a.indexOf(s) === i; });
+            if (!names.length) names = [''];
+            rows.innerHTML = '';
+            names.forEach(function (n) {
+                var l = document.createElement('label'); l.className = 'st-row';
+                var sp = document.createElement('span'); sp.textContent = n || 'In stock';
+                var h = document.createElement('input'); h.type = 'hidden'; h.name = 'stock_name[]'; h.value = n;
+                var q = document.createElement('input'); q.type = 'number'; q.name = 'stock_qty[]'; q.min = 0; q.max = 1000000;
+                q.value = old[n] !== undefined ? old[n] : 0;
+                l.appendChild(sp); l.appendChild(h); l.appendChild(q); rows.appendChild(l);
+            });
+        });
+    });
+    </script>
 
 <?php else: ?>
 
