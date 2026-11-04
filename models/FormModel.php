@@ -28,6 +28,21 @@ class FormModel {
      */
     const DISPLAY_TZ = 'Asia/Kolkata';
 
+    /**
+     * Form kinds. Stored in the schema as "kind" (see builder.php), except:
+     *   'application' carries no "kind" key at all (every older form is one);
+     *   'membership' is never stored: it comes from the slug (isMembershipType()).
+     * 'scholarship' covers scholarships and fellowships (letters and award confirmation are switched on per form).
+     * 'swag' forms can be marked Dispatched after acceptance (courier + consignment number, emailed).
+     */
+    const KINDS = [
+        'application'  => 'Program application',
+        'scholarship'  => 'Scholarship / fellowship',
+        'swag'         => 'Swag',
+        'membership'   => 'Membership',
+        'feedback'     => 'Feedback',
+    ];
+
     public static function isMembershipType($formType) {
         $formType = (string) $formType;
         if (in_array($formType, self::MEMBERSHIP_TYPES, true)) {
@@ -39,6 +54,23 @@ class FormModel {
             }
         }
         return false;
+    }
+
+    /**
+     * The kind of a forms row: one of the KINDS keys. Works on any row that carries one of
+     *   kind         (getActiveForms())
+     *   schema       (decoded schema, e.g. from getFormById())
+     *   schema_json  (raw JSON, e.g. from getAllForms())
+     * Membership comes from the slug; everything else from the schema's "kind"; no kind = 'application'.
+     */
+    public static function kindOf(array $form): string {
+        if (self::isMembershipType($form['form_type'] ?? '')) return 'membership';
+        $k = (string) ($form['kind'] ?? '');
+        if ($k === '') {
+            $schema = $form['schema'] ?? (isset($form['schema_json']) ? json_decode((string) $form['schema_json'], true) : null);
+            $k = is_array($schema) ? (string) ($schema['kind'] ?? '') : '';
+        }
+        return ($k !== 'membership' && isset(self::KINDS[$k])) ? $k : 'application';
     }
 
     // ---------------------------------------------------------------------

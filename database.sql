@@ -16,7 +16,9 @@
 --                                               admin_invites, password_resets,
 --                                               audit_log
 --   2. Forms and applications                   forms, applications,
---                                               application_notes, magic_links,
+--                                               application_notes,
+--                                               application_dispatches,
+--                                               magic_links,
 --                                               email_verifications,
 --                                               feedback_responses,
 --                                               scholarship_letters,
@@ -165,6 +167,8 @@ CREATE TABLE IF NOT EXISTS `audit_log` (
 -- Forms and applications
 -- ============================================================
 
+-- schema_json.kind: what sort of form this is (for example 'swag' or 'scholarship').
+-- The form builder locks the type of a form after it is created.
 CREATE TABLE IF NOT EXISTS `forms` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
   `form_type` varchar(100) NOT NULL,
@@ -177,6 +181,8 @@ CREATE TABLE IF NOT EXISTS `forms` (
   UNIQUE KEY `form_type` (`form_type`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- status:         'Dispatched' is used by swag applications once the item has been handed
+--                 to a courier (details in application_dispatches).
 -- letter_sent_at: when the scholarship award / decline letter went out.
 -- letter_failed:  1 only when a decision was saved but its letter could not be sent
 --                 (drives the "Resend letter" button). Applications decided before
@@ -187,7 +193,7 @@ CREATE TABLE IF NOT EXISTS `applications` (
   `form_id` int(11) NOT NULL,
   `email` varchar(255) NOT NULL,
   `applicant_name` varchar(255) DEFAULT NULL,
-  `status` enum('Draft','New','Under Review','Accepted','Rejected','Discarded') DEFAULT 'New',
+  `status` enum('Draft','New','Under Review','Accepted','Rejected','Discarded','Dispatched') DEFAULT 'New',
   `form_data` JSON DEFAULT NULL,
   `letter_sent_at` datetime DEFAULT NULL,
   `letter_failed` tinyint(1) NOT NULL DEFAULT 0,
@@ -212,6 +218,21 @@ CREATE TABLE IF NOT EXISTS `application_notes` (
   KEY `admin_id` (`admin_id`),
   CONSTRAINT `application_notes_ibfk_1` FOREIGN KEY (`application_id`) REFERENCES `applications` (`id`) ON DELETE CASCADE,
   CONSTRAINT `application_notes_ibfk_2` FOREIGN KEY (`admin_id`) REFERENCES `admin_users` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Courier details of a dispatched swag application: one row per application.
+-- Deleted with the application (ON DELETE CASCADE), and by the PII scrub (cron/scrub_pii.php).
+CREATE TABLE IF NOT EXISTS `application_dispatches` (
+  `application_id` int(11) NOT NULL,
+  `courier` varchar(60) NOT NULL,
+  `awb` varchar(80) NOT NULL,                      -- the courier's consignment number (not the DCW- tracking ID)
+  `tracking_url` varchar(500) DEFAULT NULL,        -- optional, pasted by the organizer from the courier's site
+  `dispatched_by` varchar(255) NOT NULL,
+  `dispatched_at` datetime NOT NULL,               -- UTC
+  `email_sent_at` datetime DEFAULT NULL,           -- UTC; NULL = the applicant has not been emailed yet
+  `email_failed` tinyint(1) NOT NULL DEFAULT 0,
+  PRIMARY KEY (`application_id`),
+  CONSTRAINT `fk_dispatch_application` FOREIGN KEY (`application_id`) REFERENCES `applications` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `magic_links` (
