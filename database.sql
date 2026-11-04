@@ -899,6 +899,7 @@ CREATE TABLE IF NOT EXISTS `goodies` (
   `description` varchar(500) DEFAULT NULL,
   `points_cost` int(10) UNSIGNED NOT NULL,
   `variants_json` JSON DEFAULT NULL,                -- e.g. ["S","M","L","XL"]; NULL = no choice needed
+  `stock_json` text DEFAULT NULL,
   `is_active` tinyint(1) NOT NULL DEFAULT 1,
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
