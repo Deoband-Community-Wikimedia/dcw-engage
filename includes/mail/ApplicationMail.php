@@ -2,7 +2,7 @@
 // includes/mail/ApplicationMail.php
 // Emails for event applications (tracking IDs start "DCW-"): verification code,
 // magic link, confirmation, status updates, "sent back for more information",
-// committee-written decision letters, and the organizer alert.
+// committee-written decision letters, swag dispatch notices, and the organizer alert.
 //
 // Emails to the applicant name the event only (CoreMail::eventTitle()), e.g. "Train-a-Wikipedian"
 // rather than "Scholarship Application Form: Train-a-Wikipedian, 4th Edition". The organizer
@@ -245,6 +245,49 @@ class ApplicationMail {
             'html' => $inner, 'alt' => $alt,
             'dev_result' => false,
             'dev_log' => "Send-back email for $email ($trackingId, $fullTitle): $appUrl",
+        ]);
+    }
+
+    /**
+     * Swag: tells an accepted applicant their parcel has been dispatched, with the courier and the courier's
+     * consignment (AWB) number, and an optional tracking link the organizer pasted from the courier.
+     *
+     * The email NEVER contains the delivery address. It calls the courier's number "Consignment (AWB) number" and says
+     * the application ID is a different number, so the two are not confused. The button opens the public status
+     * page (/track), which needs the tracking ID and email.
+     *
+     * dev_result is false on purpose: the caller treats false as "not sent" and shows "Send dispatch email again".
+     */
+    public static function dispatched($email, $applicantName, $trackingId, $formTitle, $courier, $awb, $trackUrl = '') {
+        $e = fn($s) => CoreMail::e($s);
+        $name = self::displayName($applicantName);
+        $event = CoreMail::eventTitle($formTitle);
+        $page = CoreMail::appUrl() . '/track?id=' . rawurlencode((string) $trackingId);
+        $link = $trackUrl !== ''
+            ? "<p><strong>Track your parcel:</strong> <a href='" . $e($trackUrl) . "' style='color:#106b9a; word-break:break-all;'>" . $e($trackUrl) . "</a></p>"
+            : '';
+
+        $inner = "<p>Dear <strong>" . $e($name) . "</strong>,</p>"
+               . "<p>Your swag for <strong>" . $e($event) . "</strong> has been dispatched to the address you gave us.</p>"
+               . "<div style='background:#f1f7fb; border-left:4px solid #106b9a; padding:14px 18px; margin:0 0 20px; line-height:1.7;'>"
+               . "<strong>Courier:</strong> " . $e($courier) . "<br>"
+               . "<strong>Consignment (AWB) number:</strong> <span style='font-family:Menlo,Consolas,monospace;'>" . $e($awb) . "</span></div>"
+               . $link
+               . "<p style='font-size:14px; color:#64748b;'>Your application ID is " . $e($trackingId) . ". Use the consignment number above when you contact the courier; the application ID is a different number.</p>"
+               . CoreMail::button($page, 'View application status');
+
+        $alt = "Dear $name,\n\nYour swag for $event has been dispatched to the address you gave us.\n\n"
+             . "Courier: $courier\nConsignment (AWB) number: $awb\n"
+             . ($trackUrl !== '' ? "Track your parcel: $trackUrl\n" : '')
+             . "\nYour application ID is $trackingId. Use the consignment number above when you contact the courier; the application ID is a different number.\n"
+             . "Status page: $page";
+
+        return CoreMail::send([
+            'to' => $email, 'to_name' => $name,
+            'subject' => "Your swag has been dispatched - $event",
+            'html' => $inner, 'alt' => $alt,
+            'dev_result' => false,
+            'dev_log' => "Dispatch email for $email ($trackingId): $courier $awb",
         ]);
     }
 
