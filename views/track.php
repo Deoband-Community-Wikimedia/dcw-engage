@@ -16,6 +16,7 @@
  * What the applicant sees is deliberately not the raw internal status:
  *   New / Submitted -> "Received"              Draft -> "More information needed" (the link was emailed to them)
  *   Discarded       -> "Received"              (a discard is never announced to the applicant, so it must not show here)
+ *   Dispatched      -> "Dispatched"            (swag) with the courier, consignment number and tracking link; never the address
  * For an accepted application on a programme that uses award confirmation, the page also shows where their
  * confirmation stands (confirmed / declined / awaiting / overdue). It never shows or builds the private
  * confirmation link: that stays in the award email, so knowing a tracking ID and an email is not enough to answer for someone.
@@ -62,6 +63,8 @@ function trackStatusView(string $status): array {
             return ['More information needed', 'We have requested further information from you. Please check your email (including your spam folder) for our message and the link to update your application.'];
         case 'Accepted':
             return ['Accepted', 'Congratulations! Please check your email for your award letter.'];
+        case 'Dispatched':
+            return ['Dispatched', 'Your swag has been dispatched. The courier details are shown below and were also emailed to you.'];
         case 'Rejected':
             return ['Rejected', 'Thank you for applying. Please check your email for our message.'];
         case 'Discarded':   // never announced to the applicant
@@ -164,6 +167,16 @@ if ($application && ($application['status'] ?? '') === 'Accepted' && !empty($app
     }
 }
 
+// Swag: the courier details of a dispatched application (never the delivery address).
+$dispatch = null;
+if ($application && ($application['status'] ?? '') === 'Dispatched' && !empty($application['id'])) {
+    try {
+        $dispatch = (new ApplicationModel())->dispatchFor((int) $application['id']);
+    } catch (Throwable $ex) {
+        $dispatch = null;   // the status above is still shown
+    }
+}
+
 engage_header([
     'title'   => 'Track your application',
     'heading' => 'Track your application',
@@ -186,6 +199,11 @@ $e = fn($s) => htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8');
             Status: <strong><?= $e($statusLabel) ?></strong><br>
             Submitted: <?= $e(date('F j, Y', strtotime($application['created_at']))) ?>
             <p style="margin:12px 0 0;"><?= $e($statusNote) ?></p>
+            <?php if ($dispatch): ?>
+                <p style="margin:12px 0 0;"><strong>Courier:</strong> <?= $e($dispatch['courier']) ?><br>
+                <strong>Consignment (AWB) number:</strong> <code><?= $e($dispatch['awb']) ?></code>
+                <?php if (!empty($dispatch['tracking_url'])): ?><br><a href="<?= $e($dispatch['tracking_url']) ?>" target="_blank" rel="noopener noreferrer">Track your parcel</a><?php endif; ?></p>
+            <?php endif; ?>
             <?php if ($award): ?>
                 <p style="margin:12px 0 0;"><strong>Scholarship confirmation:</strong>
                 <?php if ($award['state'] === 'confirmed'): ?>
