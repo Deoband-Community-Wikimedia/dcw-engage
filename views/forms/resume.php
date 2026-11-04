@@ -33,7 +33,8 @@ $schemaSections = FormModel::schemaSections(is_array($schema) ? $schema : []);
 $schema['fields'] = FormModel::schemaFields(is_array($schema) ? $schema : []);
 $formData = json_decode($application['form_data'], true);
 $status = $application['status'];
-$isLocked = in_array($status, ['Under Review', 'Accepted', 'Rejected']);
+// One list for "the applicant can no longer edit" (the model uses the same one when saving).
+$isLocked = in_array($status, ApplicationModel::LOCKED_STATUSES, true);
 $wasDraft = $status === 'Draft';
 
 // The name was given when the email was verified, so it is not asked again here: the form's own
