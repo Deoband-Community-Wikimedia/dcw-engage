@@ -38,14 +38,14 @@ class ApplicationMail {
 
         $inner = "
             <p>Dear $greetHtml,</p>
-            <p>Please use the verification code below to initiate your application for <strong>$safeTitle</strong>. Enter it on the page where you provided your email address.</p>
+            <p>Please use the verification code below to initiate your application for <strong>$safeTitle</strong>. Kindly enter it on the page where you provided your email address.</p>
             <div style='background:#f1f7fb; border-left:4px solid #106b9a; padding:16px 18px; margin:0 0 20px; text-align:center;'>
                 <span style='font-family:Menlo,Consolas,monospace; font-size:28px; font-weight:bold; letter-spacing:4px; color:#0f172a;'>" . $e($shownCode) . "</span>
             </div>
             <p><strong>Note: This code is valid until $expiresTime</strong> and can be used only once. Please do not share it with anyone.</p>
-            <p style='margin-bottom:0;'>If you did not initiate this request, you may safely ignore this email. No further action will be taken and no application will be created.</p>";
+            <p style='margin-bottom:0;'>If you did not initiate this request, you may kindly ignore this email. No further action will be taken and no application will be created.</p>";
 
-        $alt = "Dear $greetName,\n\nPlease use the verification code below to initiate your application for $formTitle. Enter it on the page where you provided your email address.\n\nVerification code: $shownCode\n\nNote: This code is valid until $expiresTime and can be used only once. Please do not share it with anyone.\n\nIf you did not initiate this request, you may safely ignore this email. No further action will be taken.\n\nDeoband Community Wikimedia";
+        $alt = "Dear $greetName,\n\nPlease use the verification code below to initiate your application for $formTitle. Kindly enter it on the page where you provided your email address.\n\nVerification code: $shownCode\n\nNote: This code is valid until $expiresTime and can be used only once. Please do not share it with anyone.\n\nIf you did not initiate this request, you may kindly ignore this email. No further action will be taken.\n\nDeoband Community Wikimedia";
 
         $mail = [
             'to' => $email, 'subject' => 'Your verification code - DCW Engage',
@@ -82,20 +82,20 @@ class ApplicationMail {
         $url = $e($signInUrl);
 
         $forgotHtml = $forgotUrl !== ''
-            ? "<p>First time signing in, or forgot your password? <a href='" . $e($forgotUrl) . "' style='color:#106b9a;'>Set or reset it here</a>.</p>"
+            ? "<p>First-time signing in, or forgot your password? <a href='" . $e($forgotUrl) . "' style='color:#106b9a;'>Set or reset it here</a>.</p>"
             : '';
 
         $inner = "
             <p>Dear <strong>" . $e($greetName) . "</strong>,</p>
-            <p>Someone, hopefully you, started an application for <strong>" . $e($event) . "</strong> using this email address. This address already belongs to a DCW member account, so no verification code was sent. Please sign in with your Member ID instead, and you can continue your application from there.</p>
+            <p>Someone, hopefully you, started an application for <strong>" . $e($event) . "</strong> using this email address. This address already belongs to a DCW member account, so no verification code was sent. Please sign in with your Member ID instead, and you may continue your application from there.</p>
             " . CoreMail::button($signInUrl, 'Sign in to continue') . "
-            <p>If the button does not work, copy this link into your browser:<br><a href='$url' style='color:#106b9a; word-break:break-all;'>$url</a></p>
+            <p>If the button does not work, kindly copy this link into your browser:<br><a href='$url' style='color:#106b9a; word-break:break-all;'>$url</a></p>
             $forgotHtml
-            <p style='margin-bottom:0;'>If you did not start this application, you can safely ignore this email. Nothing has been created.</p>";
+            <p style='margin-bottom:0;'>If you did not start this application, you may kindly ignore this email. Nothing has been created.</p>";
 
-        $alt = "Dear $greetName,\n\nSomeone, hopefully you, started an application for $event using this email address. This address already belongs to a DCW member account, so no verification code was sent. Please sign in with your Member ID instead, and you can continue your application from there:\n$signInUrl\n"
-             . ($forgotUrl !== '' ? "\nFirst time signing in, or forgot your password? Set or reset it here: $forgotUrl\n" : '')
-             . "\nIf you did not start this application, you can safely ignore this email. Nothing has been created.\n\nDeoband Community Wikimedia";
+        $alt = "Dear $greetName,\n\nSomeone, hopefully you, started an application for $event using this email address. This address already belongs to a DCW member account, so no verification code was sent. Please sign in with your Member ID instead, and you may continue your application from there:\n$signInUrl\n"
+             . ($forgotUrl !== '' ? "\nFirst-time signing in, or forgot your password? Set or reset it here: $forgotUrl\n" : '')
+             . "\nIf you did not start this application, you may kindly ignore this email. Nothing has been created.\n\nDeoband Community Wikimedia";
 
         $mail = [
             'to' => $email,
@@ -153,13 +153,13 @@ class ApplicationMail {
         if ($revised) {
             $line      = "Thank you for resubmitting your application for <strong>" . $e($formTitle) . "</strong>. We have successfully received your revised application.";
             $linePlain = "Thank you for resubmitting your application for $formTitle. We have successfully received your revised application.";
-            $closing   = "The reviewers will look at it again, and we will notify you via email once a decision has been taken.";
+            $closing   = "The reviewers will look at it again, and we will notify you via email once a decision has been made.";
             $subject   = "Revised Application Received - $formTitle";
             $devLabel  = "Revised application confirmation";
         } else {
             $line      = "Thank you for submitting your application for <strong>" . $e($formTitle) . "</strong>. We have successfully received your details.";
             $linePlain = "Thank you for submitting your application for $formTitle. We have successfully received your details.";
-            $closing   = "We will notify you via email once a decision has been taken. We appreciate your interest and participation.";
+            $closing   = "We will notify you via email once a decision has been made. We appreciate your interest and participation.";
             $subject   = "Application Received - $formTitle";
             $devLabel  = "Confirmation email";
         }
@@ -232,7 +232,7 @@ class ApplicationMail {
             <p>Dear <strong>" . $e($applicantName) . "</strong>,</p>
             <p>The reviewers require additional information regarding your application for <strong>" . $e($formTitle) . "</strong> (Tracking ID: " . $e($trackingId) . ").</p>
             <p><strong>Required Information:</strong><br>" . nl2br($e($message)) . "</p>
-            <p>Please use the secure link below to update your application and resubmit it at the earliest.</p>
+            <p>Please use the secure link below to update your application and resubmit it at your earliest convenience.</p>
             <div class='btn-wrapper'><a href='$url' class='btn'>Update My Application</a></div>
             <p>If the button above does not work, please copy and paste the following link into your browser:<br><br><a href='$url' style='color: #106b9a; word-break: break-all;'>$url</a></p>
             <p style='margin-bottom:0;'>For security purposes, this link will expire automatically. Kindly do not share this link with anyone.</p>";
@@ -268,18 +268,18 @@ class ApplicationMail {
             : '';
 
         $inner = "<p>Dear <strong>" . $e($name) . "</strong>,</p>"
-               . "<p>Your swag for <strong>" . $e($event) . "</strong> has been dispatched to the address you gave us.</p>"
+               . "<p>Your swag for <strong>" . $e($event) . "</strong> has been dispatched to the address you provided.</p>"
                . "<div style='background:#f1f7fb; border-left:4px solid #106b9a; padding:14px 18px; margin:0 0 20px; line-height:1.7;'>"
                . "<strong>Courier:</strong> " . $e($courier) . "<br>"
                . "<strong>Consignment (AWB) number:</strong> <span style='font-family:Menlo,Consolas,monospace;'>" . $e($awb) . "</span></div>"
                . $link
-               . "<p style='font-size:14px; color:#64748b;'>Your application ID is " . $e($trackingId) . ". Use the consignment number above when you contact the courier; the application ID is a different number.</p>"
+               . "<p style='font-size:14px; color:#64748b;'>Your application ID is " . $e($trackingId) . ". Please use the consignment number above when contacting the courier; the application ID is a different number.</p>"
                . CoreMail::button($page, 'View application status');
 
-        $alt = "Dear $name,\n\nYour swag for $event has been dispatched to the address you gave us.\n\n"
+        $alt = "Dear $name,\n\nYour swag for $event has been dispatched to the address you provided.\n\n"
              . "Courier: $courier\nConsignment (AWB) number: $awb\n"
              . ($trackUrl !== '' ? "Track your parcel: $trackUrl\n" : '')
-             . "\nYour application ID is $trackingId. Use the consignment number above when you contact the courier; the application ID is a different number.\n"
+             . "\nYour application ID is $trackingId. Please use the consignment number above when contacting the courier; the application ID is a different number.\n"
              . "Status page: $page";
 
         return CoreMail::send([
@@ -362,7 +362,7 @@ class ApplicationMail {
      * in brand-colour small caps, so it reads as a sign-off and not as more body text.
      */
     private static function signatureHtml() {
-        return "<div style='width:48px; height:3px; background:#106b9a; margin:32px 0 14px; line-height:3px; font-size:0;'>&nbsp;</div>"
+        return "<div style='width:48px; height:3px; background:#106b9a; margin:32px 0 14px; line-height:3px; font-size:0;'> </div>"
              . "<p style='margin:0; font-size:17px; line-height:1.3; font-weight:bold; color:#0f172a;'>Scholarship Review Committee</p>"
              . "<p style='margin:3px 0 0; font-size:13px; line-height:1.3; font-weight:bold; letter-spacing:1px; text-transform:uppercase; color:#106b9a;'>Deoband Community Wikimedia</p>";
     }
@@ -382,13 +382,13 @@ class ApplicationMail {
 
         $inner = "<p>Dear <strong>" . $e($name) . "</strong>,</p>"
                . "<p>We have not yet received your response regarding your scholarship for <strong>" . $e($event) . "</strong>. "
-               . "Please confirm your participation and share your travel and accommodation details$by.</p>"
+               . "Kindly confirm your participation and share your travel and accommodation details$by.</p>"
                . CoreMail::button($url, 'Confirm my scholarship')
-               . "<p>If the button does not work, copy this link into your browser:<br><a href='" . $e($url) . "' style='color:#106b9a; word-break:break-all;'>" . $e($url) . "</a></p>"
+               . "<p>If the button does not work, kindly copy this link into your browser:<br><a href='" . $e($url) . "' style='color:#106b9a; word-break:break-all;'>" . $e($url) . "</a></p>"
                . "<p style='margin-bottom:0;'>This link is private to you. Please do not share it.</p>"
                . self::signatureHtml();
 
-        $alt = "Dear $name,\n\nWe have not yet received your response regarding your scholarship for $event. Please confirm your participation and share your travel and accommodation details$byPlain.\n\n$url\n\nThis link is private to you. Please do not share it.\n\n--\nScholarship Review Committee\nDeoband Community Wikimedia\n";
+        $alt = "Dear $name,\n\nWe have not yet received your response regarding your scholarship for $event. Kindly confirm your participation and share your travel and accommodation details$byPlain.\n\n$url\n\nThis link is private to you. Please do not share it.\n\n--\nScholarship Review Committee\nDeoband Community Wikimedia\n";
 
         return CoreMail::send([
             'to' => $email, 'to_name' => $name,
@@ -419,8 +419,8 @@ class ApplicationMail {
 
         if ($response === 'confirmed' && $previous === 'confirmed') {
             // Already confirmed, now changed their details.
-            $line = "We have received your updated travel and accommodation details for <strong>" . $e($event) . "</strong>. Your scholarship stays confirmed." . $until;
-            $linePlain = "We have received your updated travel and accommodation details for $event. Your scholarship stays confirmed." . $untilPlain;
+            $line = "We have received your updated travel and accommodation details for <strong>" . $e($event) . "</strong>. Your scholarship remains confirmed." . $until;
+            $linePlain = "We have received your updated travel and accommodation details for $event. Your scholarship remains confirmed." . $untilPlain;
             $button = CoreMail::button($url, 'Review or update my answers');
             $subject = "Your details were updated: $event";
         } elseif ($response === 'confirmed') {
@@ -466,11 +466,11 @@ class ApplicationMail {
         $inner = "<p>Dear Organiser,</p>"
                . "<p><strong>" . $e($name) . "</strong> (" . $e($trackingId) . ") has declined their scholarship for <strong>" . $e($formTitle) . "</strong>, and their seat is now available.</p>"
                . $reasonHtml
-               . "<p>You can accept another applicant from the review queue whenever you are ready.</p>"
+               . "<p>You may accept another applicant from the review queue whenever you are ready.</p>"
                . CoreMail::button($reviewUrl, 'Open application');
         $alt = "Dear Organiser,\n\n$name ($trackingId) has declined their scholarship for $formTitle, and their seat is now available."
              . (trim((string) $reason) !== '' ? "\n\nReason given:\n$reason" : '')
-             . "\n\nYou can accept another applicant from the review queue whenever you are ready.\n$reviewUrl";
+             . "\n\nYou may accept another applicant from the review queue whenever you are ready.\n$reviewUrl";
 
         return CoreMail::send([
             'to' => $recipients,
