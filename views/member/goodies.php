@@ -5,6 +5,7 @@ require_once __DIR__ . '/../../includes/member_session.php';
 require_once __DIR__ . '/../../includes/cert_rows.php';
 require_once __DIR__ . '/../../models/MemberStrikeModel.php';
 require_once __DIR__ . '/../../models/PointsModel.php';
+require_once __DIR__ . '/../../models/GoodyImages.php';
 
 /**
  * DCW Engage - My goodies (/member/goodies).
@@ -18,6 +19,10 @@ require_once __DIR__ . '/../../models/PointsModel.php';
  *
  * Stock is optional per goody (goodies.stock_json). Sold-out goodies and sizes are shown as out of stock and
  * cannot be ordered; PointsModel::redeem() re-checks stock inside the same transaction that spends the points.
+ *
+ * Pictures are optional per goody (goodies.images_json, see GoodyImages). The first is the cover on the card;
+ * the redeem dialog shows the cover large, with thumbnails to flip through when there are several. A goody
+ * with no pictures keeps the coloured initial-letter placeholder.
  */
 MemberSession::requireLogin();
 $member   = MemberSession::current();
@@ -140,8 +145,12 @@ cert_rows_css();
     .mg-card { display: flex; flex-direction: column; overflow: hidden; background: var(--card); border: 1px solid var(--border); border-radius: 18px; transition: transform .18s, box-shadow .18s; }
     .mg-card:hover { transform: translateY(-3px); box-shadow: 0 12px 28px rgba(15,23,42,.12); }
     .mg-card.locked { opacity: .92; }
-    .mg-art { display: flex; align-items: center; justify-content: center; height: 116px; background: linear-gradient(135deg, hsl(var(--h) 70% 90%), hsl(calc(var(--h) + 35) 75% 82%)); }
+    .mg-art { position: relative; display: flex; align-items: center; justify-content: center; height: 116px; background: linear-gradient(135deg, hsl(var(--h) 70% 90%), hsl(calc(var(--h) + 35) 75% 82%)); }
     .mg-art span { display: grid; place-items: center; width: 64px; height: 64px; border-radius: 50%; background: #fff; color: hsl(var(--h) 60% 32%); font-size: 30px; font-weight: 800; box-shadow: 0 6px 16px rgba(15,23,42,.14); }
+    /* A goody with a picture: the cover fills the top of the card. */
+    .mg-art.has-img { height: 180px; background: #f1f5f9; }
+    .mg-art.has-img img { display: block; width: 100%; height: 100%; object-fit: cover; }
+    .mg-more { position: absolute; right: 10px; bottom: 10px; padding: 2px 10px; border-radius: 999px; background: rgba(15,23,42,.72); color: #fff; font-size: 12px; font-weight: 700; }
     .mg-body { display: flex; flex: 1; flex-direction: column; padding: 16px 18px 18px; }
     .mg-body h3 { margin: 0 0 4px; font-size: 17px; }
     .mg-body p { margin: 0 0 12px; color: var(--muted); font-size: 14px; line-height: 1.45; }
@@ -157,7 +166,7 @@ cert_rows_css();
     .mg-btn { width: 100%; margin-top: 12px; padding: 10px 16px; font: inherit; font-weight: 700; border: 0; border-radius: 999px; background: var(--primary); color: #fff; cursor: pointer; }
     .mg-btn:hover { background: var(--primary-dark); }
     .mg-btn.ghost { background: #fff; color: var(--primary); border: 1px solid var(--border); }
-    .mg-btn:focus-visible, .mg-dlg input:focus-visible, .mg-dlg select:focus-visible, .mg-dlg textarea:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+    .mg-btn:focus-visible, .mg-dlg input:focus-visible, .mg-dlg select:focus-visible, .mg-dlg textarea:focus-visible, .mg-thumbs button:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 
     /* Stock */
     .mg-opts span.out { text-decoration: line-through; opacity: .6; }
@@ -167,7 +176,7 @@ cert_rows_css();
     .mg-card.soldout .mg-art { filter: grayscale(1); opacity: .7; }
 
     /* Redeem dialog */
-    .mg-dlg { width: min(460px, calc(100vw - 32px)); padding: 0; border: 0; border-radius: 20px; box-shadow: 0 24px 60px rgba(15,23,42,.35); }
+    .mg-dlg { width: min(460px, calc(100vw - 32px)); max-height: calc(100vh - 32px); padding: 0; border: 0; border-radius: 20px; box-shadow: 0 24px 60px rgba(15,23,42,.35); }
     .mg-dlg::backdrop { background: rgba(15,23,42,.5); }
     .mg-dlg header { padding: 20px 22px 14px; background: linear-gradient(135deg, hsl(var(--h) 70% 92%), hsl(calc(var(--h) + 35) 75% 86%)); }
     .mg-dlg header h3 { margin: 0 0 2px; font-size: 19px; }
@@ -178,6 +187,14 @@ cert_rows_css();
     .mg-dlg .fine { margin: 12px 0 0; color: var(--muted); font-size: 12.5px; }
     .mg-dlg .acts { display: flex; gap: 10px; margin-top: 16px; }
     .mg-dlg .acts .mg-btn { margin: 0; }
+
+    /* Pictures in the redeem dialog: a large one, and thumbnails when there are several */
+    .mg-gal { background: #f1f5f9; }
+    .mg-gal .main { display: block; width: 100%; height: 260px; object-fit: contain; background: #f8fafc; }
+    .mg-thumbs { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 22px; background: #fff; border-bottom: 1px solid var(--border); }
+    .mg-thumbs button { width: 54px; height: 54px; padding: 0; border: 2px solid transparent; border-radius: 10px; overflow: hidden; background: #f1f5f9; cursor: pointer; }
+    .mg-thumbs button[aria-current="true"] { border-color: var(--primary); }
+    .mg-thumbs img { display: block; width: 100%; height: 100%; object-fit: cover; }
 
     .mg-empty { padding: 26px; text-align: center; color: var(--muted); background: var(--card); border: 1px dashed #c3d0dc; border-radius: 16px; }
 
@@ -210,7 +227,7 @@ cert_rows_css();
     .mg-order .note { margin: 10px 0 0; color: #97161b; font-size: 13px; }
 
     @media (prefers-reduced-motion: reduce) { .mg-card { transition: none; } .mg-card:hover { transform: none; } }
-    @media (max-width: 520px) { .mg-hero { padding: 22px 20px; border-radius: 18px; } }
+    @media (max-width: 520px) { .mg-hero { padding: 22px 20px; border-radius: 18px; } .mg-gal .main { height: 220px; } }
 </style>
 
 <div class="dash">
@@ -253,9 +270,18 @@ cert_rows_css();
                     $can = $canRedeem && !$soldOut && $balance >= $cost;
                     $h = $mgHue((string) $g['name']); $dlg = 'redeem-' . (int) $g['id'];
                     $leftAll = !$g['variants'] ? PointsModel::stockFor($g) : null;   // null = not tracked or has sizes
+                    $imgs = $g['images'] ?? [];
+                    $cover = $imgs[0] ?? null;
                 ?>
                     <article class="mg-card<?= $can ? '' : ' locked' ?><?= $soldOut ? ' soldout' : '' ?>" style="--h:<?= $h ?>">
-                        <div class="mg-art" aria-hidden="true"><span><?= htmlspecialchars($mgInitial((string) $g['name'])) ?></span></div>
+                        <?php if ($cover): ?>
+                            <div class="mg-art has-img">
+                                <img src="<?= htmlspecialchars(GoodyImages::url($cover['file'])) ?>" alt="<?= htmlspecialchars(GoodyImages::alt((string) $g['name'], $cover)) ?>" loading="lazy">
+                                <?php if (count($imgs) > 1): ?><b class="mg-more" aria-label="<?= count($imgs) ?> pictures">1/<?= count($imgs) ?></b><?php endif; ?>
+                            </div>
+                        <?php else: ?>
+                            <div class="mg-art" aria-hidden="true"><span><?= htmlspecialchars($mgInitial((string) $g['name'])) ?></span></div>
+                        <?php endif; ?>
                         <div class="mg-body">
                             <h3><?= htmlspecialchars($g['name']) ?></h3>
                             <?php if ((string) $g['description'] !== ''): ?><p><?= htmlspecialchars((string) $g['description']) ?></p><?php endif; ?>
@@ -284,6 +310,21 @@ cert_rows_css();
                                 <h3 id="<?= $dlg ?>-t"><?= htmlspecialchars($g['name']) ?></h3>
                                 <p><?= number_format($cost) ?> points · you will have <?= number_format($balance - $cost) ?> left</p>
                             </header>
+                            <?php if ($cover): ?>
+                                <div class="mg-gal" data-gal>
+                                    <img class="main" src="<?= htmlspecialchars(GoodyImages::url($cover['file'])) ?>" alt="<?= htmlspecialchars(GoodyImages::alt((string) $g['name'], $cover)) ?>">
+                                </div>
+                                <?php if (count($imgs) > 1): ?>
+                                    <div class="mg-thumbs" role="group" aria-label="Pictures of <?= htmlspecialchars($g['name']) ?>">
+                                        <?php foreach ($imgs as $i => $im): $alt = GoodyImages::alt((string) $g['name'], $im); ?>
+                                            <button type="button" data-src="<?= htmlspecialchars(GoodyImages::url($im['file'])) ?>" data-alt="<?= htmlspecialchars($alt) ?>"
+                                                    aria-current="<?= $i === 0 ? 'true' : 'false' ?>" aria-label="Show picture <?= $i + 1 ?> of <?= count($imgs) ?>">
+                                                <img src="<?= htmlspecialchars(GoodyImages::url($im['file'])) ?>" alt="" loading="lazy">
+                                            </button>
+                                        <?php endforeach; ?>
+                                    </div>
+                                <?php endif; ?>
+                            <?php endif; ?>
                             <form method="POST" action="/member/goodies">
                                 <?= CSRF::getInputField() ?>
                                 <input type="hidden" name="action" value="redeem">
@@ -371,6 +412,15 @@ document.querySelectorAll('[data-open]').forEach(function (b) {
 document.querySelectorAll('dialog.mg-dlg').forEach(function (d) {
     d.addEventListener('click', function (e) { if (e.target === d) d.close(); });
     var c = d.querySelector('[data-close]'); if (c) c.addEventListener('click', function () { d.close(); });
+
+    // Pictures: a thumbnail swaps the large picture.
+    var main = d.querySelector('[data-gal] .main'), thumbs = [].slice.call(d.querySelectorAll('.mg-thumbs button'));
+    thumbs.forEach(function (t) {
+        t.addEventListener('click', function () {
+            main.src = t.dataset.src; main.alt = t.dataset.alt;
+            thumbs.forEach(function (x) { x.setAttribute('aria-current', x === t ? 'true' : 'false'); });
+        });
+    });
 });
 </script>
 <?php cert_rows_js(); /* copy buttons */ ?>
