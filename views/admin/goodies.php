@@ -5,6 +5,7 @@ require_once __DIR__ . '/../../includes/engage_page.php';
 require_once __DIR__ . '/../../models/MemberModel.php';
 require_once __DIR__ . '/../../models/MemberStrikeModel.php';
 require_once __DIR__ . '/../../models/PointsModel.php';
+require_once __DIR__ . '/../../models/GoodyImages.php';
 
 /**
  * DCW Engage - goodies, reviewer side (/admin/goodies).
@@ -16,12 +17,18 @@ require_once __DIR__ . '/../../models/PointsModel.php';
  *   guide        read-only "what earns points" view of every active activity and its points
  *   activities   what can earn points and how many; changing points revises awards already made (#208).
  *                "Edit points in bulk" (?mode=bulk) edits many at once: review first, then one transaction.
- *   catalogue    add and edit goodies, their point costs and (optionally) their stock
+ *   catalogue    add and edit goodies, their point costs, pictures and (optionally) their stock
  *   redemptions  the order queue: Requested > Ordered > Shipped > Delivered (or Cancelled, which refunds
  *                the points and puts the item back in stock)
  *
  * Stock (catalogue tab): optional per goody. "Track stock" off = unlimited. On = one number, or one number
  * per size when the goody has sizes/options. Stored in goodies.stock_json; see PointsModel::decodeStock().
+ *
+ * Pictures (catalogue tab): up to GoodyImages::MAX_IMAGES per goody. The goody form is multipart; the pictures
+ * already saved come back as img_file[] / img_alt[] in the order wanted (the first is the cover, a picture
+ * left out is removed) and new ones arrive as img_new[]. The goody is saved first, then GoodyImages::process()
+ * checks and stores the files and PointsModel::setGoodyImages() saves the list. Files that were removed are
+ * deleted only after the list is saved. A picture problem never undoes the goody's other changes.
  *
  * Owner discretion (one rule, applied the same way everywhere on this page):
  *   - Awards made by an owner (to anyone) are approved when created and never wait for a second reviewer.
@@ -383,7 +390,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             $r = $model->saveGoody(((int) ($_POST['id'] ?? 0)) ?: null, (string) ($_POST['name'] ?? ''), (string) ($_POST['description'] ?? ''),
                 (int) ($_POST['points_cost'] ?? 0), (string) ($_POST['variants'] ?? ''), !empty($_POST['is_active']), $actor, $stock);
-            goodies_flash($r['ok'] ? 'ok' : 'error', $r['ok'] ? 'Catalogue updated.' : $r['error']);
+            $kind = $r['ok'] ? 'ok' : 'error';
+            $msg  = $r['ok'] ? 'Catalogue updated.' : $r['error'];
+
+            // Pictures. The goody is already saved; a picture problem is reported without undoing that.
+            if ($r['ok'] && !empty($_POST['img_form'])) {
+                $gid = (int) $r['id'];
+                $pr = GoodyImages::process($model->goodyImages($gid), $_POST, $_FILES['img_new'] ?? []);
+                if (!$pr['ok']) {
+                    $kind = 'error';
+                    $msg  = 'The goody was saved, but its pictures were not: ' . $pr['error'];
+                } else {
+                    try {
+                        $model->setGoodyImages($gid, $pr['images'], $actor);
+                        GoodyImages::remove($pr['drop']);      // files are deleted only after the list is saved
+                    } catch (Throwable $e) {
+                        GoodyImages::remove($pr['add']);       // the new files are not in the list, so do not keep them
+                        throw $e;
+                    }
+                }
+            }
+            goodies_flash($kind, $msg);
         } elseif ($do === 'order_status') {
             $back = 'redemptions';
             $r = $model->setRedemptionStatus((int) ($_POST['id'] ?? 0), (string) ($_POST['to'] ?? ''), $actor);
@@ -513,6 +540,29 @@ $gdStock = function (?array $g): void {
     echo '</div><p class="gd-note st-help" style="margin:6px 0 0">Members see sold-out goodies and sizes as out of stock and cannot order them. Leave this off for unlimited.</p></div>';
 };
 
+/**
+ * Pictures: the ones already saved (move, describe, remove) and a picker for new ones. The first one is the
+ * cover members see on the card. The form that holds this must be multipart/form-data.
+ */
+$gdImages = function (?array $g): void {
+    $mb = (int) (GoodyImages::MAX_BYTES / 1048576);
+    echo '<div class="wide gd-imgs" data-max="' . GoodyImages::MAX_IMAGES . '" data-mb="' . $mb . '">'
+       . '<span class="bk-lab">Pictures</span><input type="hidden" name="img_form" value="1"><div class="im-list">';
+    foreach (($g['images'] ?? []) as $im) {
+        echo '<div class="im-row"><img src="' . gd_h(GoodyImages::url($im['file'])) . '" alt="" loading="lazy">'
+           . '<input type="hidden" name="img_file[]" value="' . gd_h($im['file']) . '">'
+           . '<input type="text" name="img_alt[]" value="' . gd_h($im['alt']) . '" maxlength="' . GoodyImages::ALT_MAX . '" placeholder="Describe the picture (optional)" aria-label="Picture description">'
+           . '<span class="im-btns"><button type="button" class="im-up" aria-label="Move earlier" title="Move earlier">↑</button>'
+           . '<button type="button" class="im-dn" aria-label="Move later" title="Move later">↓</button>'
+           . '<button type="button" class="im-rm" aria-label="Remove picture" title="Remove">×</button></span></div>';
+    }
+    echo '</div><input type="file" name="img_new[]" class="im-pick" accept="image/jpeg,image/png,image/webp" multiple aria-label="Add pictures">'
+       . '<div class="im-new"></div>'
+       . '<p class="gd-note" style="margin:6px 0 0">JPG, PNG or WebP, up to ' . $mb . ' MB each, up to ' . GoodyImages::MAX_IMAGES
+       . ' pictures. The first is the cover members see on the card. New pictures are added at the end; use ↑ ↓ after saving to reorder. '
+       . 'A short description helps screen-reader users; if left empty the goody’s name is used.</p></div>';
+};
+
 engage_header([
     'title'   => 'Goodies',
     'heading' => 'Goodies',
@@ -549,7 +599,7 @@ engage_header([
     .gd-form label > input, .gd-form label > select, .gd-form label > textarea { margin-top: auto; }
     .gd-form input[type=text], .gd-form input[type=number], .gd-form input[type=url], .gd-form select, .gd-form textarea { width: 100%; box-sizing: border-box; padding: 9px 11px; font: inherit; font-weight: 400; border: 1px solid var(--border); border-radius: 10px; background: #fff; }
     .gd-form textarea { resize: vertical; min-height: 84px; }
-    .gd-form input:focus-visible, .gd-form select:focus-visible, .gd-form textarea:focus-visible, .gd-btn:focus-visible, .ac > summary:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+    .gd-form input:focus-visible, .gd-form select:focus-visible, .gd-form textarea:focus-visible, .gd-btn:focus-visible, .ac > summary:focus-visible, .im-btns button:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
     .gd-form .wide { grid-column: 1 / -1; }
 
     .gd-btn { padding: 9px 18px; font: inherit; font-weight: 600; font-size: 14px; border: 1px solid var(--primary); border-radius: 999px; background: var(--primary); color: #fff; cursor: pointer; }
@@ -691,6 +741,7 @@ engage_header([
     .ac > summary::-webkit-details-marker { display: none; }
     .ac > summary:hover { background: #f8fafc; border-radius: 12px; }
     .ac-name { display: block; font-weight: 700; font-size: 15px; overflow-wrap: anywhere; }
+    .ac-thumb { width: 28px; height: 28px; object-fit: cover; border-radius: 6px; vertical-align: middle; margin-right: 8px; }
     .ac-meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 4px; font-size: 12.5px; color: var(--muted); }
     .ac-tag { padding: 1px 9px; border-radius: 999px; background: #f1f5f9; color: #475569; font-weight: 600; font-size: 12px; }
     .ac-tag.warn { background: #fef3c7; color: #92400e; }
@@ -715,6 +766,19 @@ engage_header([
     .st-row { display: inline-flex !important; flex-direction: row !important; align-items: center; gap: 8px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 10px; background: #fff; }
     .st-row span { min-width: 2em; font-weight: 700; }
     .st-row input[type=number] { width: 6em; margin: 0 !important; }
+
+    /* Catalogue pictures */
+    .gd-imgs .im-list, .gd-imgs .im-new { display: grid; gap: 8px; margin: 6px 0 8px; }
+    .gd-imgs .im-list:empty, .gd-imgs .im-new:empty { display: none; }
+    .gd-imgs .im-new { grid-template-columns: repeat(auto-fill, 72px); }
+    .im-new img { width: 72px; height: 72px; object-fit: cover; border-radius: 10px; border: 1px solid var(--border); }
+    .im-row { position: relative; display: grid; grid-template-columns: 64px 1fr auto; gap: 10px; align-items: center; padding: 6px; border: 1px solid var(--border); border-radius: 12px; background: #fff; }
+    .im-row img { width: 64px; height: 64px; object-fit: cover; border-radius: 8px; }
+    .im-row:first-child::after { content: "Cover"; position: absolute; top: -9px; left: 10px; padding: 0 8px; border-radius: 999px; background: var(--primary); color: #fff; font-size: 11px; font-weight: 700; }
+    .im-btns { display: inline-flex; gap: 4px; }
+    .im-btns button { width: 32px; height: 32px; border: 1px solid var(--border); border-radius: 8px; background: #fff; font: inherit; font-weight: 700; cursor: pointer; }
+    .im-btns .im-rm { color: #97161b; }
+    .im-pick { max-width: 100%; font-size: 13px; }
 
     .gd-add > summary { display: inline-flex; align-items: center; gap: 8px; padding: 10px 20px; border-radius: 999px; background: var(--primary); color: #fff; font-weight: 700; font-size: 14px; cursor: pointer; list-style: none; }
     .gd-add > summary::-webkit-details-marker { display: none; }
@@ -750,6 +814,9 @@ engage_header([
         .ac > summary { grid-template-columns: 1fr auto; }
         .ac-edit { display: none; }
         .ch-row { flex-wrap: wrap; }
+        .im-row { grid-template-columns: 56px 1fr; }
+        .im-row img { width: 56px; height: 56px; }
+        .im-btns { grid-column: 1 / -1; }
     }
     @media (prefers-reduced-motion: reduce) { * { transition: none !important; } .pg-card:hover, .tl:hover { transform: none; } }
 </style>
@@ -1525,13 +1592,14 @@ engage_header([
     <details class="gd-add" style="margin:0 0 22px">
         <summary>＋ Add a goody</summary>
         <section class="gd-card">
-            <form method="POST" action="/admin/goodies?tab=catalogue" class="gd-form">
+            <form method="POST" action="/admin/goodies?tab=catalogue" class="gd-form" enctype="multipart/form-data">
                 <?= CSRF::getInputField() ?>
                 <input type="hidden" name="do" value="save_goody">
                 <label>Name<input type="text" name="name" required maxlength="120"></label>
                 <label>Cost (points)<input type="number" name="points_cost" min="1" max="100000" required></label>
                 <label>Sizes or options<small>Comma separated, optional</small><input type="text" name="variants" placeholder="S, M, L, XL"></label>
                 <label class="wide">Description<input type="text" name="description" maxlength="500"></label>
+                <?php $gdImages(null); ?>
                 <?php $gdStock(null); ?>
                 <div class="ac-flags"><label class="gd-tg"><input type="checkbox" name="is_active" value="1" checked> Show to members</label></div>
                 <div class="ac-foot"><button type="submit" class="gd-btn">Add goody</button></div>
@@ -1539,7 +1607,7 @@ engage_header([
         </section>
     </details>
 
-    <p class="gd-info">Members only see goodies that are switched on. Changing a cost never affects orders already placed. With <strong>Track stock</strong> on, each order takes one item from stock and a cancelled order puts it back.</p>
+    <p class="gd-info">Members only see goodies that are switched on. Changing a cost never affects orders already placed. With <strong>Track stock</strong> on, each order takes one item from stock and a cancelled order puts it back. The first picture of a goody is its cover on the member page; without a picture members see a coloured initial.</p>
 
     <section>
         <h4 style="margin:0 0 10px;font-size:15px">Catalogue <span style="color:var(--muted);font-weight:500;font-size:13px"><?= count($goodies) ?></span></h4>
@@ -1548,7 +1616,7 @@ engage_header([
             <details class="ac<?= $on ? '' : ' off' ?>" style="--h:<?= abs(crc32((string) $g['name'])) % 360 ?>">
                 <summary>
                     <div>
-                        <span class="ac-name"><?= htmlspecialchars($g['name']) ?></span>
+                        <span class="ac-name"><?php if ($g['images']): ?><img class="ac-thumb" src="<?= htmlspecialchars(GoodyImages::url($g['images'][0]['file'])) ?>" alt=""><?php endif; ?><?= htmlspecialchars($g['name']) ?></span>
                         <span class="ac-meta">
                             <?php if (!$on): ?><span class="ac-tag off">Hidden from members</span><?php endif; ?>
                             <?php
@@ -1559,13 +1627,14 @@ engage_header([
                                     <span class="ac-tag<?= $n !== null && $n < 1 ? ' warn' : '' ?>"><?= htmlspecialchars($v) ?><?= $n !== null ? ': ' . $n : '' ?></span>
                                 <?php endforeach;
                             elseif ($tracked): ?><span class="ac-tag<?= PointsModel::inStock($g) ? '' : ' warn' ?>"><?= (int) PointsModel::stockFor($g) ?> in stock</span><?php endif; ?>
+                            <?php if ($g['images']): ?><span class="ac-tag"><?= count($g['images']) ?> picture<?= count($g['images']) === 1 ? '' : 's' ?></span><?php endif; ?>
                             <?php if ((string) $g['description'] !== ''): ?><span><?= htmlspecialchars(mb_strimwidth((string) $g['description'], 0, 90, '…')) ?></span><?php endif; ?>
                         </span>
                     </div>
                     <span class="ac-pts"><?= number_format((int) $g['points_cost']) ?><small>points</small></span>
                     <span class="ac-edit" aria-hidden="true"></span>
                 </summary>
-                <form method="POST" action="/admin/goodies?tab=catalogue" class="gd-form ac-form">
+                <form method="POST" action="/admin/goodies?tab=catalogue" class="gd-form ac-form" enctype="multipart/form-data">
                     <?= CSRF::getInputField() ?>
                     <input type="hidden" name="do" value="save_goody">
                     <input type="hidden" name="id" value="<?= (int) $g['id'] ?>">
@@ -1573,6 +1642,7 @@ engage_header([
                     <label>Cost (points)<input type="number" name="points_cost" value="<?= (int) $g['points_cost'] ?>" min="1" max="100000" required></label>
                     <label>Options<small>Comma separated</small><input type="text" name="variants" value="<?= htmlspecialchars(implode(', ', $g['variants'])) ?>"></label>
                     <label class="wide">Description<input type="text" name="description" value="<?= htmlspecialchars((string) $g['description']) ?>" maxlength="500"></label>
+                    <?php $gdImages($g); ?>
                     <?php $gdStock($g); ?>
                     <div class="ac-flags"><label class="gd-tg"><input type="checkbox" name="is_active" value="1"<?= $on ? ' checked' : '' ?>> Show to members</label></div>
                     <div class="ac-foot"><button type="submit" class="gd-btn">Save changes</button></div>
@@ -1604,6 +1674,36 @@ engage_header([
                 l.appendChild(sp); l.appendChild(h); l.appendChild(q); rows.appendChild(l);
             });
         });
+    });
+
+    // Pictures: reorder and remove the saved ones, preview the ones picked. The server re-checks everything
+    // (type, size, count), so this is only here to save a round trip.
+    document.querySelectorAll('.gd-imgs').forEach(function (box) {
+        var list = box.querySelector('.im-list'), pick = box.querySelector('.im-pick'), prev = box.querySelector('.im-new');
+        var max = +box.dataset.max, mb = +box.dataset.mb;
+        box.addEventListener('click', function (e) {
+            var row = e.target.closest('.im-row'); if (!row) return;
+            if (e.target.closest('.im-rm')) { row.remove(); show(); }
+            else if (e.target.closest('.im-up') && row.previousElementSibling) list.insertBefore(row, row.previousElementSibling);
+            else if (e.target.closest('.im-dn') && row.nextElementSibling) list.insertBefore(row.nextElementSibling, row);
+        });
+        function show() {
+            prev.innerHTML = '';
+            var files = [].slice.call(pick.files), kept = list.children.length;
+            var tooMany = kept + files.length > max;
+            var bad = files.some(function (f) { return f.size > mb * 1048576 || !/^image\/(jpeg|png|webp)$/.test(f.type); });
+            if (tooMany || bad) {
+                alert(tooMany ? 'A goody can have up to ' + max + ' pictures.' : 'Use JPG, PNG or WebP pictures of up to ' + mb + ' MB each.');
+                pick.value = '';
+                return;
+            }
+            files.forEach(function (f) {
+                var i = document.createElement('img'); i.src = URL.createObjectURL(f); i.alt = '';
+                i.onload = function () { URL.revokeObjectURL(i.src); };
+                prev.appendChild(i);
+            });
+        }
+        pick.addEventListener('change', show);
     });
     </script>
 

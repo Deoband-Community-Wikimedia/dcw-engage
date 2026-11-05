@@ -23,6 +23,9 @@
  *  - Stock (optional per goody, per size when the goody has sizes) lives in goodies.stock_json. NULL means
  *    not tracked (unlimited). A redemption takes one item from stock inside its transaction, under a row lock
  *    on the goody, so the last item cannot be sold twice. Cancelling an order puts the item back.
+ *  - Pictures (optional per goody) live in goodies.images_json, in display order, the first being the cover.
+ *    The files are in uploads/goodies/. GoodyImages checks, resizes and stores them; this class only keeps
+ *    the list (goodyImages(), setGoodyImages()) and hands it to the pages as $goody['images'].
  *
  * Assumes PDO is in ERRMODE_EXCEPTION, as the other models do. Keep every query a prepared statement.
  * A Member ID is one person across every chapter they hold (letter + 8 digits, e.g. A48213977), so
@@ -31,6 +34,7 @@
 require_once __DIR__ . '/../includes/app_log.php';
 require_once __DIR__ . '/../includes/audit.php';
 require_once __DIR__ . '/MemberStrikeModel.php';
+require_once __DIR__ . '/GoodyImages.php';
 
 class PointsModel
 {
@@ -1062,6 +1066,7 @@ class PointsModel
         return $s === null || array_sum($s) > 0;
     }
 
+    /** Each goody comes with 'variants', 'stock' (null = not tracked) and 'images' (the first is the cover). */
     public function goodies(bool $onlyActive = true): array
     {
         $sql = 'SELECT * FROM goodies' . ($onlyActive ? ' WHERE is_active = 1' : '') . ' ORDER BY points_cost, name';
@@ -1069,6 +1074,7 @@ class PointsModel
         foreach ($rows as &$r) {
             $r['variants'] = $r['variants_json'] ? (json_decode((string) $r['variants_json'], true) ?: []) : [];
             $r['stock'] = self::decodeStock($r['stock_json'] ?? null);
+            $r['images'] = GoodyImages::decode($r['images_json'] ?? null);
         }
         unset($r);
         return $rows;
@@ -1078,6 +1084,8 @@ class PointsModel
      * Create ($id = null) or update a goody. $variantsCsv is "S, M, L".
      * $stock is null when stock is not tracked, otherwise [size => quantity] (or [STOCK_ALL => quantity] when
      * the goody has no sizes). Sizes missing from $stock count as 0.
+     * Pictures are saved separately (setGoodyImages), so this never changes them.
+     * @return array{ok:bool, error?:string, id?:int}
      */
     public function saveGoody(?int $id, string $name, string $description, int $cost, string $variantsCsv, bool $active, string $actorEmail, ?array $stock = null): array
     {
@@ -1103,9 +1111,11 @@ class PointsModel
             if ($id) {
                 $st = $this->pdo->prepare('UPDATE goodies SET name = :n, description = :d, points_cost = :c, variants_json = :v, stock_json = :k, is_active = :a WHERE id = :id');
                 $st->execute([':n' => $name, ':d' => $desc, ':c' => $cost, ':v' => $json, ':k' => $stockJson, ':a' => $active ? 1 : 0, ':id' => $id]);
+                $goodyId = $id;
             } else {
                 $st = $this->pdo->prepare('INSERT INTO goodies (name, description, points_cost, variants_json, stock_json, is_active) VALUES (:n, :d, :c, :v, :k, :a)');
                 $st->execute([':n' => $name, ':d' => $desc, ':c' => $cost, ':v' => $json, ':k' => $stockJson, ':a' => $active ? 1 : 0]);
+                $goodyId = (int) $this->pdo->lastInsertId();
             }
         } catch (PDOException $e) {
             // goodies.name is unique (uniq_goody_name). Any other database error goes up to the page as usual.
@@ -1114,7 +1124,26 @@ class PointsModel
         }
         $this->audit($actorEmail, $id ? 'goodies.catalogue_edit' : 'goodies.catalogue_add', $name,
             $cost . ' pts, ' . ($active ? 'active' : 'inactive') . ', stock ' . ($stockJson ?? 'not tracked'));
-        return ['ok' => true];
+        return ['ok' => true, 'id' => $goodyId];
+    }
+
+    /** The pictures saved for a goody, in display order (the first is the cover). */
+    public function goodyImages(int $id): array
+    {
+        $st = $this->pdo->prepare('SELECT images_json FROM goodies WHERE id = :id');
+        $st->execute([':id' => $id]);
+        return GoodyImages::decode($st->fetchColumn());
+    }
+
+    /**
+     * Replace a goody's picture list. The caller has already stored the new files (GoodyImages::process) and
+     * deletes the dropped ones only after this succeeds.
+     */
+    public function setGoodyImages(int $id, array $images, string $actorEmail): void
+    {
+        $st = $this->pdo->prepare('UPDATE goodies SET images_json = :j WHERE id = :id');
+        $st->execute([':j' => GoodyImages::encode($images), ':id' => $id]);
+        $this->audit($actorEmail, 'goodies.catalogue_images', '#' . $id, count($images) . ' picture(s)');
     }
 
     // ---- Redemptions ---------------------------------------------------------------------------
