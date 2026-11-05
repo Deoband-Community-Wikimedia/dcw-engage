@@ -906,6 +906,7 @@ CREATE TABLE IF NOT EXISTS `goodies` (
   `points_cost` int(10) UNSIGNED NOT NULL,
   `variants_json` JSON DEFAULT NULL,                -- e.g. ["S","M","L","XL"]; NULL = no choice needed
   `stock_json` text DEFAULT NULL,
+  `images_json` text DEFAULT NULL,                  -- [{"file":"7f3a9c1e5b2d4a60.jpg","alt":"..."}]; first is the cover; NULL = no pictures
   `is_active` tinyint(1) NOT NULL DEFAULT 1,
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
