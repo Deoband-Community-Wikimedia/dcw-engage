@@ -3,8 +3,12 @@
  * DCW Engage - pictures of goodies.
  * Pictures live in goodies.images_json as a list, in display order (the first one is the cover):
  *   [{"file":"7f3a9c1e5b2d4a60.jpg","alt":"Front of the DCW mug"}, ...]
- * and as files in uploads/goodies/ under the web root, so a member's browser can load them from
- * /uploads/goodies/<file>.
+ * and as files in uploads/goodies/ under the web root.
+ *
+ * The pictures are NOT public. The root .htaccess blocks everything under /uploads/, and the folder's own
+ * .htaccess denies everything too. They are shown only through /file?g=<file> (views/file.php), which checks
+ * that the visitor is a signed-in member or a support reviewer/owner. url() builds that address, so pages
+ * never link to the files directly.
  *
  * What an upload goes through (store()):
  *   - the PHP upload must have succeeded, be a real uploaded file and be at most MAX_BYTES;
@@ -15,7 +19,9 @@
  *   - it is saved under a random name. The uploaded name is never kept or used.
  *
  * Where the folder is: $_SERVER['DOCUMENT_ROOT'] . '/uploads/goodies', unless config defines
- * GOODY_IMAGES_DIR (an absolute path) and GOODY_IMAGES_URL (the matching public URL path, ending in /).
+ * GOODY_IMAGES_DIR (an absolute path). A folder outside the web root is the strongest choice.
+ * If config defines GOODY_IMAGES_URL (a public URL path ending in /), url() uses it instead of the gate;
+ * leave it undefined to keep the pictures members-only.
  * The folder and a locked-down .htaccess are created on first use. Keep uploads/ out of git and out of
  * anything a deploy overwrites.
  */
@@ -30,19 +36,15 @@ class GoodyImages
     private const TYPES   = ['image/jpeg' => 'jpg', 'image/png' => 'png', 'image/webp' => 'webp'];
     private const NAME_RE = '/^[a-f0-9]{16}\.(?:jpg|png|webp)$/';
 
-    /** Written into the folder: nothing but the pictures themselves can be fetched, and nothing runs. */
+    /** Written into the folder: nothing in it can be fetched directly, and nothing runs. views/file.php reads the files from disk. */
     private const HTACCESS = <<<'HT'
-# DCW Engage: goody pictures only. Everything else is refused, and no script can run here.
+# DCW Engage: goody pictures. Closed to browsers; they are served only through /file?g=<name>.
 Options -Indexes -ExecCGI
 <IfModule mod_authz_core.c>
     Require all denied
-    <FilesMatch "^[a-f0-9]{16}\.(jpg|png|webp)$">
-        Require all granted
-    </FilesMatch>
 </IfModule>
-<IfModule mod_headers.c>
-    Header set X-Content-Type-Options "nosniff"
-    Header set Cache-Control "public, max-age=31536000, immutable"
+<IfModule !mod_authz_core.c>
+    Deny from all
 </IfModule>
 HT;
 
@@ -55,10 +57,11 @@ HT;
         return $root === '' ? '' : $root . '/uploads/goodies';
     }
 
+    /** The address a page uses for a picture: the members-only gate, unless config defines GOODY_IMAGES_URL. */
     public static function url(string $file): string
     {
-        $base = defined('GOODY_IMAGES_URL') ? (string) GOODY_IMAGES_URL : '/uploads/goodies/';
-        return $base . rawurlencode($file);
+        if (defined('GOODY_IMAGES_URL')) return (string) GOODY_IMAGES_URL . rawurlencode($file);
+        return '/file?g=' . rawurlencode($file);
     }
 
     /** goodies.images_json as a clean list of ['file' => ..., 'alt' => ...]. Bad entries are dropped. */
@@ -157,7 +160,9 @@ HT;
         if ($dir === '') return null;
         if (!is_dir($dir) && !@mkdir($dir, 0755, true) && !is_dir($dir)) return null;
         if (!is_writable($dir)) return null;
-        if (!is_file($dir . '/.htaccess')) @file_put_contents($dir . '/.htaccess', self::HTACCESS . "\n");
+        // Written when missing, and again when an older version (which let the pictures be fetched directly) is found.
+        $ht = $dir . '/.htaccess';
+        if (!is_file($ht) || trim((string) @file_get_contents($ht)) !== trim(self::HTACCESS)) @file_put_contents($ht, self::HTACCESS . "\n");
         if (!is_file($dir . '/index.html')) @file_put_contents($dir . '/index.html', '');
         return $dir;
     }

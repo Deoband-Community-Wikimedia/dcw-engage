@@ -4,9 +4,12 @@
  *
  *   /file?p=uploads/NAME          staff, signed in
  *   /file?p=uploads/NAME&t=TOKEN  an applicant, with the resume link of the application the file belongs to
+ *   /file?g=NAME                  a goody picture (uploads/goodies/NAME): a signed-in member, or a support
+ *                                 reviewer / owner. Shown inline in the page, not as a download.
  *
  * Direct requests to /uploads/ are refused by .htaccess, so this is the only way to read a file.
  * Who may read it depends on what the file belongs to:
+ *   goody picture                signed-in members, support reviewers, owners
  *   reimbursement receipt        support reviewers, finance, owners
  *   internet support receipt     support reviewers, finance, owners
  *   answer on an application     staff who can open that form (FormModel::userCanOpen), or the applicant
@@ -15,13 +18,48 @@
  */
 require_once __DIR__ . '/../includes/init.php';
 require_once __DIR__ . '/../includes/auth.php';
+require_once __DIR__ . '/../includes/member_session.php';
 require_once __DIR__ . '/../models/FormModel.php';
 require_once __DIR__ . '/../models/ApplicationModel.php';
+require_once __DIR__ . '/../models/GoodyImages.php';
 
 function file_not_found(): void {
     http_response_code(404);
     header('Content-Type: text/plain; charset=UTF-8');
     exit("File not found.\n");
+}
+
+// ---- Goody pictures ---------------------------------------------------------------------------------
+// Only a name GoodyImages could have made. The folder comes from GoodyImages::dir(), so it still works if
+// config moves the pictures outside the web root.
+if (isset($_GET['g'])) {
+    $name = (string) $_GET['g'];
+    if (!preg_match('/^[a-f0-9]{16}\.(?:jpg|png|webp)$/', $name)) file_not_found();
+
+    $ok = false;
+    try { $ok = MemberSession::current() !== null; } catch (Throwable $e) { app_log_ignored('file.php:goody-member', $e); }
+    if (!$ok) {
+        try { $ok = Auth::check() && Auth::hasAnyRole(['support_reviewer', 'owner']); } catch (Throwable $e) { app_log_ignored('file.php:goody-staff', $e); }
+    }
+
+    // Done with the session: release its lock so several pictures can load at the same time.
+    if (session_status() === PHP_SESSION_ACTIVE) session_write_close();
+
+    $dir  = GoodyImages::dir();
+    $full = $dir === '' ? '' : $dir . '/' . $name;
+    if (!$ok || $full === '' || !is_file($full)) file_not_found();
+
+    $types = ['jpg' => 'image/jpeg', 'png' => 'image/png', 'webp' => 'image/webp'];
+    header('Content-Type: ' . $types[pathinfo($name, PATHINFO_EXTENSION)]);
+    header('Content-Length: ' . (string) filesize($full));
+    header('Content-Disposition: inline; filename="' . $name . '"');
+    header('X-Content-Type-Options: nosniff');
+    header('Cache-Control: private, max-age=86400');   // "private": a browser may keep it, a shared cache may not
+    header('X-Robots-Tag: noindex, nofollow');
+    header_remove('Pragma');
+    header_remove('Expires');
+    readfile($full);
+    exit;
 }
 
 $path  = (string) ($_GET['p'] ?? '');
