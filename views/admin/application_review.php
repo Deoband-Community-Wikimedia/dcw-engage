@@ -57,6 +57,11 @@ require_once __DIR__ . '/../../includes/mail/ApplicationMail.php';   // Applicat
  * "Resend link" (Draft applications) does not email: it only shows a new one-time link.
  * "Discard" sets Discarded and sends NOTHING (that is what $notifyApplicant already does for any status
  * other than Under Review / Accepted / Rejected). "Restore" puts a discarded application back to New.
+ *
+ * SWAG DISPATCH. On a swag form an Accepted application is marked Dispatched with ApplicationModel::dispatch(),
+ * which needs the application id AND the form id (it only changes a row that really belongs to that form).
+ * Two methods: "By courier" (a courier from ApplicationModel::COURIERS, its AWB number, optional https tracking
+ * link) or "Delivered by hand" (nothing else is needed: no AWB, no link). The model does all the validation.
  */
 requireRole(['organizer', 'owner']);
 
@@ -606,16 +611,23 @@ if ($app && $_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($confState($app) === 'declined') throw new Exception('This awardee has already declined.');
             $confModel->recordReviewerDecline((int) $app['id'], trim((string) ($_POST['reason'] ?? '')), $by);
         } elseif ($act === 'dispatch') {
-            // Swag only: Accepted -> Dispatched, with the courier details.
+            // Swag only: Accepted -> Dispatched. Either by courier (courier + AWB, optional https tracking link)
+            // or by hand (nothing else needed). ApplicationModel::dispatch() validates the details; it needs the
+            // form id as well as the application id, and returns false when the application is no longer Accepted.
             if (!isset($swagForms[(int) $app['form_id']])) throw new Exception('Only swag applications can be marked as dispatched.');
             if ($app['status'] !== 'Accepted') throw new Exception('Only an accepted application can be marked as dispatched.');
-            $courier = trim((string) ($_POST['courier'] ?? ''));
-            $awb     = trim((string) ($_POST['awb'] ?? ''));
-            $trackUrl = trim((string) ($_POST['tracking_url'] ?? ''));
-            if ($courier === '' || $awb === '') throw new Exception('Enter the courier and its consignment (AWB) number.');
-            if (mb_strlen($courier) > 60 || mb_strlen($awb) > 80 || mb_strlen($trackUrl) > 500) throw new Exception('One of the courier details is too long.');
-            if ($trackUrl !== '' && !preg_match('#^https?://#i', $trackUrl)) throw new Exception('The tracking link must start with http:// or https://');
-            $model->dispatch((int) $app['id'], $courier, $awb, $trackUrl, $by);
+            if (($_POST['method'] ?? 'courier') === 'hand') {
+                $courier = ApplicationModel::HAND_DELIVERY;
+                $awb = '';
+                $trackUrl = '';
+            } else {
+                $courier  = trim((string) ($_POST['courier'] ?? ''));
+                $awb      = trim((string) ($_POST['awb'] ?? ''));
+                $trackUrl = trim((string) ($_POST['tracking_url'] ?? ''));
+            }
+            if (!$model->dispatch((int) $app['id'], (int) $app['form_id'], $courier, $awb, $trackUrl, $by)) {
+                throw new Exception('This application was already dispatched, or is no longer accepted.');
+            }
         } elseif (isset(APP_ACTIONS[$act])) {
             // Restore only works on discarded applications; everything else only on open ones.
             $need = $act === 'restore' ? ['Discarded'] : APP_OPEN;
@@ -786,6 +798,8 @@ engage_header([
     .actrow { display: flex; flex-wrap: wrap; gap: 10px; }
     .actform { margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border); }
     .actform .field { margin-bottom: 12px; }
+    .actform .field[hidden] { display: none; }
+    .actform select { width: 100%; padding: 10px 12px; border: 1.5px solid #BFD3D1; border-radius: 10px; font: inherit; background: #fff; }
     .actform textarea { width: 100%; padding: 12px 14px; border: 1.5px solid #BFD3D1; border-radius: 10px; font: inherit; }
     .actform textarea:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 4px color-mix(in srgb, var(--primary) 20%, transparent); }
 
@@ -970,21 +984,64 @@ engage_header([
         <?php if (isset($swagForms[(int) $app['form_id']]) && $app['status'] === 'Accepted'): ?>
         <section class="sect">
             <div class="qhead"><h3>Dispatch</h3></div>
-            <p class="qmeta">Record the courier details once the swag has been handed over. The status changes to Dispatched.</p>
-            <form method="POST" class="actform"><?= CSRF::getInputField() ?>
+            <p class="qmeta">Record how the swag was sent. Choose a courier and its consignment (AWB) number, or &ldquo;Delivered by hand&rdquo; when it was handed over in person (no AWB needed). The status changes to Dispatched.</p>
+            <form method="POST" class="actform" id="dispatchForm"><?= CSRF::getInputField() ?>
                 <input type="hidden" name="id" value="<?= (int) $app['id'] ?>">
-                <div class="field"><label for="dc">Courier</label>
-                    <input type="text" id="dc" name="courier" maxlength="60" required style="width:100%"></div>
-                <div class="field"><label for="dawb">Consignment (AWB) number</label>
-                    <input type="text" id="dawb" name="awb" maxlength="80" required style="width:100%"></div>
-                <div class="field"><label for="dtu">Tracking link (optional)</label>
+                <div class="field"><label for="dm">How was it sent?</label>
+                    <select id="dm" name="method">
+                        <option value="courier">By courier</option>
+                        <option value="hand">Delivered by hand</option>
+                    </select></div>
+                <div class="field" data-courier-only><label for="dc">Courier</label>
+                    <select id="dc" name="courier">
+                        <option value="">-- Choose a courier --</option>
+                        <?php foreach (ApplicationModel::COURIERS as $c): ?>
+                            <option value="<?= $h($c) ?>"><?= $h($c) ?></option>
+                        <?php endforeach; ?>
+                    </select></div>
+                <div class="field" data-courier-only><label for="dawb">Consignment (AWB) number</label>
+                    <input type="text" id="dawb" name="awb" maxlength="80" style="width:100%"></div>
+                <div class="field" data-courier-only><label for="dtu">Tracking link (optional, must start with https://)</label>
                     <input type="text" id="dtu" name="tracking_url" maxlength="500" placeholder="https://" style="width:100%"></div>
                 <button name="action" value="dispatch" class="btn-ok"
                         onclick="return confirm('Mark this application as dispatched?');">Mark as dispatched</button>
             </form>
+            <script>
+            (function () {
+                var m = document.getElementById('dm');
+                var awb = document.getElementById('dawb');
+                var courier = document.getElementById('dc');
+                function sync() {
+                    var hand = m.value === 'hand';
+                    document.querySelectorAll('#dispatchForm [data-courier-only]').forEach(function (e) { e.hidden = hand; });
+                    awb.required = !hand;
+                    courier.required = !hand;
+                }
+                m.addEventListener('change', sync);
+                sync();
+            })();
+            </script>
         </section>
-        <?php elseif ($app['status'] === 'Dispatched'): ?>
+        <?php elseif ($app['status'] === 'Dispatched'):
+            $dsp = $model->dispatchFor((int) $app['id']); ?>
         <div class="empty-note">This swag has been dispatched.</div>
+        <?php if ($dsp): ?>
+        <section class="sect">
+            <div class="qhead"><h3>Dispatch details</h3></div>
+            <?php if (ApplicationModel::isHandDelivery($dsp)): ?>
+                <p class="qmeta">Delivered by hand. No courier or consignment number.</p>
+            <?php else: ?>
+                <dl class="answers">
+                    <dt>Courier</dt><dd><?= $h($dsp['courier']) ?></dd>
+                    <dt>Consignment (AWB) number</dt><dd><?= (string) ($dsp['awb'] ?? '') === '' ? '&mdash;' : $h($dsp['awb']) ?></dd>
+                    <?php if (!empty($dsp['tracking_url'])): ?>
+                        <dt>Tracking link</dt><dd><a href="<?= $h($dsp['tracking_url']) ?>" target="_blank" rel="noopener noreferrer"><?= $h($dsp['tracking_url']) ?></a></dd>
+                    <?php endif; ?>
+                </dl>
+            <?php endif; ?>
+            <?php if (!empty($dsp['dispatched_at'])): ?><p class="qmeta" style="margin-top:12px;">Dispatched <?= $h($dsp['dispatched_at']) ?> (UTC)<?= !empty($dsp['dispatched_by']) ? ' by ' . $h($dsp['dispatched_by']) : '' ?></p><?php endif; ?>
+        </section>
+        <?php endif; ?>
         <?php endif; ?>
         <?php if ($lettersOn && !empty($app['letter_failed']) && in_array($app['status'], ['Accepted', 'Rejected'], true)): ?>
         <section class="sect">
