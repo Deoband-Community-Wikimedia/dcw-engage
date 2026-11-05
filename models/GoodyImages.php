@@ -6,9 +6,9 @@
  * and as files in uploads/goodies/ under the web root.
  *
  * The pictures are NOT public. The root .htaccess blocks everything under /uploads/, and the folder's own
- * .htaccess denies everything too. They are shown only through /goody-image.php?f=<file>, which checks
- * that the visitor is a signed-in member or a support reviewer/owner (see goody-image.php). url() builds
- * that address, so pages never link to the files directly.
+ * .htaccess denies everything too. They are shown only through /file?g=<file> (views/file.php), which checks
+ * that the visitor is a signed-in member or a support reviewer/owner. url() builds that address, so pages
+ * never link to the files directly.
  *
  * What an upload goes through (store()):
  *   - the PHP upload must have succeeded, be a real uploaded file and be at most MAX_BYTES;
@@ -36,9 +36,9 @@ class GoodyImages
     private const TYPES   = ['image/jpeg' => 'jpg', 'image/png' => 'png', 'image/webp' => 'webp'];
     private const NAME_RE = '/^[a-f0-9]{16}\.(?:jpg|png|webp)$/';
 
-    /** Written into the folder: nothing in it can be fetched directly, and nothing runs. goody-image.php reads the files from disk. */
+    /** Written into the folder: nothing in it can be fetched directly, and nothing runs. views/file.php reads the files from disk. */
     private const HTACCESS = <<<'HT'
-# DCW Engage: goody pictures. Closed to browsers; they are served only through /goody-image.php.
+# DCW Engage: goody pictures. Closed to browsers; they are served only through /file?g=<name>.
 Options -Indexes -ExecCGI
 <IfModule mod_authz_core.c>
     Require all denied
@@ -61,7 +61,7 @@ HT;
     public static function url(string $file): string
     {
         if (defined('GOODY_IMAGES_URL')) return (string) GOODY_IMAGES_URL . rawurlencode($file);
-        return '/goody-image.php?f=' . rawurlencode($file);
+        return '/file?g=' . rawurlencode($file);
     }
 
     /** goodies.images_json as a clean list of ['file' => ..., 'alt' => ...]. Bad entries are dropped. */
