@@ -10,9 +10,12 @@
  * Applicants never see it: the public tracking lookup reports a discarded application as "Under Review",
  * and the member dashboard does the same (see dash_app_status() in includes/member_requests.php).
  *
- * "Dispatched" is for swag forms only: Accepted -> Dispatched, with courier and consignment number stored in
+ * "Dispatched" is for swag forms only: Accepted -> Dispatched, with the delivery details stored in
  * application_dispatches. It is deliberately NOT in VALID_STATUSES, so updateStatus(), updateStatusBulk() and
- * updateStatusIfOpen() can never set it; the only way is dispatch(), which needs the courier details.
+ * updateStatusIfOpen() can never set it; the only way is dispatch(), which needs the delivery details.
+ * A dispatch is either by courier (courier + consignment/AWB number, optional https tracking link) or
+ * HAND-DELIVERED (courier is HAND_DELIVERY, no AWB, no tracking link). Anything that shows dispatch details
+ * should use isHandDelivery() and say "Delivered by hand" instead of printing an empty AWB.
  */
 
 require_once __DIR__ . '/MemberModel.php';
@@ -29,6 +32,12 @@ class ApplicationModel {
 
     /** Couriers offered when marking a swag application as dispatched. */
     public const COURIERS = ['India Post', 'DTDC', 'Delhivery', 'Blue Dart', 'Other'];
+
+    /**
+     * Stored in application_dispatches.courier when a swag item was handed over in person.
+     * Such a dispatch has no AWB number (stored as an empty string) and no tracking link (NULL).
+     */
+    public const HAND_DELIVERY = 'Delivered by hand';
 
     /**
      * Applicant-facing status groups for the "My applications" filter (/member/applications).
@@ -500,23 +509,42 @@ class ApplicationModel {
     // ---------------------------------------------------------------------
 
     /**
-     * Accepted -> Dispatched, with the courier details, in ONE transaction. Returns false (and changes
+     * True when a dispatch row (from dispatchFor()) records a hand delivery: no courier, no AWB number.
+     * Use this wherever dispatch details are shown or emailed, so an empty AWB is never printed.
+     */
+    public static function isHandDelivery(?array $dispatch): bool {
+        return $dispatch !== null && (string) ($dispatch['courier'] ?? '') === self::HAND_DELIVERY;
+    }
+
+    /**
+     * Accepted -> Dispatched, with the delivery details, in ONE transaction. Returns false (and changes
      * nothing) when the application is not Accepted any more, e.g. a double click. Throws
-     * InvalidArgumentException, with a message safe to show, for a bad courier, consignment number or link.
+     * InvalidArgumentException, with a message safe to show, for bad details.
      * The caller has already checked that the form is a swag form.
+     *
+     * Two ways to dispatch:
+     *   - By courier: $courier must be one of COURIERS, $awb is required, $url is optional (https only).
+     *   - By hand: pass $courier = HAND_DELIVERY. No AWB or link is needed; whatever is passed for them
+     *     is ignored (stored as '' and NULL).
      */
     public function dispatch(int $id, int $formId, string $courier, string $awb, string $url, string $by): bool {
         $courier = trim($courier);
         $awb = trim($awb);
         $url = trim($url);
-        if (!in_array($courier, self::COURIERS, true)) {
-            throw new InvalidArgumentException('Choose a courier.');
-        }
-        if (!preg_match('/^[A-Za-z0-9\-\/ ]{3,80}$/', $awb)) {
-            throw new InvalidArgumentException('Enter the consignment (AWB) number: letters, digits, spaces and dashes, 3 to 80 characters.');
-        }
-        if ($url !== '' && (strlen($url) > 500 || !preg_match('#^https://\S+$#i', $url) || !filter_var($url, FILTER_VALIDATE_URL))) {
-            throw new InvalidArgumentException('The tracking link must start with https://.');
+
+        if ($courier === self::HAND_DELIVERY) {
+            $awb = '';
+            $url = '';
+        } else {
+            if (!in_array($courier, self::COURIERS, true)) {
+                throw new InvalidArgumentException('Choose a courier, or "Delivered by hand".');
+            }
+            if (!preg_match('/^[A-Za-z0-9\-\/ ]{3,80}$/', $awb)) {
+                throw new InvalidArgumentException('Enter the consignment (AWB) number: letters, digits, spaces and dashes, 3 to 80 characters.');
+            }
+            if ($url !== '' && (strlen($url) > 500 || !preg_match('#^https://\S+$#i', $url) || !filter_var($url, FILTER_VALIDATE_URL))) {
+                throw new InvalidArgumentException('The tracking link must start with https://.');
+            }
         }
 
         $this->db->beginTransaction();
