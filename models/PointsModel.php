@@ -26,6 +26,9 @@
  *  - Pictures (optional per goody) live in goodies.images_json, in display order, the first being the cover.
  *    The files are in uploads/goodies/. GoodyImages checks, resizes and stores them; this class only keeps
  *    the list (goodyImages(), setGoodyImages()) and hands it to the pages as $goody['images'].
+ *  - What a member sees as "points history" is ledgerDetailed() (names joined in, balance after each row) and
+ *    pendingForMember() (awards still waiting for a second reviewer). The member pages show them through
+ *    includes/points_ui.php. nextGoal() and ordersInProgress() feed the dashboard card and the goodies page.
  *
  * Assumes PDO is in ERRMODE_EXCEPTION, as the other models do. Keep every query a prepared statement.
  * A Member ID is one person across every chapter they hold (letter + 8 digits, e.g. A48213977), so
@@ -93,7 +96,7 @@ class PointsModel
         return (int) $st->fetchColumn();
     }
 
-    /** Newest first. */
+    /** Newest first. The bare ledger; the member pages use ledgerDetailed() instead. */
     public function history(string $memberId, int $limit = 50): array
     {
         $st = $this->pdo->prepare(
@@ -102,6 +105,94 @@ class PointsModel
         );
         $st->execute([':m' => $memberId]);
         return $st->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    /**
+     * Everything the member sees as "points history", newest first, each row with what it was for and the
+     * balance right after it. history() stays as it is for any caller that wants the bare ledger.
+     *
+     * Joins: the award (activity name, category), the Conversation Hour session an award came from
+     * (source_ref 'ch-session-<id>', 11 characters before the id), and the order (goody name, tracking ID).
+     * A member has at most a few hundred rows, so the caller filters and pages in PHP.
+     */
+    public function ledgerDetailed(string $memberId, int $limit = 2000): array
+    {
+        $st = $this->pdo->prepare(
+            "SELECT l.id, l.points, l.entry_type, l.reason, l.created_at, l.award_id, l.redemption_id,
+                    a.tier, t.name AS activity_name, t.category, t.code AS activity_code,
+                    s.title AS session_title, s.held_on AS session_date,
+                    g.name AS goody_name, r.tracking_id AS order_tracking
+               FROM points_ledger l
+               LEFT JOIN point_awards a   ON a.id = l.award_id
+               LEFT JOIN activity_types t ON t.id = a.activity_type_id
+               LEFT JOIN ch_sessions s    ON a.source_ref LIKE 'ch-session-%'
+                                         AND s.id = CAST(SUBSTRING(a.source_ref, 12) AS UNSIGNED)
+               LEFT JOIN redemptions r    ON r.id = l.redemption_id
+               LEFT JOIN goodies g        ON g.id = r.goody_id
+              WHERE l.member_id = :m
+              ORDER BY l.id DESC
+              LIMIT " . max(1, (int) $limit)
+        );
+        $st->execute([':m' => $memberId]);
+        $rows = $st->fetchAll(PDO::FETCH_ASSOC);
+
+        // Balance after each row: start from today's balance and step back through the newer rows.
+        $running = $this->balance($memberId);
+        foreach ($rows as &$r) {
+            $r['balance_after'] = $running;
+            $running -= (int) $r['points'];
+        }
+        unset($r);
+        return $rows;
+    }
+
+    /**
+     * Awards that are saved but do not count yet (waiting for a second reviewer), newest first.
+     * Same fields as ledgerDetailed() so the same display code reads both; entry_type is 'pending'.
+     */
+    public function pendingForMember(string $memberId): array
+    {
+        $st = $this->pdo->prepare(
+            "SELECT a.id, a.points, 'pending' AS entry_type, '' AS reason, a.created_at,
+                    t.name AS activity_name, t.category, t.code AS activity_code,
+                    s.title AS session_title, s.held_on AS session_date
+               FROM point_awards a
+               JOIN activity_types t   ON t.id = a.activity_type_id
+               LEFT JOIN ch_sessions s ON a.source_ref LIKE 'ch-session-%'
+                                      AND s.id = CAST(SUBSTRING(a.source_ref, 12) AS UNSIGNED)
+              WHERE a.member_id = :m AND a.status = 'Needs Second Approval'
+              ORDER BY a.id DESC"
+        );
+        $st->execute([':m' => $memberId]);
+        return $st->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    /**
+     * The nearest goody the member cannot afford yet, and how many they can afford now.
+     * Sold-out goodies are skipped, so the goal never points at something that cannot be ordered.
+     * $goodies is goodies(true).
+     * @return array{next:?array, affordable:int}
+     */
+    public static function nextGoal(array $goodies, int $balance, bool $canRedeem = true): array
+    {
+        $next = null;
+        $affordable = 0;
+        foreach ($goodies as $g) {
+            if (!self::inStock($g)) continue;
+            $cost = (int) $g['points_cost'];
+            if ($cost > $balance) {
+                if ($next === null || $cost < (int) $next['points_cost']) $next = $g;
+            } elseif ($canRedeem) {
+                $affordable++;
+            }
+        }
+        return ['next' => $next, 'affordable' => $affordable];
+    }
+
+    /** Orders still on their way: everything except Delivered and Cancelled. */
+    public static function ordersInProgress(array $orders): array
+    {
+        return array_values(array_filter($orders, fn($o) => !in_array((string) $o['status'], ['Delivered', 'Cancelled'], true)));
     }
 
     public function activityTypes(bool $onlyActive = true): array
