@@ -8,6 +8,7 @@ require_once __DIR__ . '/../../models/ApplicationModel.php';
 require_once __DIR__ . '/../../models/MemberModel.php';
 require_once __DIR__ . '/../../models/TechIssueModel.php';
 require_once __DIR__ . '/../../models/PointsModel.php';
+require_once __DIR__ . '/../../models/PointClaimModel.php';
 
 Auth::requireLogin();
 
@@ -53,14 +54,15 @@ try {
     $techWaiting = $techModel->awaitingReporter('team', strtolower((string) Auth::email()));
 } catch (Throwable $e) { app_log_ignored('dashboard.php:47', $e); /* tables not created yet */ }
 
-// Goodies: awards waiting for a second reviewer plus new orders, shown as the badge on the Goodies tab.
-// If the goodies tables have not been created yet, the badge is simply left out.
+// Goodies: awards waiting for a second reviewer, new orders and members' claims for points, shown as the badge on the
+// Goodies tab. If the goodies tables (or the claims migration) have not been created yet, that part is simply left out.
 $goodiesWaiting = 0;
 if ($canManageGoodies) {
     try {
         $goodiesTotals  = (new PointsModel())->totals();
         $goodiesWaiting = (int) $goodiesTotals['awaiting_second'] + (int) $goodiesTotals['requested'];
     } catch (Throwable $e) { app_log_ignored('dashboard.php:goodies', $e); /* tables not created yet */ }
+    try { $goodiesWaiting += (new PointClaimModel())->awaitingCount(); } catch (Throwable $e) { app_log_ignored('dashboard.php:claims', $e); /* migration not run yet */ }
 }
 
 // Who gets the forms grid, and which forms they see. Mirrors
@@ -380,6 +382,8 @@ engage_header([
                         <?php
                         lrow($icons, 'var(--primary)', 'star', 'Award points',
                             'Award points for activities, approve large awards, or take points back.', '/admin/goodies?tab=award');
+                        lrow($icons, 'var(--primary)', 'inbox', 'Claims',
+                            'Points members have claimed for activities DCW did not log: approve, reject or ask for more information.', '/admin/goodies?tab=claims');
                         lrow($icons, 'var(--primary)', 'check', 'Activities and points',
                             'What members can earn points for, and how many. Changing points revises past awards.', '/admin/goodies?tab=activities');
                         lrow($icons, 'var(--primary)', 'doc', 'Catalogue',
