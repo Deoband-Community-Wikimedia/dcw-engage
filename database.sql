@@ -1054,3 +1054,86 @@ INSERT IGNORE INTO `goodies` (`name`,`description`,`points_cost`,`variants_json`
   ('Notebook',     'DCW kraft notebook.', 150, NULL, 0),
   ('Mug',          'DCW mug.',            300, NULL, 0),
   ('T-shirt',      'DCW T-shirt.',        500, JSON_ARRAY('S','M','L','XL','XXL'), 0);
+
+-- ============================================================================
+-- database.sql additions: members can claim points (Goodies, Phase 2)
+-- Three small changes, in this order. Nothing else in database.sql changes.
+-- ============================================================================
+
+
+-- ----------------------------------------------------------------------------
+-- CHANGE 1 of 3: ONE LINE, inside the existing CREATE TABLE `activity_types`.
+-- Find this line:
+--
+--   `one_time` tinyint(1) NOT NULL DEFAULT 0,        -- can be awarded to a member only once
+--
+-- and add this line directly after it:
+--
+--   `member_claimable` tinyint(1) NOT NULL DEFAULT 0,  -- members may claim it (reviewers decide); never the built-in ones
+-- ----------------------------------------------------------------------------
+
+
+-- ----------------------------------------------------------------------------
+-- CHANGE 2 of 3: PASTE AT THE VERY END of database.sql (after the goodies
+-- INSERT IGNOREs). point_awards and activity_types already exist by then, so
+-- the foreign keys resolve.
+-- ----------------------------------------------------------------------------
+
+-- ============================================================
+-- Goodies: members can claim points
+--
+-- A claim is a member's request for points for something DCW does not log
+-- itself (a first edit, mentoring a newcomer, ...). A reviewer approves it,
+-- which creates an ordinary point_awards row with source_ref 'claim-<id>'
+-- (so the second-approval rule, strikes, audit log and the unique keys that
+-- stop double awards apply exactly as for any other award), or rejects it,
+-- or asks for more information. Timestamps are UTC, shown in IST.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS `point_claims` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `tracking_id` varchar(12) NOT NULL,               -- e.g. 'PC-7K4N9XQ2'
+  `member_id` varchar(40) NOT NULL,
+  `activity_type_id` int(11) NOT NULL,
+  `event_date` date NOT NULL,                       -- when the member did it (claims close 90 days after)
+  `evidence_url` varchar(500) DEFAULT NULL,
+  `note` varchar(1000) DEFAULT NULL,                -- the member's own words
+  `status` enum('Submitted','Needs info','Approved','Rejected','Withdrawn') NOT NULL DEFAULT 'Submitted',
+  `decided_by` varchar(255) DEFAULT NULL,
+  `decided_at` datetime DEFAULT NULL,
+  `decision_note` varchar(1000) DEFAULT NULL,       -- the reason, shown to the member
+  `award_id` int(11) DEFAULT NULL,                  -- the award an approval created
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `tracking_id` (`tracking_id`),
+  KEY `idx_claim_member` (`member_id`,`status`),
+  KEY `idx_claim_status` (`status`),
+  KEY `activity_type_id` (`activity_type_id`),
+  KEY `award_id` (`award_id`),
+  CONSTRAINT `fk_point_claims_activity` FOREIGN KEY (`activity_type_id`) REFERENCES `activity_types` (`id`),
+  CONSTRAINT `fk_point_claims_award` FOREIGN KEY (`award_id`) REFERENCES `point_awards` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- The conversation on a claim ("Needs info" and the member's reply).
+CREATE TABLE IF NOT EXISTS `point_claim_messages` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `claim_id` int(11) NOT NULL,
+  `sender` enum('reviewer','member') NOT NULL,
+  `author` varchar(255) DEFAULT NULL,
+  `body` text NOT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_claim` (`claim_id`,`id`),
+  CONSTRAINT `fk_claim_msg_claim` FOREIGN KEY (`claim_id`) REFERENCES `point_claims` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- ----------------------------------------------------------------------------
+-- CHANGE 3 of 3: ALSO AT THE VERY END (after the tables above).
+-- A sensible starting set of claimable activities; reviewers can change it
+-- from the Activities and points tab. Safe to re-run.
+-- ----------------------------------------------------------------------------
+
+UPDATE `activity_types` SET `member_claimable` = 1
+ WHERE `code` IN ('first_edit','mentor_first_edit','mentor_first_article');
