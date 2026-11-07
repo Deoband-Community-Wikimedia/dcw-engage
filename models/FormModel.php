@@ -43,6 +43,13 @@ class FormModel {
         'feedback'     => 'Feedback',
     ];
 
+    /**
+     * Kinds whose responses are NOT decided in Application review: membership forms are handled in
+     * Membership review, feedback forms are read in the Feedback tab. Every other kind (program,
+     * scholarship, swag) is reviewed in Application review.
+     */
+    const NOT_IN_APPLICATION_REVIEW = ['membership', 'feedback'];
+
     public static function isMembershipType($formType) {
         $formType = (string) $formType;
         if (in_array($formType, self::MEMBERSHIP_TYPES, true)) {
@@ -71,6 +78,42 @@ class FormModel {
             $k = is_array($schema) ? (string) ($schema['kind'] ?? '') : '';
         }
         return ($k !== 'membership' && isset(self::KINDS[$k])) ? $k : 'application';
+    }
+
+    /** True when responses to this form are decided in Application review (see NOT_IN_APPLICATION_REVIEW). */
+    public static function reviewedInApplicationReview(array $form): bool {
+        return !in_array(self::kindOf($form), self::NOT_IN_APPLICATION_REVIEW, true);
+    }
+
+    /**
+     * Group forms rows by kind: kind => forms. Every kind in KINDS has an entry (empty or not), so callers
+     * can read $byKind['swag'] without checking it exists.
+     */
+    public static function groupByKind(array $forms): array {
+        $byKind = array_fill_keys(array_keys(self::KINDS), []);
+        foreach ($forms as $f) {
+            $byKind[self::kindOf($f)][] = $f;
+        }
+        return $byKind;
+    }
+
+    /** Split forms into [open, closed] with isOpen() (active AND not past the deadline). Both lists are re-indexed. */
+    public static function splitByOpen(array $forms): array {
+        $open = []; $closed = [];
+        foreach ($forms as $f) {
+            if (self::isOpen($f)) $open[] = $f; else $closed[] = $f;
+        }
+        return [$open, $closed];
+    }
+
+    /**
+     * A membership slug fixes the kind to membership, so it cannot also carry another stored kind
+     * (kindOf() would say membership while renderer.php and feedback_review.php read the schema and
+     * would say feedback). The builder uses this to refuse the combination.
+     * $kind is a builder kind: 'application' (nothing stored), 'scholarship', 'swag' or 'feedback'.
+     */
+    public static function slugConflictsWithKind(string $formType, string $kind): bool {
+        return self::isMembershipType($formType) && $kind !== 'application';
     }
 
     // ---------------------------------------------------------------------
