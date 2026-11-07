@@ -211,6 +211,16 @@ $renderOrders = function (array $list) use ($steps, $when): void { ?>
                     </div>
                     <span class="st<?= $status === 'Delivered' ? ' done' : '' ?><?= $cx ? ' cx' : '' ?>"><?= htmlspecialchars($status) ?></span>
                 </div>
+                <?php if (!empty($o['delivery_method']) && !$cx): ?>
+                    <p class="meta" style="margin:8px 0 0">
+                        <?php if ($o['delivery_method'] === 'hand'): ?>
+                            🤝 <strong>Handed over by hand</strong>: <?= htmlspecialchars((string) $o['handover_note']) ?>
+                        <?php else: ?>
+                            📦 <strong><?= htmlspecialchars((string) $o['courier']) ?></strong> &middot; Consignment (AWB) <code><?= htmlspecialchars((string) $o['awb']) ?></code><button type="button" class="copy" data-copy="<?= htmlspecialchars((string) $o['awb']) ?>">Copy</button>
+                            <?php if (!empty($o['tracking_url'])): ?>&middot; <a href="<?= htmlspecialchars((string) $o['tracking_url']) ?>" target="_blank" rel="noopener noreferrer">Track your parcel</a><?php endif; ?>
+                        <?php endif; ?>
+                    </p>
+                <?php endif; ?>
                 <?php if ($cx): ?>
                     <p class="note">This order was cancelled and the points were refunded.</p>
                 <?php else: ?>
