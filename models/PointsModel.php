@@ -730,9 +730,10 @@ class PointsModel
     /**
      * One automatic award and, when it needs no second reviewer, its ledger row. False if it already exists.
      * $autoApprove skips the second-approval rule (the actor is an owner).
-     * $evidence and $noteOverride are for bulk awards: the evidence link, and a note to store instead of the label.
+     * $evidence and $noteOverride are for bulk awards and claims: the evidence link, and a note to store instead of the label.
+     * Public so PointClaimModel can turn an approved claim into an award with the same rules as every other award.
      */
-    private function insertSourceAward(string $memberId, array $type, int $points, string $tier, string $sourceRef, string $label, string $actorEmail, bool $autoApprove = false, string $evidence = '', string $noteOverride = ''): bool
+    public function insertSourceAward(string $memberId, array $type, int $points, string $tier, string $sourceRef, string $label, string $actorEmail, bool $autoApprove = false, string $evidence = '', string $noteOverride = ''): bool
     {
         $needsSecond = $points >= self::SECOND_APPROVAL_AT && !$autoApprove;
         $this->pdo->beginTransaction();
@@ -923,6 +924,7 @@ class PointsModel
             ':n' => $name, ':c' => $category, ':p' => $points,
             ':e' => !empty($in['needs_evidence']) ? 1 : 0, ':o' => !empty($in['one_time']) ? 1 : 0,
             ':min' => $min, ':below' => $below, ':act' => !empty($in['is_active']) ? 1 : 0,
+            ':claim' => !empty($in['member_claimable']) ? 1 : 0,   // members may claim it (needs the member_claimable column)
         ];
 
         if (!$id) {
@@ -932,8 +934,8 @@ class PointsModel
             for ($i = 2; $this->activityTypeByCode($code); $i++) $code = $base . '_' . $i;
             try {
                 $st = $this->pdo->prepare(
-                    'INSERT INTO activity_types (code, name, category, points, needs_evidence, one_time, min_attendees, below_min_points, is_active)
-                     VALUES (:code, :n, :c, :p, :e, :o, :min, :below, :act)'
+                    'INSERT INTO activity_types (code, name, category, points, needs_evidence, one_time, min_attendees, below_min_points, is_active, member_claimable)
+                     VALUES (:code, :n, :c, :p, :e, :o, :min, :below, :act, :claim)'
                 );
                 $st->execute($fields + [':code' => $code]);
             } catch (PDOException $e) {
@@ -955,7 +957,7 @@ class PointsModel
             }
             $st = $this->pdo->prepare(
                 'UPDATE activity_types SET name = :n, category = :c, points = :p, needs_evidence = :e, one_time = :o,
-                        min_attendees = :min, below_min_points = :below, is_active = :act WHERE id = :id'
+                        min_attendees = :min, below_min_points = :below, is_active = :act, member_claimable = :claim WHERE id = :id'
             );
             $st->execute($fields + [':id' => $id]);
 
