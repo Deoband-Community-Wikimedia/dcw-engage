@@ -4,6 +4,8 @@ require_once __DIR__ . '/../../includes/engage_page.php';
 require_once __DIR__ . '/../../includes/member_session.php';
 require_once __DIR__ . '/../../includes/cert_rows.php';
 require_once __DIR__ . '/../../includes/points_ui.php';
+require_once __DIR__ . '/../../includes/points_claim_ui.php';
+require_once __DIR__ . '/../../models/PointClaimModel.php';
 require_once __DIR__ . '/../../models/MemberStrikeModel.php';
 require_once __DIR__ . '/../../models/PointsModel.php';
 require_once __DIR__ . '/../../models/GoodyImages.php';
@@ -16,6 +18,10 @@ require_once __DIR__ . '/../../models/GoodyImages.php';
  * Two views of the same page:
  *   /member/goodies                  balance, orders on their way, the catalogue, the latest points activity, past orders
  *   /member/goodies?view=history     the full points history: year / type / category filters, 25 rows a page
+ *   /member/goodies?view=claim       claim points: the form, the member's claims, and the ways to earn that DCW adds itself
+ *   /member/goodies?claim=PC-...     one claim: status, the conversation with the reviewer, reply or withdraw
+ * Claims are PointClaimModel's (migrations/2026_11_goodies_claims.sql). If those tables are not there yet the
+ * claim buttons are simply left out. A claim never changes the balance: a reviewer approves it into an award.
  *
  * Points history reads PointsModel::ledgerDetailed() (activity, session and order names joined in) and is
  * shown by includes/points_ui.php: grouped by month with a subtotal, repeats folded into one row, and
@@ -82,11 +88,57 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'redee
     exit;
 }
 
+// ---- Claims: send, reply, withdraw ----------------------------------------------------------------
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && str_starts_with((string) ($_POST['action'] ?? ''), 'claim_')) {
+    if (!CSRF::validate($_POST['csrf_token'] ?? '')) {
+        die('Invalid CSRF token.');
+    }
+    if (session_status() !== PHP_SESSION_ACTIVE) @session_start();
+    $goTo = '/member/goodies?view=claim';
+    try {
+        $cm  = new PointClaimModel();
+        $act = (string) $_POST['action'];
+        $ref = strtoupper(trim((string) ($_POST['tracking'] ?? '')));
+        if ($act === 'claim_submit') {
+            $r = $cm->submit($memberId, (int) ($_POST['activity_type_id'] ?? 0), (string) ($_POST['event_date'] ?? ''),
+                             (string) ($_POST['evidence_url'] ?? ''), (string) ($_POST['note'] ?? ''));
+            if ($r['ok']) {
+                mgoodies_flash('ok', 'Claim sent. Your tracking ID is ' . $r['tracking_id'] . '. A reviewer will look at it; you can follow it here.');
+                $goTo = '/member/goodies?claim=' . rawurlencode($r['tracking_id']);
+            } else {
+                mgoodies_flash('error', $r['error']);
+                $_SESSION['member_claim_old'] = [
+                    'activity_type_id' => (int) ($_POST['activity_type_id'] ?? 0), 'event_date' => (string) ($_POST['event_date'] ?? ''),
+                    'evidence_url' => (string) ($_POST['evidence_url'] ?? ''), 'note' => (string) ($_POST['note'] ?? ''),
+                ];
+            }
+        } elseif ($act === 'claim_reply' && $ref !== '') {
+            $r = $cm->reply($ref, $memberId, (string) ($_POST['body'] ?? ''));
+            mgoodies_flash($r['ok'] ? 'ok' : 'error', $r['ok'] ? 'Your reply has been sent to the reviewers.' : $r['error']);
+            $goTo = '/member/goodies?claim=' . rawurlencode($ref);
+        } elseif ($act === 'claim_withdraw' && $ref !== '') {
+            $r = $cm->withdraw($ref, $memberId);
+            mgoodies_flash($r['ok'] ? 'ok' : 'error', $r['ok'] ? 'Your claim was withdrawn.' : $r['error']);
+            $goTo = '/member/goodies?claim=' . rawurlencode($ref);
+        }
+    } catch (Throwable $e) {
+        app_log('Member goodies: claim action failed: ' . $e->getMessage());
+        mgoodies_flash('error', 'Something went wrong. Please try again.');
+    }
+    header('Location: ' . $goTo);
+    exit;
+}
+
 $flash = null;
 if (session_status() !== PHP_SESSION_ACTIVE) @session_start();
 if (!empty($_SESSION['member_goodies_flash'])) { $flash = $_SESSION['member_goodies_flash']; unset($_SESSION['member_goodies_flash']); }
 
 $historyMode = ($_GET['view'] ?? '') === 'history';
+$claimMode   = ($_GET['view'] ?? '') === 'claim';
+$claimRef    = strtoupper(trim((string) ($_GET['claim'] ?? '')));
+$claimPage   = $claimMode || $claimRef !== '';       // the claim screens: no catalogue, no orders
+$claimOld    = [];
+if ($claimMode && !empty($_SESSION['member_claim_old'])) { $claimOld = (array) $_SESSION['member_claim_old']; unset($_SESSION['member_claim_old']); }
 
 // ---- Data (each guarded so a missing table shows an empty page, not an error) ----------------------
 $balance = 0; $ledger = $pending = $goodies = $orders = []; $setupError = false;
@@ -94,7 +146,7 @@ try {
     $balance = $model->balance($memberId);
     $ledger  = $model->ledgerDetailed($memberId);
     $pending = $model->pendingForMember($memberId);
-    if (!$historyMode) {
+    if (!$historyMode && !$claimPage) {
         $goodies = $model->goodies(true);
         $orders  = $model->redemptionsForMember($memberId);
     }
@@ -103,6 +155,26 @@ try {
     $setupError = true;
 }
 $pendingSum = (int) array_sum(array_column($pending, 'points'));
+
+// ---- Claims (null = the claim tables are not there yet: the claim buttons are left out) -------------
+$claims = null; $claimActivities = $claimOthers = $claimOne = null; $claimMessages = [];
+try {
+    $claimModel = new PointClaimModel();
+    $claims = $claimModel->forMember($memberId);
+    if ($claimMode) {
+        $claimActivities = $claimModel->claimableActivities();
+        $claimOthers     = $claimModel->otherActivities();
+    }
+    if ($claimRef !== '') {
+        $claimOne = $claimModel->findForMember($claimRef, $memberId);
+        $claimMessages = $claimOne ? $claimModel->messages((int) $claimOne['id']) : [];
+    }
+} catch (Throwable $e) {
+    app_log_ignored('member/goodies.php:claims', $e);
+    $claims = null;
+}
+$openClaims = $claims === null ? 0 : count(array_filter($claims, fn($c) => in_array($c['status'], PointClaimModel::OPEN, true)));
+$claimsReply = $claims === null ? 0 : count(array_filter($claims, fn($c) => $c['status'] === 'Needs info'));
 
 $ist  = new DateTimeZone('Asia/Kolkata');
 $when = fn($ts) => $ts ? (new DateTimeImmutable((string) $ts, new DateTimeZone('UTC')))->setTimezone($ist)->format('j M Y') : '';
@@ -189,7 +261,18 @@ $histUrl = function (int $p) use ($fy, $ft, $fc): string {
 $summary = $historyMode ? points_summary($ledger, $fy ?: (int) (new DateTimeImmutable('now', $ist))->format('Y')) : null;
 
 // ---- Page frame ------------------------------------------------------------------------------------
-if ($historyMode) {
+if ($claimPage) {
+    engage_header([
+        'title'   => 'Claim points',
+        'heading' => $claimRef !== '' ? 'My claim' : 'Claim points',
+        'lead'    => $claimRef !== '' ? 'Where your claim stands.' : 'Ask for points for something you did that DCW did not log for you.',
+        'compact' => true,
+        'back'    => $claimRef !== '' ? ['Claim points', '/member/goodies?view=claim'] : ['My goodies', '/member/goodies'],
+        'member'  => $member,
+        'tools'   => engage_member_menu($member, ['current' => '/member/goodies']),
+        'wide'    => true,
+    ]);
+} elseif ($historyMode) {
     engage_header([
         'title'   => 'Points history',
         'heading' => 'Points history',
@@ -212,6 +295,7 @@ if ($historyMode) {
 }
 cert_rows_css();
 points_history_css();
+points_claim_css();
 ?>
 <style>
     [hidden] { display: none !important; }
@@ -346,7 +430,27 @@ points_history_css();
         <div class="alert error">Goodies are not available just now. Please check back soon.</div>
     <?php endif; ?>
 
-<?php if ($historyMode): ?>
+<?php if ($claimPage): ?>
+
+    <div class="pc-wrap">
+    <?php if ($claims === null): ?>
+        <div class="pc-empty">Claiming points is not available just now. Please check back soon.</div>
+    <?php elseif ($claimRef !== ''): ?>
+        <?php if (!$claimOne): ?>
+            <div class="pc-empty">We could not find that claim in your account. <a href="/member/goodies?view=claim">See your claims</a>.</div>
+        <?php else: points_claim_render_detail($claimOne, $claimMessages); endif; ?>
+    <?php else: ?>
+        <?php points_claim_render_form($claimActivities ?? [], $claimOld); ?>
+        <section class="pc-card">
+            <h2>My claims</h2>
+            <p class="sub">Approved claims add points to your balance. Open one to follow it or to reply.</p>
+            <?php points_claim_render_list($claims); ?>
+        </section>
+        <?php points_claim_render_other($claimOthers ?? []); ?>
+    <?php endif; ?>
+    </div>
+
+<?php elseif ($historyMode): ?>
 
     <div class="mg-hist-wrap">
         <?php if ($ledger || $pending): ?>
@@ -413,12 +517,18 @@ points_history_css();
             <div class="mg-goal"><p>Your points are safe while the catalogue is empty.</p></div>
         <?php endif; ?>
         <?php if ($affordable): ?><a class="go" href="#catalogue">You can redeem <?= $affordable ?> <?= $affordable === 1 ? 'goody' : 'goodies' ?> now</a><?php endif; ?>
+        <?php if ($claims !== null): ?><a class="go" style="margin-left:8px" href="/member/goodies?view=claim">Claim points<?= $openClaims ? ' (' . $openClaims . ' open)' : '' ?></a><?php endif; ?>
     </section>
+
+    <?php if ($claimsReply > 0): ?>
+        <div class="alert error" style="background:#fffbeb;border-color:#fcd34d;color:#78350f"><strong>A reviewer replied on <?= $claimsReply === 1 ? 'a claim' : $claimsReply . ' claims' ?>.</strong> <a href="/member/goodies?view=claim">Open your claims</a> to answer.</div>
+    <?php endif; ?>
 
     <nav class="mg-nav" aria-label="On this page">
         <a href="#catalogue">Redeem</a>
         <a href="<?= $ordersAnchor ?>">My orders<?= $activeOrders ? ' (' . count($activeOrders) . ' on the way)' : '' ?></a>
         <a href="#history">Points history</a>
+        <?php if ($claims !== null): ?><a href="/member/goodies?view=claim">Claim points</a><?php endif; ?>
     </nav>
 
     <?php if ($activeOrders): ?>
