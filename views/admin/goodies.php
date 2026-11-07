@@ -8,6 +8,7 @@ require_once __DIR__ . '/../../models/PointsModel.php';
 require_once __DIR__ . '/../../models/GoodyImages.php';
 require_once __DIR__ . '/../../models/PointClaimModel.php';
 require_once __DIR__ . '/../../includes/goodies_claims_admin.php';
+require_once __DIR__ . '/../../includes/goodies_orders_admin.php';
 
 /**
  * DCW Engage - goodies, reviewer side (/admin/goodies).
@@ -16,13 +17,18 @@ require_once __DIR__ . '/../../includes/goodies_claims_admin.php';
  * Six tabs, kept in the address as ?tab=:
  *   award        award points (one person, or several: pick > preview > confirm), approve large awards
  *                (one by one or in bulk), Conversation Hour, take points back
- *   claims       members' claims for points: approve, reject or ask for more information (includes/goodies_claims_admin.php)
+ *   claims       members' claims for points: approve, reject (with a reason the member reads) or ask for more
+ *                information. Approving makes an ordinary award. See includes/goodies_claims_admin.php and
+ *                models/PointClaimModel.php. ?status= filters it: open (default), Approved, Rejected, Withdrawn, all.
  *   guide        read-only "what earns points" view of every active activity and its points
  *   activities   what can earn points and how many; changing points revises awards already made (#208).
- *                "Edit points in bulk" (?mode=bulk) edits many at once: review first, then one transaction.
+ *                "Members can claim it" switches an activity on for claiming. "Edit points in bulk" (?mode=bulk)
+ *                edits many at once: review first, then one transaction.
  *   catalogue    add and edit goodies, their point costs, pictures and (optionally) their stock
  *   redemptions  the order queue: Requested > Ordered > Shipped > Delivered (or Cancelled, which refunds
- *                the points and puts the item back in stock)
+ *                the points and puts the item back in stock). "Mark shipped…" records HOW it is sent: courier +
+ *                consignment (AWB) number, or by hand. The member is emailed and sees the same on My orders
+ *                (includes/goodies_orders_admin.php; ?status= filters the queue by order status).
  *
  * Stock (catalogue tab): optional per goody. "Track stock" off = unlimited. On = one number, or one number
  * per size when the goody has sizes/options. Stored in goodies.stock_json; see PointsModel::decodeStock().
@@ -42,6 +48,8 @@ require_once __DIR__ . '/../../includes/goodies_claims_admin.php';
  *   - A support_reviewer who is not an owner is approved at once under PointsModel::SECOND_APPROVAL_AT; a larger
  *     award waits for a different reviewer. A non-owner can never award, approve or take back points for their
  *     own Member ID, and can never approve an award they created.
+ *   - The one exception: NOBODY decides a points claim made from their own Member ID, owners included
+ *     (PointClaimModel::approve()). A claim is the member vouching for their own work.
  * Every state-changing action is a CSRF-checked POST and is written to audit_log.
  *
  * Bulk award flow (award tab, "Several people"):
@@ -80,6 +88,7 @@ $isOwner = Auth::isOwner();
 
 // The reviewer's own Member IDs. A non-owner leaves Conversation Hour awards for these to another reviewer
 // and cannot approve awards made to them; an owner may do all of it (and every owner award skips second approval).
+// Claims are different: nobody decides a claim from their own Member ID, so claims always get $ownIds.
 $ownIds = [];
 try { $ownIds = array_column((new MemberModel())->membershipsForEmail($actor), 'member_id'); } catch (Throwable $e) { app_log_ignored('goodies.php:own', $e); }
 $planOwn = $isOwner ? [] : $ownIds;   // what chPlan() and approveAwards() should treat as "left for another reviewer"
@@ -418,10 +427,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif (str_starts_with($do, 'claim_')) {
             // $ownIds, not $planOwn: nobody decides a claim from their own Member ID, owners included.
             $back = goodies_claims_post($do, $claimModel, $actor, $isOwner, $ownIds);
-        } elseif ($do === 'order_status') {
+        } elseif ($do === 'order_status' || $do === 'order_resend') {
             $back = 'redemptions';
-            $r = $model->setRedemptionStatus((int) ($_POST['id'] ?? 0), (string) ($_POST['to'] ?? ''), $actor);
-            goodies_flash($r['ok'] ? 'ok' : 'error', $r['ok'] ? 'Order updated.' : $r['error']);
+            goodies_orders_post($do, $model, $actor);
         }
     } catch (Throwable $e) {
         app_log('Goodies admin action failed: ' . $e->getMessage());
@@ -457,7 +465,7 @@ try {
     $flash = ['error', 'The goodies tables are not set up yet. Run database_goodies.sql first.'];
 }
 
-// Claims waiting for a decision (badge on the Claims tab and the stat tile).
+// Claims waiting for a reviewer (the badge and the stat). Left at 0 until the claims migration has been run.
 $claimsWaiting = 0;
 try { $claimsWaiting = $claimModel->awaitingCount(); } catch (Throwable $e) { app_log_ignored('goodies.php:claims', $e); /* migration not run yet */ }
 
@@ -846,7 +854,10 @@ engage_header([
 </div>
 
 <nav class="gd-nav" aria-label="Goodies sections">
-    <?php foreach (GOODIES_TABS as $key => $label): $badge = $key === 'award' ? (int) $totals['awaiting_second'] : ($key === 'redemptions' ? (int) $totals['requested'] : ($key === 'claims' ? (int) $claimsWaiting : 0)); ?>
+    <?php foreach (GOODIES_TABS as $key => $label):
+        $badge = $key === 'award' ? (int) $totals['awaiting_second']
+            : ($key === 'redemptions' ? (int) $totals['requested']
+            : ($key === 'claims' ? (int) $claimsWaiting : 0)); ?>
         <a href="/admin/goodies?tab=<?= $key ?>"<?= $tab === $key ? ' class="on" aria-current="page"' : '' ?>><?= htmlspecialchars($label) ?><?php if ($badge > 0): ?><span class="gd-badge"><?= $badge ?></span><?php endif; ?></a>
     <?php endforeach; ?>
 </nav>
@@ -1294,6 +1305,7 @@ engage_header([
                             <div class="pg-tags">
                                 <?php if ((int) $t['needs_evidence']): ?><span class="ac-tag">Evidence link</span><?php endif; ?>
                                 <?php if ((int) ($t['one_time'] ?? 0)): ?><span class="ac-tag">Once per member</span><?php endif; ?>
+                                <?php if (!empty($t['member_claimable'])): ?><span class="ac-tag">Members can claim</span><?php endif; ?>
                                 <?php if ($hasMin): ?><span class="ac-tag">Host: <?= (int) $t['below_min_points'] ?> pts under <?= (int) $t['min_attendees'] ?> attendees</span><?php endif; ?>
                             </div>
                             <div class="pg-pts"><?= number_format((int) $t['points']) ?><small>points</small></div>
@@ -1496,7 +1508,7 @@ engage_header([
         </section>
     </details>
 
-    <p class="gd-info"><strong>Changing points revises past awards.</strong> Every award already made for that activity moves each member’s balance by the difference, and it shows in their history. Awards of <?= (int) PointsModel::SECOND_APPROVAL_AT ?> points or more made by a reviewer need a second reviewer (awards made by an owner are the exception). An activity that has been awarded can be switched off but not deleted.</p>
+    <p class="gd-info"><strong>Changing points revises past awards.</strong> Every award already made for that activity moves each member’s balance by the difference, and it shows in their history. Awards of <?= (int) PointsModel::SECOND_APPROVAL_AT ?> points or more made by a reviewer need a second reviewer (awards made by an owner are the exception). An activity that has been awarded can be switched off but not deleted. <strong>Members can claim it</strong> lets members ask for these points themselves; you decide each claim on the Claims tab.</p>
 
     <?php foreach ($groupOrder as $cat): $rows = $groups[$cat]; ?>
         <section class="ac-group" data-cat="<?= htmlspecialchars($cat) ?>" style="--h:<?= $gdHue($cat) ?>">
@@ -1747,14 +1759,10 @@ engage_header([
                     <?php elseif (in_array($o['status'], ['Delivered', 'Cancelled'], true)): ?>
                         <p>Shipping details cleared.</p>
                     <?php endif; ?>
+                    <?php goodies_order_info($o); ?>
                 </div>
                 <div>
-                    <?php foreach (PointsModel::REDEMPTION_FLOW[$o['status']] as $next): ?>
-                        <form method="POST" action="/admin/goodies?tab=redemptions"><?= CSRF::getInputField() ?>
-                            <input type="hidden" name="do" value="order_status"><input type="hidden" name="id" value="<?= (int) $o['id'] ?>"><input type="hidden" name="to" value="<?= htmlspecialchars($next) ?>">
-                            <button type="submit" class="gd-btn <?= $next === 'Cancelled' ? 'red' : 'line' ?>"<?= $next === 'Cancelled' ? ' onclick="return confirm(\'Cancel this order and refund the points?\')"' : '' ?>><?= $next === 'Cancelled' ? 'Cancel and refund' : 'Mark ' . htmlspecialchars(strtolower($next)) ?></button>
-                        </form>
-                    <?php endforeach; ?>
+                    <?php goodies_order_actions($o); ?>
                 </div>
             </div>
         <?php endforeach; endif; ?>
