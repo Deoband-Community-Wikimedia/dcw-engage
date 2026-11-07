@@ -1296,6 +1296,7 @@ class PointsModel
             }
             // The member's own action, so the actor is the member (no staff account is involved).
             $this->audit('member ' . $memberId, 'goodies.redeem', $tracking, $g['name'] . ($variant !== '' ? ' (' . $variant . ')' : '') . ', ' . $cost . ' pts');
+            $this->mailMember($memberId, 'sendOrderPlaced', [$tracking, (string) $g['name'], $variant, $cost]);
             return ['ok' => true, 'tracking_id' => $tracking];
         } finally {
             $rel = $this->pdo->prepare('SELECT RELEASE_LOCK(:l)');
@@ -1324,7 +1325,8 @@ class PointsModel
     public function redemptionsForMember(string $memberId): array
     {
         $st = $this->pdo->prepare(
-            'SELECT r.tracking_id, r.variant, r.points_spent, r.status, r.created_at, g.name AS goody_name
+            'SELECT r.tracking_id, r.variant, r.points_spent, r.status, r.created_at, g.name AS goody_name,
+                    r.delivery_method, r.courier, r.awb, r.tracking_url, r.handover_note
              FROM redemptions r JOIN goodies g ON g.id = r.goody_id
              WHERE r.member_id = :m ORDER BY r.id DESC LIMIT 50'
         );
@@ -1346,8 +1348,19 @@ class PointsModel
         return $rows;
     }
 
-    /** Move a redemption along. Cancelling refunds the points with a new ledger row and puts the item back in stock. */
-    public function setRedemptionStatus(int $id, string $to, string $actorEmail): array
+    /**
+     * Move a redemption along. Cancelling refunds the points with a new ledger row and puts the item back in stock.
+     *
+     * Marking an order Shipped needs $dispatch, because the member is told how it is coming:
+     *   method           'courier' or 'hand'
+     *   courier, awb     required for a courier (awb is the courier's consignment number, not our GD- ID)
+     *   tracking_url     optional link from the courier's site (http or https)
+     *   handover_note    required by hand: who hands it over, where and when
+     * The member is emailed after the status is saved (shipped, cancelled). A failed email never undoes the move;
+     * 'email' in the result says whether it went (null = no email for this move), and resendDispatchEmail() tries again.
+     * @return array{ok:bool, error?:string, email?:?bool}
+     */
+    public function setRedemptionStatus(int $id, string $to, string $actorEmail, array $dispatch = []): array
     {
         $this->pdo->beginTransaction();
         try {
@@ -1358,7 +1371,23 @@ class PointsModel
                 $this->pdo->rollBack();
                 return ['ok' => false, 'error' => 'That status change is not allowed.'];
             }
-            $this->pdo->prepare('UPDATE redemptions SET status = :s WHERE id = :id')->execute([':s' => $to, ':id' => $id]);
+
+            $d = null;
+            if ($to === 'Shipped') {
+                $d = self::cleanDispatch($dispatch);
+                if (isset($d['error'])) {
+                    $this->pdo->rollBack();
+                    return ['ok' => false, 'error' => $d['error']];
+                }
+                $this->pdo->prepare(
+                    'UPDATE redemptions SET status = :s, delivery_method = :m, courier = :c, awb = :a, tracking_url = :u,
+                            handover_note = :h, dispatched_by = :by, dispatched_at = :at, email_sent_at = NULL WHERE id = :id'
+                )->execute([':s' => $to, ':m' => $d['method'], ':c' => $d['courier'], ':a' => $d['awb'], ':u' => $d['tracking_url'],
+                            ':h' => $d['handover_note'], ':by' => $actorEmail, ':at' => gmdate('Y-m-d H:i:s'), ':id' => $id]);
+            } else {
+                $this->pdo->prepare('UPDATE redemptions SET status = :s WHERE id = :id')->execute([':s' => $to, ':id' => $id]);
+            }
+
             if ($to === 'Cancelled') {
                 $lg = $this->pdo->prepare("INSERT INTO points_ledger (member_id, points, entry_type, redemption_id, reason, actor_email) VALUES (:m, :p, 'refund', :r, :why, :a)");
                 $lg->execute([':m' => $r['member_id'], ':p' => (int) $r['points_spent'], ':r' => $id, ':why' => 'Refund: ' . $r['tracking_id'], ':a' => $actorEmail]);
@@ -1382,8 +1411,93 @@ class PointsModel
             $this->log('setRedemptionStatus failed: ' . $e->getMessage());
             return ['ok' => false, 'error' => 'Could not update the order.'];
         }
-        $this->audit($actorEmail, 'goodies.redemption_' . strtolower($to), (string) $r['tracking_id'], $r['status'] . ' -> ' . $to);
+        $detail = $r['status'] . ' -> ' . $to;
+        if ($d) $detail .= $d['method'] === 'hand' ? ' (by hand: ' . $d['handover_note'] . ')' : ' (' . $d['courier'] . ' ' . $d['awb'] . ')';
+        $this->audit($actorEmail, 'goodies.redemption_' . strtolower($to), (string) $r['tracking_id'], $detail);
+
+        $email = null;
+        if ($to === 'Shipped') {
+            $email = $this->sendDispatchEmail($id);
+        } elseif ($to === 'Cancelled') {
+            $g = $this->pdo->prepare('SELECT name FROM goodies WHERE id = :id');
+            $g->execute([':id' => $r['goody_id']]);
+            $email = $this->mailMember((string) $r['member_id'], 'sendOrderCancelled',
+                [(string) $r['tracking_id'], (string) $g->fetchColumn(), (string) ($r['variant'] ?? ''), (int) $r['points_spent']]);
+        }
+        return ['ok' => true, 'email' => $email];
+    }
+
+    /** Checks and trims the dispatch details. Returns the clean fields, or ['error' => ...]. */
+    public static function cleanDispatch(array $in): array
+    {
+        $method = (string) ($in['method'] ?? '');
+        $c = trim((string) ($in['courier'] ?? ''));
+        $a = trim((string) ($in['awb'] ?? ''));
+        $u = trim((string) ($in['tracking_url'] ?? ''));
+        $h = trim((string) ($in['handover_note'] ?? ''));
+
+        if ($method === 'courier') {
+            if ($c === '' || $a === '') return ['error' => 'Enter the courier and the consignment (AWB) number.'];
+            if (mb_strlen($c) > 60 || mb_strlen($a) > 80) return ['error' => 'The courier name or AWB number is too long.'];
+            if ($u !== '' && (!preg_match('#^https?://\S+$#i', $u) || mb_strlen($u) > 500)) return ['error' => 'The tracking link must start with http:// or https://.'];
+            return ['method' => 'courier', 'courier' => $c, 'awb' => $a, 'tracking_url' => $u !== '' ? $u : null, 'handover_note' => null];
+        }
+        if ($method === 'hand') {
+            if ($h === '') return ['error' => 'Say who is handing it over, and where or when.'];
+            if (mb_strlen($h) > 255) return ['error' => 'Please keep the hand-over details under 255 characters.'];
+            return ['method' => 'hand', 'courier' => null, 'awb' => null, 'tracking_url' => null, 'handover_note' => $h];
+        }
+        return ['error' => 'Choose how it is being sent: courier or by hand.'];
+    }
+
+    /** Email the member how their order is coming. Records email_sent_at on success. Returns whether it went out. */
+    private function sendDispatchEmail(int $id): bool
+    {
+        $st = $this->pdo->prepare('SELECT r.*, g.name AS goody_name FROM redemptions r JOIN goodies g ON g.id = r.goody_id WHERE r.id = :id');
+        $st->execute([':id' => $id]);
+        $r = $st->fetch(PDO::FETCH_ASSOC);
+        if (!$r || !$r['delivery_method']) return false;
+
+        $ok = $this->mailMember((string) $r['member_id'], 'sendOrderDispatched', [
+            (string) $r['tracking_id'], (string) $r['goody_name'], (string) ($r['variant'] ?? ''), (string) $r['delivery_method'],
+            (string) ($r['courier'] ?? ''), (string) ($r['awb'] ?? ''), (string) ($r['tracking_url'] ?? ''), (string) ($r['handover_note'] ?? ''),
+        ]);
+        if ($ok) $this->pdo->prepare('UPDATE redemptions SET email_sent_at = :t WHERE id = :id')->execute([':t' => gmdate('Y-m-d H:i:s'), ':id' => $id]);
+        return $ok;
+    }
+
+    /** "Send email again" for an order that was shipped but whose email did not go out. */
+    public function resendDispatchEmail(int $id, string $actorEmail): array
+    {
+        $st = $this->pdo->prepare('SELECT status, delivery_method, tracking_id FROM redemptions WHERE id = :id');
+        $st->execute([':id' => $id]);
+        $r = $st->fetch(PDO::FETCH_ASSOC);
+        if (!$r || !$r['delivery_method'] || !in_array($r['status'], ['Shipped', 'Delivered'], true)) {
+            return ['ok' => false, 'error' => 'That order has not been shipped yet.'];
+        }
+        if (!$this->sendDispatchEmail($id)) return ['ok' => false, 'error' => 'The email could not be sent. Check the mail settings and try again.'];
+        $this->audit($actorEmail, 'goodies.dispatch_email', (string) $r['tracking_id'], 'Dispatch email sent again');
         return ['ok' => true];
+    }
+
+    /**
+     * Email a member through the Mailer facade ($method is a Mailer::sendX name; the member's email and name
+     * are looked up from the members table and put first). Best effort: returns false when nothing went out.
+     */
+    private function mailMember(string $memberId, string $method, array $args): bool
+    {
+        try {
+            require_once __DIR__ . '/../includes/mailer.php';
+            if (!class_exists('Mailer') || !method_exists('Mailer', $method)) return false;
+            $st = $this->pdo->prepare('SELECT email, full_name FROM members WHERE member_id = :m ORDER BY id DESC LIMIT 1');
+            $st->execute([':m' => $memberId]);
+            $m = $st->fetch(PDO::FETCH_ASSOC);
+            if (!$m || trim((string) $m['email']) === '') return false;
+            return (bool) Mailer::$method((string) $m['email'], (string) $m['full_name'], ...$args);
+        } catch (Throwable $e) {
+            $this->log('email ' . $method . ' failed: ' . $e->getMessage());
+            return false;
+        }
     }
 
     /**
