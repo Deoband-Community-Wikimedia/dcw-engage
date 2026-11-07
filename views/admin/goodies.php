@@ -6,14 +6,17 @@ require_once __DIR__ . '/../../models/MemberModel.php';
 require_once __DIR__ . '/../../models/MemberStrikeModel.php';
 require_once __DIR__ . '/../../models/PointsModel.php';
 require_once __DIR__ . '/../../models/GoodyImages.php';
+require_once __DIR__ . '/../../models/PointClaimModel.php';
+require_once __DIR__ . '/../../includes/goodies_claims_admin.php';
 
 /**
  * DCW Engage - goodies, reviewer side (/admin/goodies).
  * support_reviewer and owner only (the same roles as internet_review.php).
  *
- * Five tabs, kept in the address as ?tab=:
+ * Six tabs, kept in the address as ?tab=:
  *   award        award points (one person, or several: pick > preview > confirm), approve large awards
  *                (one by one or in bulk), Conversation Hour, take points back
+ *   claims       members' claims for points: approve, reject or ask for more information (includes/goodies_claims_admin.php)
  *   guide        read-only "what earns points" view of every active activity and its points
  *   activities   what can earn points and how many; changing points revises awards already made (#208).
  *                "Edit points in bulk" (?mode=bulk) edits many at once: review first, then one transaction.
@@ -72,6 +75,7 @@ if (!Auth::hasAnyRole(['support_reviewer', 'owner'])) {
 
 $actor = strtolower((string) Auth::email());
 $model = new PointsModel();
+$claimModel = new PointClaimModel();
 $isOwner = Auth::isOwner();
 
 // The reviewer's own Member IDs. A non-owner leaves Conversation Hour awards for these to another reviewer
@@ -80,7 +84,7 @@ $ownIds = [];
 try { $ownIds = array_column((new MemberModel())->membershipsForEmail($actor), 'member_id'); } catch (Throwable $e) { app_log_ignored('goodies.php:own', $e); }
 $planOwn = $isOwner ? [] : $ownIds;   // what chPlan() and approveAwards() should treat as "left for another reviewer"
 
-const GOODIES_TABS = ['award' => 'Award points', 'guide' => 'Points guide', 'activities' => 'Activities and points', 'catalogue' => 'Catalogue', 'redemptions' => 'Orders'];
+const GOODIES_TABS = ['award' => 'Award points', 'claims' => 'Claims', 'guide' => 'Points guide', 'activities' => 'Activities and points', 'catalogue' => 'Catalogue', 'redemptions' => 'Orders'];
 $tab = isset(GOODIES_TABS[$_GET['tab'] ?? '']) ? (string) $_GET['tab'] : 'award';
 
 function goodies_flash(string $kind, string $text): void
@@ -411,6 +415,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
             goodies_flash($kind, $msg);
+        } elseif (str_starts_with($do, 'claim_')) {
+            // $ownIds, not $planOwn: nobody decides a claim from their own Member ID, owners included.
+            $back = goodies_claims_post($do, $claimModel, $actor, $isOwner, $ownIds);
         } elseif ($do === 'order_status') {
             $back = 'redemptions';
             $r = $model->setRedemptionStatus((int) ($_POST['id'] ?? 0), (string) ($_POST['to'] ?? ''), $actor);
@@ -449,6 +456,10 @@ try {
     app_log('Goodies admin: load failed: ' . $e->getMessage());
     $flash = ['error', 'The goodies tables are not set up yet. Run database_goodies.sql first.'];
 }
+
+// Claims waiting for a decision (badge on the Claims tab and the stat tile).
+$claimsWaiting = 0;
+try { $claimsWaiting = $claimModel->awaitingCount(); } catch (Throwable $e) { app_log_ignored('goodies.php:claims', $e); /* migration not run yet */ }
 
 // Every activity, switched on or off, with how often each has been awarded (activities tab).
 $allTypes = $usage = [];
@@ -831,10 +842,11 @@ engage_header([
     <div class="gd-stat" style="--h:28"><b><?= number_format($totals['spent']) ?></b><span>Points spent, net of refunds</span></div>
     <div class="gd-stat" style="--h:340"><b><?= (int) $totals['awaiting_second'] ?></b><span>Awards awaiting a second reviewer</span></div>
     <div class="gd-stat" style="--h:275"><b><?= (int) $totals['requested'] ?></b><span>New orders</span></div>
+    <div class="gd-stat" style="--h:48"><b><?= (int) $claimsWaiting ?></b><span>Claims waiting</span></div>
 </div>
 
 <nav class="gd-nav" aria-label="Goodies sections">
-    <?php foreach (GOODIES_TABS as $key => $label): $badge = $key === 'award' ? (int) $totals['awaiting_second'] : ($key === 'redemptions' ? (int) $totals['requested'] : 0); ?>
+    <?php foreach (GOODIES_TABS as $key => $label): $badge = $key === 'award' ? (int) $totals['awaiting_second'] : ($key === 'redemptions' ? (int) $totals['requested'] : ($key === 'claims' ? (int) $claimsWaiting : 0)); ?>
         <a href="/admin/goodies?tab=<?= $key ?>"<?= $tab === $key ? ' class="on" aria-current="page"' : '' ?>><?= htmlspecialchars($label) ?><?php if ($badge > 0): ?><span class="gd-badge"><?= $badge ?></span><?php endif; ?></a>
     <?php endforeach; ?>
 </nav>
@@ -1247,6 +1259,10 @@ engage_header([
     })();
     </script>
 
+<?php elseif ($tab === 'claims'): ?>
+
+    <?php goodies_claims_render($claimModel, (string) ($_GET['status'] ?? 'open'), $ownIds, $isOwner); ?>
+
 <?php elseif ($tab === 'guide'): ?>
     <?php
     // Read-only: every activity that can be awarded right now, grouped by category. $types is activityTypes() (active only).
@@ -1473,6 +1489,7 @@ engage_header([
                     <label class="gd-tg"><input type="checkbox" name="needs_evidence" value="1"> Needs an evidence link</label>
                     <label class="gd-tg"><input type="checkbox" name="one_time" value="1"> Only once per member</label>
                     <label class="gd-tg"><input type="checkbox" name="is_active" value="1" checked> Can be awarded</label>
+                    <label class="gd-tg"><input type="checkbox" name="member_claimable" value="1"> Members can claim it</label>
                 </div>
                 <div class="ac-foot"><button type="submit" class="gd-btn">Add activity</button></div>
             </form>
@@ -1502,6 +1519,7 @@ engage_header([
                                 <?php if ((int) ($t['one_time'] ?? 0)): ?><span class="ac-tag">Once per member</span><?php endif; ?>
                                 <?php if ($hasMin): ?><span class="ac-tag">Host: <?= (int) $t['below_min_points'] ?> pts under <?= (int) $t['min_attendees'] ?> attendees</span><?php endif; ?>
                                 <?php if ($builtIn): ?><span class="ac-tag">Used by the app</span><?php endif; ?>
+                                <?php if (!empty($t['member_claimable'])): ?><span class="ac-tag">Members can claim</span><?php endif; ?>
                                 <span><?= $used ? 'Awarded ' . $used . ' time' . ($used === 1 ? '' : 's') : 'Not awarded yet' ?></span>
                             </span>
                         </div>
@@ -1527,6 +1545,7 @@ engage_header([
                             <label class="gd-tg"><input type="checkbox" name="needs_evidence" value="1"<?= (int) $t['needs_evidence'] ? ' checked' : '' ?>> Needs an evidence link</label>
                             <label class="gd-tg"><input type="checkbox" name="one_time" value="1"<?= (int) ($t['one_time'] ?? 0) ? ' checked' : '' ?>> Only once per member</label>
                             <label class="gd-tg"><input type="checkbox" name="is_active" value="1"<?= $on ? ' checked' : '' ?>> Can be awarded</label>
+                            <?php if (!$builtIn): ?><label class="gd-tg"><input type="checkbox" name="member_claimable" value="1"<?= !empty($t['member_claimable']) ? ' checked' : '' ?>> Members can claim it</label><?php endif; ?>
                         </div>
                         <div class="ac-foot">
                             <button type="submit" class="gd-btn">Save changes</button>
