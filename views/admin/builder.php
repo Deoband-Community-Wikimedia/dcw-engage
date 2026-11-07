@@ -135,6 +135,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // into a membership slug (or a coordinator into another chapter's), or
         // create one, and bypass the rule above.
         $error = htmlspecialchars(FormModel::editDeniedMessage($formType));
+    } elseif (FormModel::slugConflictsWithKind($formType, $kind)) {
+        // A membership slug makes the form a membership form (FormModel::kindOf), so it cannot also be a
+        // scholarship, swag or feedback form: other pages read the schema's kind and would disagree.
+        $error = "Membership forms (URL slugs starting with membership-) must use the Application type.";
     } elseif ($badEmail !== null) {
         $error = "Notification email '" . htmlspecialchars($badEmail) . "' is not a valid address.";
     } elseif ($deadlineError !== null) {
