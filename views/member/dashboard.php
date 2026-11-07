@@ -16,6 +16,7 @@ require_once __DIR__ . '/../../models/MemberCertificateModel.php';
 require_once __DIR__ . '/../../models/MemberProfileModel.php';
 require_once __DIR__ . '/../../models/PointsModel.php';
 require_once __DIR__ . '/../../models/MemberStrikeModel.php';
+require_once __DIR__ . '/../../models/PointClaimModel.php';
 require_once __DIR__ . '/../../includes/member_session.php';
 require_once __DIR__ . '/../../includes/member_requests.php';
 require_once __DIR__ . '/../../includes/cert_rows.php';
@@ -177,6 +178,9 @@ if ($pointsBalance !== null) {
             'orders'  => PointsModel::ordersInProgress($pm->redemptionsForMember($mid)),
         ];
         $gd['pendingSum'] = (int) array_sum(array_column($gd['pending'], 'points'));
+        // Claims: null when the claim tables are not there yet (the button and alert are then left out).
+        $gd['claims'] = null;
+        try { $gd['claims'] = (new PointClaimModel())->forMember($mid); } catch (Throwable $e) { app_log_ignored('dashboard.php:gd-claims', $e); }
     } catch (Throwable $e) { app_log_ignored('dashboard.php:gd', $e); /* card stays hidden */ }
 }
 
@@ -307,6 +311,13 @@ foreach ($ticketsWaiting as $t) {
 foreach ($techWaiting as $t) {
     $alerts[] = ['who' => 'Technical team', 'text' => 'New reply on “' . $t['title'] . '”',
                  'href' => '/member/report-problem?id=' . rawurlencode($t['tracking_id']), 'cta' => 'Read reply'];
+}
+// A reviewer replied on a points claim: the member has to answer.
+foreach (($gd['claims'] ?? []) as $gc) {
+    if ($gc['status'] === 'Needs info') {
+        $alerts[] = ['who' => 'Goodies', 'text' => 'A reviewer needs more information on your claim for ' . $gc['activity_name'],
+                     'href' => '/member/goodies?claim=' . rawurlencode((string) $gc['tracking_id']), 'cta' => 'Reply'];
+    }
 }
 // Internet support needs a verified Wikimedia username: nudge only when it is open and the member is active.
 if ($memberActive && $internetOpen) {
@@ -547,6 +558,9 @@ cert_rows_css();   // icons, buttons and certificate rows shared with /member/ce
             <?php endif; ?>
             <div class="d-gd-acts">
                 <a class="d-btn fill" href="/member/goodies#catalogue"><?= $gdAff > 0 ? 'Redeem (' . $gdAff . ' available)' : 'See goodies' ?></a>
+                <?php if ($gd['claims'] !== null): $gdOpen = count(array_filter($gd['claims'], fn($c) => in_array($c['status'], PointClaimModel::OPEN, true))); ?>
+                    <a class="d-btn line" href="/member/goodies?view=claim">Claim points<?= $gdOpen ? ' (' . $gdOpen . ' open)' : '' ?></a>
+                <?php endif; ?>
                 <a class="d-btn line" href="/member/goodies?view=history">Points history</a>
             </div>
         </div>
