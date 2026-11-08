@@ -8,12 +8,13 @@ require_once __DIR__ . '/../../models/ApplicationModel.php';
 require_once __DIR__ . '/../../models/MemberModel.php';
 require_once __DIR__ . '/../../models/TechIssueModel.php';
 require_once __DIR__ . '/../../models/PointsModel.php';
+require_once __DIR__ . '/../../models/PointClaimModel.php';
 
 Auth::requireLogin();
 
 // Each flag mirrors the exact requireRole() call on the page it links to, so
 // a link only ever appears for someone who can actually get past its gate:
-//   application_review.php   -> requireRole(['organizer', 'owner'])   (program forms; membership and feedback forms are left out)
+//   application_review.php   -> requireRole(['organizer', 'owner'])   (program, scholarship and swag forms; membership and feedback forms are left out)
 //   feedback_review.php      -> requireRole(['owner', 'organizer'])   (responses to feedback forms; has its own Feedback tab here)
 //   event_cards.php          -> requireRole(['organizer', 'owner'])   (event participation cards; has its own Events tab here)
 //   reimbursement_review.php -> requireRole(['support_reviewer', 'owner'])
@@ -53,18 +54,18 @@ try {
     $techWaiting = $techModel->awaitingReporter('team', strtolower((string) Auth::email()));
 } catch (Throwable $e) { app_log_ignored('dashboard.php:47', $e); /* tables not created yet */ }
 
-// Goodies: awards waiting for a second reviewer plus new orders, shown as the badge on the Goodies tab.
-// If the goodies tables have not been created yet, the badge is simply left out.
+// Goodies: awards waiting for a second reviewer, new orders and members' claims for points, shown as the badge on the
+// Goodies tab. If the goodies tables (or the claims migration) have not been created yet, that part is simply left out.
 $goodiesWaiting = 0;
 if ($canManageGoodies) {
     try {
         $goodiesTotals  = (new PointsModel())->totals();
         $goodiesWaiting = (int) $goodiesTotals['awaiting_second'] + (int) $goodiesTotals['requested'];
     } catch (Throwable $e) { app_log_ignored('dashboard.php:goodies', $e); /* tables not created yet */ }
+    try { $goodiesWaiting += (new PointClaimModel())->awaitingCount(); } catch (Throwable $e) { app_log_ignored('dashboard.php:claims', $e); /* migration not run yet */ }
 }
 
-// Who gets the forms grid, and which forms they see. Mirrors
-// FormModel::userCanOpen(), which form_manager.php enforces:
+// Who gets which forms. Mirrors FormModel::userCanOpen(), which form_manager.php enforces:
 //   membership forms -> membership_reviewer, owner (all chapters);
 //                       membership_coordinator (their own chapters only)
 //   other forms      -> organizer, owner
@@ -72,8 +73,9 @@ if ($canManageGoodies) {
 $canManageForms        = Auth::hasAnyRole(['organizer', 'owner']);
 $isCoordinator         = Auth::hasAnyRole(['membership_coordinator']);
 $canSeeMembershipForms = Auth::hasAnyRole(['membership_reviewer', 'owner']) || $isCoordinator;
-$canCreateForms        = $canManageForms || $isCoordinator;   // gates "New form"; the builder limits a coordinator to their chapters
-$showFormsGrid         = $canCreateForms || $canSeeMembershipForms;
+// "New membership form": mirrors FormModel::userCanEdit() for a membership slug (owner, or a coordinator for their own
+// chapters; the builder limits the coordinator to those chapters). Reviewers and organizers cannot create them.
+$canCreateMembershipForms = Auth::hasAnyRole(['owner']) || $isCoordinator;
 
 // Only a pure coordinator is limited to chapters; a reviewer sees them all.
 $chapterLimited = Auth::hasAnyRole(['membership_coordinator'])
@@ -82,7 +84,7 @@ $chapterLimited = Auth::hasAnyRole(['membership_coordinator'])
 $canReviewAny  = $canReviewReimbursements || $canReviewInternet;
 $canSeeSupport = $canReviewAny || $canProcessFinance;
 
-// Forms grid. Fetched after the role flags; each user only gets the forms
+// Forms. Fetched after the role flags; each user only gets the forms
 // they could actually open (FormModel::userCanOpen, same rule as form_manager.php).
 $formModel = new FormModel();
 $forms = array_filter($formModel->getAllForms(), fn($f) => FormModel::userCanOpen($f));
@@ -97,20 +99,76 @@ try {
     }
 } catch (Throwable $e) { app_log_ignored('dashboard.php:81', $e); /* migration not run yet */ }
 
-// Application forms and feedback forms are shown separately: feedback has responses, not applications.
-$isFeedbackForm = fn($f) => FeedbackModel::isFeedbackSchema(json_decode((string) ($f['schema_json'] ?? ''), true));
-$feedbackForms  = array_filter($forms, $isFeedbackForm);
-$appForms       = array_filter($forms, fn($f) => !$isFeedbackForm($f));
+// Group the forms by kind. FormModel::kindOf() is the one place a form's kind is decided: membership from the
+// slug, everything else from the schema's "kind", no kind = 'application' (a program form).
+// $formsByKind: kind => forms. Every kind in FormModel::KINDS has an entry, empty or not.
+$formsByKind = FormModel::groupByKind($forms);
 
-// Open forms show by default; closed ones sit behind a toggle. "Open" means switched on AND not past its
-// deadline (FormModel::isOpen), so a form that closed by deadline moves to the closed group on its own.
-$activeForms = array_filter($appForms, fn($f) => FormModel::isOpen($f));
-$closedForms = array_filter($appForms, fn($f) => !FormModel::isOpen($f));
+// Each kind keeps the same active/closed split. Open forms show by default; closed ones sit behind a toggle.
+// "Open" means switched on AND not past its deadline (FormModel::isOpen), so a form that closed by deadline
+// moves to the closed group on its own.
+$openByKind = []; $closedByKind = [];
+foreach ($formsByKind as $kind => $rows) {
+    [$openByKind[$kind], $closedByKind[$kind]] = FormModel::splitByOpen($rows);
+}
 
-$fbActive = array_filter($feedbackForms, fn($f) => FormModel::isOpen($f));
-$fbClosed = array_filter($feedbackForms, fn($f) => !FormModel::isOpen($f));
-$fbTotal  = 0;
-foreach ($feedbackForms as $f) $fbTotal += (int) ($feedbackCounts[(int) $f['id']] ?? 0);
+$fbTotal = 0;
+foreach ($formsByKind['feedback'] as $f) $fbTotal += (int) ($feedbackCounts[(int) $f['id']] ?? 0);
+
+// One tab per kind of form, in this order. The tab ids are kept ('forms', 'feedback') so old #forms and
+// #feedback links still open the same tab.
+//   see     who may open forms of this kind (same rule as FormModel::userCanOpen)
+//   always  true: the tab shows even with no forms yet (so the "New form" button is reachable);
+//           false: the tab only appears once there is a form of that kind
+//   new     "+ New ..." button target, or '' when this person cannot create forms of this kind
+$kindTabs = [
+    'application' => [
+        'id' => 'forms', 'label' => 'Forms', 'icon' => 'doc',
+        'see' => $canManageForms, 'always' => true,
+        'intro' => 'Program forms: open, close and edit them. Decide on the responses in Application review.',
+        'new' => $canManageForms ? '/admin/builder' : '', 'newLabel' => '+ New form',
+        'none' => 'No forms yet. Create one with the button above.', 'noneOpen' => 'No forms are open right now.',
+        'closedLabel' => 'Closed forms',
+    ],
+    'scholarship' => [
+        'id' => 'scholarships', 'label' => 'Scholarships', 'icon' => 'badge',
+        'see' => $canManageForms, 'always' => false,
+        'intro' => 'Scholarship and fellowship forms. Letters and award confirmation are set up for each program in Application review.',
+        'new' => $canManageForms ? '/admin/builder?kind=scholarship' : '', 'newLabel' => '+ New scholarship form',
+        'none' => 'No scholarship forms yet.', 'noneOpen' => 'No scholarship forms are open right now.',
+        'closedLabel' => 'Closed scholarship forms',
+    ],
+    'swag' => [
+        'id' => 'swag', 'label' => 'Swag', 'icon' => 'archive',
+        'see' => $canManageForms, 'always' => false,
+        'intro' => 'Swag forms. Accepted applications are marked as dispatched in Application review.',
+        'new' => $canManageForms ? '/admin/builder?kind=swag' : '', 'newLabel' => '+ New swag form',
+        'none' => 'No swag forms yet.', 'noneOpen' => 'No swag forms are open right now.',
+        'closedLabel' => 'Closed swag forms',
+    ],
+    'membership' => [
+        'id' => 'membership', 'label' => 'Membership forms', 'icon' => 'people',
+        'see' => $canSeeMembershipForms, 'always' => true,
+        'intro' => ($chapterLimited ? 'Membership forms for your chapters' : 'Membership forms for every chapter')
+                 . '. Open, close and extend them here; decide on the responses in Membership review.',
+        'new' => $canCreateMembershipForms ? '/admin/builder' : '', 'newLabel' => '+ New membership form',
+        'none' => 'No membership forms to show.', 'noneOpen' => 'No membership forms are open right now.',
+        'closedLabel' => 'Closed membership forms',
+    ],
+    'feedback' => [
+        'id' => 'feedback', 'label' => 'Feedback', 'icon' => 'star',
+        'see' => $canReadFeedback, 'always' => true,
+        'intro' => 'Read what people told us, email a respondent, or delete a response. '
+                 . $fbTotal . ' response' . ($fbTotal === 1 ? '' : 's') . ' across '
+                 . count($formsByKind['feedback']) . ' form' . (count($formsByKind['feedback']) === 1 ? '' : 's') . '.',
+        'new' => $canReadFeedback ? '/admin/builder?kind=feedback' : '', 'newLabel' => '+ New feedback form',
+        'none' => 'No feedback forms yet. Create one with the button above.', 'noneOpen' => 'No feedback forms are open right now.',
+        'closedLabel' => 'Closed feedback forms',
+    ],
+];
+foreach ($kindTabs as $k => $t) {
+    $kindTabs[$k]['show'] = $t['see'] && ($t['always'] || !empty($formsByKind[$k]));
+}
 
 // Programs that are not shown in the review queue: closed forms, and test forms.
 // A form counts as a test form when "test"/"testing"/"dummy" is a whole word in its title or URL slug
@@ -127,8 +185,8 @@ if (!function_exists('review_hidden_form')) {
     }
 }
 
-// Applications waiting for a first decision (New or Submitted), across the program forms this person can open
-// (closed, test, membership and feedback forms are left out, the same as in the review queue).
+// Applications waiting for a first decision (New or Submitted), across the program, scholarship and swag forms this
+// person can open (closed, test, membership and feedback forms are left out, the same as in the review queue).
 // Shown as a count on the "Application review" row. Uses ApplicationModel::countAwaitingByForm();
 // if that method is not added yet, or the query fails, the count is simply left out.
 $appsWaiting = 0;
@@ -136,8 +194,8 @@ if ($canReviewApplications) {
     try {
         $reviewable = [];
         foreach ($forms as $f) {
-            if (FormModel::isMembershipType($f['form_type'])) continue;   // reviewed in Membership review
-            if ($isFeedbackForm($f)) continue;                            // read in the Feedback tab
+            // Membership forms are reviewed in Membership review, feedback forms are read in the Feedback tab.
+            if (!FormModel::reviewedInApplicationReview($f)) continue;
             if (review_hidden_form($f)) continue;
             $reviewable[(int) $f['id']] = true;
         }
@@ -193,9 +251,13 @@ $vtabs = [];
 if ($showReviewPanel) $vtabs[] = ['review',   'Review',               'inbox', (int) $appsWaiting + (int) $membershipWaiting];
 if ($canSeeSupport)   $vtabs[] = ['support',  'Volunteer support',    'card',  0];
 if ($canManageGoodies) $vtabs[] = ['goodies', 'Goodies',              'star',  (int) $goodiesWaiting];
-if ($showFormsGrid)   $vtabs[] = ['forms',    'Forms',                'doc',   0];
-if ($canManageEventCards) $vtabs[] = ['events', 'Events',             'badge', 0];   // no badge: nothing "waiting"
-if ($canReadFeedback) $vtabs[] = ['feedback', 'Feedback',             'star',  0];   // no badge: feedback has nothing "waiting"
+// One tab for each kind of form, then Events, then Feedback (no badge on any of them: forms have nothing "waiting").
+$formKindOrder = ['application', 'scholarship', 'swag', 'membership'];
+foreach ($formKindOrder as $k) {
+    if ($kindTabs[$k]['show']) $vtabs[] = [$kindTabs[$k]['id'], $kindTabs[$k]['label'], $kindTabs[$k]['icon'], 0];
+}
+if ($canManageEventCards) $vtabs[] = ['events', 'Events',             'badge', 0];
+if ($kindTabs['feedback']['show']) $vtabs[] = [$kindTabs['feedback']['id'], $kindTabs['feedback']['label'], $kindTabs['feedback']['icon'], 0];
 if ($showSupportTech) $vtabs[] = ['tech',     'Support & technical',  'chat',  (int) $techOpen];
 
 /**
@@ -229,22 +291,25 @@ function lrow(array $icons, string $tone, string $icon, string $title, string $d
  * Renders one form tile (open or closed). Shows when an open form closes, and
  * "Closed (deadline)" for a form that has run past its deadline.
  *
- * Feedback forms (schema "kind": "feedback") differ in three ways: the response count comes from
- * $feedbackCounts (their responses are not in `applications`), the tile says "Feedback", and it opens
- * the feedback page (/admin/feedback-review), which is also where they are edited, closed and reopened.
+ * The kind comes from FormModel::kindOf(). Feedback forms differ in two ways: the response count comes from
+ * $feedbackCounts (their responses are not in `applications`), and the tile opens the feedback page
+ * (/admin/feedback-review), which is also where they are edited, closed and reopened. Every other kind
+ * opens the form manager. The tile does not name the kind: each kind has its own tab.
  */
 function form_tile(array $icons, array $form, array $feedbackCounts = []): void
 {
     $open       = FormModel::isOpen($form);
     $byDeadline = FormModel::closedByDeadline($form);
     $hasDeadline = !empty($form['deadline_at']);
-    $isFeedback = FeedbackModel::isFeedbackSchema(json_decode((string) ($form['schema_json'] ?? ''), true));
+    $kind       = FormModel::kindOf($form);
+    $isFeedback = $kind === 'feedback';
     $count      = $isFeedback ? (int) ($feedbackCounts[(int) $form['id']] ?? 0) : (int) $form['applicant_count'];
     $tone       = $open ? 'var(--leaf-dark, #3E7A53)' : '#94a3b8';
+    $icon       = ['feedback' => 'star', 'membership' => 'people', 'scholarship' => 'badge', 'swag' => 'archive'][$kind] ?? 'doc';
 
     $pill = $open ? 'Active' : ($byDeadline ? 'Closed (deadline)' : 'Closed');
 
-    $sub = '/' . $form['form_type'] . ($isFeedback ? ' · Feedback' : '') . ' · ' . $count . ' response' . ($count !== 1 ? 's' : '');
+    $sub = '/' . $form['form_type'] . ' · ' . $count . ' response' . ($count !== 1 ? 's' : '');
     if ($open && $hasDeadline) {
         $sub .= ' · closes ' . FormModel::formatIst($form['deadline_at']);
     } elseif ($byDeadline) {
@@ -256,13 +321,49 @@ function form_tile(array $icons, array $form, array $feedbackCounts = []): void
         : '/admin/form_manager?id=' . (int) $form['id'];
     ?>
     <a class="tile" href="<?= htmlspecialchars($href) ?>" style="--tone: <?= $tone ?>;">
-        <span class="tick"><svg viewBox="0 0 24 24" aria-hidden="true"><?= $icons[$isFeedback ? 'star' : 'doc'] ?></svg></span>
+        <span class="tick"><svg viewBox="0 0 24 24" aria-hidden="true"><?= $icons[$icon] ?></svg></span>
         <span>
             <h3><?= htmlspecialchars($form['title']) ?></h3>
             <p><?= htmlspecialchars($sub) ?></p>
         </span>
         <span class="pill"><?= htmlspecialchars($pill) ?></span>
     </a>
+    <?php
+}
+
+/**
+ * Renders the panel for one kind of form: heading, optional "New" button, the open forms as tiles, and the
+ * closed ones behind a toggle. $tab is one entry of $kindTabs; $open and $closed are that kind's forms.
+ * Every kind uses this, so they all look and behave the same.
+ */
+function forms_panel(array $icons, array $tab, array $open, array $closed, array $feedbackCounts): void
+{
+    ?>
+                <section class="vpanel" id="p-<?= htmlspecialchars($tab['id']) ?>" role="tabpanel" aria-labelledby="t-<?= htmlspecialchars($tab['id']) ?>" hidden>
+                    <div class="panel-head">
+                        <h2><?= htmlspecialchars($tab['label']) ?></h2>
+                        <p><?= htmlspecialchars($tab['intro']) ?></p>
+                        <?php if ($tab['new'] !== ''): ?>
+                            <a class="btn-ghost head-act" href="<?= htmlspecialchars($tab['new']) ?>"><?= htmlspecialchars($tab['newLabel']) ?></a>
+                        <?php endif; ?>
+                    </div>
+                    <?php if ($open): ?>
+                        <div class="tiles">
+                            <?php foreach ($open as $form) form_tile($icons, $form, $feedbackCounts); ?>
+                        </div>
+                    <?php else: ?>
+                        <div class="empty-note"><?= htmlspecialchars($closed ? $tab['noneOpen'] : $tab['none']) ?></div>
+                    <?php endif; ?>
+
+                    <?php if ($closed): ?>
+                        <details class="closed-forms">
+                            <summary><?= htmlspecialchars($tab['closedLabel']) ?> (<?= count($closed) ?>)</summary>
+                            <div class="tiles">
+                                <?php foreach ($closed as $form) form_tile($icons, $form, $feedbackCounts); ?>
+                            </div>
+                        </details>
+                    <?php endif; ?>
+                </section>
     <?php
 }
 
@@ -380,6 +481,8 @@ engage_header([
                         <?php
                         lrow($icons, 'var(--primary)', 'star', 'Award points',
                             'Award points for activities, approve large awards, or take points back.', '/admin/goodies?tab=award');
+                        lrow($icons, 'var(--primary)', 'inbox', 'Claims',
+                            'Points members have claimed for activities DCW did not log: approve, reject or ask for more information.', '/admin/goodies?tab=claims');
                         lrow($icons, 'var(--primary)', 'check', 'Activities and points',
                             'What members can earn points for, and how many. Changing points revises past awards.', '/admin/goodies?tab=activities');
                         lrow($icons, 'var(--primary)', 'doc', 'Catalogue',
@@ -391,35 +494,14 @@ engage_header([
                 </section>
                 <?php endif; ?>
 
-                <?php if ($showFormsGrid): ?>
-                <section class="vpanel" id="p-forms" role="tabpanel" aria-labelledby="t-forms" hidden>
-                    <div class="panel-head">
-                        <h2>Forms</h2>
-                        <p><?= $canCreateForms
-                            ? 'Open and close the application forms people fill in, and review responses.'
-                            : 'Review responses to membership forms.' ?></p>
-                        <?php if ($canCreateForms): ?>
-                            <a class="btn-ghost head-act" href="/admin/builder">+ New form</a>
-                        <?php endif; ?>
-                    </div>
-                    <?php if ($activeForms): ?>
-                        <div class="tiles">
-                            <?php foreach ($activeForms as $form) form_tile($icons, $form, $feedbackCounts); ?>
-                        </div>
-                    <?php else: ?>
-                        <div class="empty-note">No forms are open right now.</div>
-                    <?php endif; ?>
-
-                    <?php if ($closedForms): ?>
-                        <details class="closed-forms">
-                            <summary>Closed forms (<?= count($closedForms) ?>)</summary>
-                            <div class="tiles">
-                                <?php foreach ($closedForms as $form) form_tile($icons, $form, $feedbackCounts); ?>
-                            </div>
-                        </details>
-                    <?php endif; ?>
-                </section>
-                <?php endif; ?>
+                <?php
+                // One panel per kind of form: program forms ('forms'), scholarships, swag and membership.
+                foreach ($formKindOrder as $k) {
+                    if ($kindTabs[$k]['show']) {
+                        forms_panel($icons, $kindTabs[$k], $openByKind[$k], $closedByKind[$k], $feedbackCounts);
+                    }
+                }
+                ?>
 
                 <?php if ($canManageEventCards): ?>
                 <section class="vpanel" id="p-events" role="tabpanel" aria-labelledby="t-events" hidden>
@@ -437,32 +519,7 @@ engage_header([
                 </section>
                 <?php endif; ?>
 
-                <?php if ($canReadFeedback): ?>
-                <section class="vpanel" id="p-feedback" role="tabpanel" aria-labelledby="t-feedback" hidden>
-                    <div class="panel-head">
-                        <h2>Feedback</h2>
-                        <p>Read what people told us, email a respondent, or delete a response.
-                            <?= (int) $fbTotal ?> response<?= $fbTotal === 1 ? '' : 's' ?> across <?= count($feedbackForms) ?> form<?= count($feedbackForms) === 1 ? '' : 's' ?>.</p>
-                        <a class="btn-ghost head-act" href="/admin/builder?kind=feedback">+ New feedback form</a>
-                    </div>
-                    <?php if ($fbActive): ?>
-                        <div class="tiles">
-                            <?php foreach ($fbActive as $form) form_tile($icons, $form, $feedbackCounts); ?>
-                        </div>
-                    <?php else: ?>
-                        <div class="empty-note"><?= $feedbackForms ? 'No feedback forms are open right now.' : 'No feedback forms yet. Create one with the button above.' ?></div>
-                    <?php endif; ?>
-
-                    <?php if ($fbClosed): ?>
-                        <details class="closed-forms">
-                            <summary>Closed feedback forms (<?= count($fbClosed) ?>)</summary>
-                            <div class="tiles">
-                                <?php foreach ($fbClosed as $form) form_tile($icons, $form, $feedbackCounts); ?>
-                            </div>
-                        </details>
-                    <?php endif; ?>
-                </section>
-                <?php endif; ?>
+                <?php if ($kindTabs['feedback']['show']) forms_panel($icons, $kindTabs['feedback'], $openByKind['feedback'], $closedByKind['feedback'], $feedbackCounts); ?>
 
                 <?php if ($showSupportTech): ?>
                 <section class="vpanel" id="p-tech" role="tabpanel" aria-labelledby="t-tech" hidden>

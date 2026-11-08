@@ -55,3 +55,22 @@ uploads/*
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Participant lists (names) and downloaded card PDFs (names + live QR tokens)
+*.csv
+*.xlsx
+Event-Cards-*.pdf
+DCW-Membership-Card-*.pdf
+
+# Plain SQL dumps can contain PII. The schema and migrations are the only .sql files that belong in git.
+*.sql
+!database.sql
+!migrations/*.sql
+
+# Membership card private data: titles per Member ID, and the Board's signature image
+config/card_titles.php
+config/board_signature.*
+
+# Keys and certificates
+*.pem
+*.key

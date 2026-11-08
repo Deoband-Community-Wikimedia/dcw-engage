@@ -250,6 +250,9 @@ body.admin .alert.error { background: var(--accent-tint); border-color: #F0B5B0;
 .pill.status-Draft        { --tone: var(--amber); }
 .pill.status-Accepted     { --tone: var(--leaf-dark); }
 .pill.status-Rejected     { --tone: var(--accent); }
+.pill.status-Submitted  { --tone: var(--primary); }
+.pill.status-Discarded  { --tone: var(--slate); }
+.pill.status-Dispatched { --tone: #0F766E; }
 
 /* Role pills (team page) */
 .pills { display: inline-flex; flex-wrap: wrap; gap: 4px; }
@@ -531,3 +534,4 @@ details.edit fieldset.group { background: #fff; margin-bottom: 0; }
 @media (max-width: 560px) {
     .sect { padding: 18px 16px; }
 }
+

@@ -46,6 +46,7 @@ function dash_app_status(string $status, bool $canResume): array
         case 'Under Review':
         case 'Discarded':    return ['Under review', '#106b9a', false];
         case 'Accepted':     return ['Accepted', '#0f766e', false];
+        case 'Dispatched':   return ['Dispatched', '#0f766e', false];
         case 'Rejected':     return ['Not accepted', '#97161b', false];
         default:             return [$status, '#106b9a', false];
     }

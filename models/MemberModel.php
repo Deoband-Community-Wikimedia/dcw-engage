@@ -621,6 +621,20 @@ class MemberModel {
         return $st->fetchAll();
     }
 
+    /**
+     * The account behind an email address (Generic Community row first), or null when the address
+     * holds no membership. Used by the application form gate: a logged-out visitor whose address
+     * belongs to a member is asked to sign in instead of being sent a verification code.
+     * Returns member_id, full_name and status. Every status counts, struck-off included, so a
+     * struck-off member cannot get past the gate as a guest.
+     */
+    public function accountForEmail(string $email): ?array {
+        $st = $this->db->prepare("SELECT member_id, full_name, status FROM members
+            WHERE email = :e ORDER BY (chapter = 'generic') DESC, id ASC LIMIT 1");
+        $st->execute(['e' => trim($email)]);
+        return $st->fetch(PDO::FETCH_ASSOC) ?: null;
+    }
+
     public function findForIdReminder(string $usernameKey, string $email): ?array {
         $excluded = self::ID_REMINDER_EXCLUDED_STATUSES;
         $sql = 'SELECT m.member_id, m.email, m.full_name

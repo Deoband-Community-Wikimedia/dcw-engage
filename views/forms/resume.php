@@ -33,7 +33,8 @@ $schemaSections = FormModel::schemaSections(is_array($schema) ? $schema : []);
 $schema['fields'] = FormModel::schemaFields(is_array($schema) ? $schema : []);
 $formData = json_decode($application['form_data'], true);
 $status = $application['status'];
-$isLocked = in_array($status, ['Under Review', 'Accepted', 'Rejected']);
+// One list for "the applicant can no longer edit" (the model uses the same one when saving).
+$isLocked = in_array($status, ApplicationModel::LOCKED_STATUSES, true);
 $wasDraft = $status === 'Draft';
 
 // The name was given when the email was verified, so it is not asked again here: the form's own
@@ -224,7 +225,7 @@ engage_header([
         <?php foreach ($schemaSections as $section): ?>
             <?php if (trim($section['title']) !== '' || trim($section['description']) !== ''): ?>
                 <section class="form-section">
-                    <?php if (trim($section['title']) !== ''): ?><h2><?= $e($section['title']) ?></h2><?php endif; ?>
+                    <?php if (trim($section['title']) !== ''): ?><h2><?= $label_html($section['title']) ?></h2><?php endif; ?>
                     <?php if (trim($section['description']) !== ''): ?><div class="form-section-intro"><?= MiniWikiText::render($section['description']) ?></div><?php endif; ?>
                 </section>
             <?php endif; ?>

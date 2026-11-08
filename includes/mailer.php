@@ -4,12 +4,14 @@
 // Facade. The emails now live in one class per subject under includes/mail/:
 //
 //   CoreMail.php        SMTP + the shared look (nothing else talks to PHPMailer)
-//   ApplicationMail.php      event applications: verification, magic link, received, status, sent back, organizer alert
+//   ApplicationMail.php      event applications: verification, magic link, received, status, sent back, swag dispatched, organizer alert
 //   OrganizerAccountMail.php organizer invitations and password resets
 //   ReimbursementMail.php    reimbursement (members only): received, status (incl. Info Requested)
 //   InternetSupportMail.php  internet support (members only): received, status (incl. Info Requested)
 //   MemberSupportMail.php    member conversations with DCW Support: "you have a reply" / "status changed"
 //                            notifications (never contain the message text or any staff name)
+//   PointsMail.php           Goodies (member points): claim decisions, and an order's receipt, dispatch
+//                            (courier + AWB, or by hand) and cancellation. Never contains an address.
 //   membership_mailer.php    membership emails (class MembershipMailer): club-specific wording, From name and reply-to
 //   feedback_mailer.php      feedback forms (class FeedbackMailer): receipt to the respondent, alert to organizers.
 //                            No tracking ID and no link in the receipt.
@@ -30,6 +32,7 @@ require_once __DIR__ . '/mail/OrganizerAccountMail.php';
 require_once __DIR__ . '/mail/ReimbursementMail.php';
 require_once __DIR__ . '/mail/InternetSupportMail.php';
 require_once __DIR__ . '/mail/MemberSupportMail.php';
+require_once __DIR__ . '/mail/PointsMail.php';
 require_once __DIR__ . '/mail/membership_mailer.php';
 require_once __DIR__ . '/mail/feedback_mailer.php';
 
@@ -48,6 +51,10 @@ class Mailer {
     // "Needs information": what the organizer needs + the one-time /resume/<token> link.
     // Returns false when the email was not really sent, so the caller can show the link instead.
     public static function sendSentBack(...$a)            { return ApplicationMail::sentBack(...$a); }
+    // ($email, $applicantName, $trackingId, $formTitle, $courier, $awb, $trackUrl = '')
+    // Swag: "your parcel has been dispatched" with courier and consignment number. Never contains the address.
+    // Returns false when the email was not really sent, so the caller can offer "Send dispatch email again".
+    public static function sendDispatched(...$a)          { return ApplicationMail::dispatched(...$a); }
     // ($form, $applicantEmail, $applicantName, $trackingId, $revised = false)
     // $revised = true tells organizers it is a resubmission of an application they sent back.
     public static function sendOrganizerAlert(...$a)      { return ApplicationMail::organizerAlert(...$a); }
@@ -95,4 +102,16 @@ class Mailer {
     // ($email, $memberName, $trackingId, $kind) where $kind is 'reply' or 'status'.
     // Called by ticket_notify() in models/MemberTicketModel.php.
     public static function sendMemberTicketUpdate(...$a)     { return MemberSupportMail::update(...$a); }
+
+    // --- Goodies (member points) --------------------------------------------
+    // ($email, $memberName, $trackingId, $kind) $kind = approved | rejected | info. Called by PointClaimModel.
+    // Never contains the reviewer's words: the member reads those signed in.
+    public static function sendPointClaimUpdate(...$a)       { return PointsMail::claimUpdate(...$a); }
+    // ($email, $memberName, $trackingId, $goodyName, $variant, $points). Called by PointsModel::redeem().
+    public static function sendOrderPlaced(...$a)            { return PointsMail::orderPlaced(...$a); }
+    // ($email, $memberName, $trackingId, $goodyName, $variant, $method ['courier'|'hand'], $courier, $awb, $trackUrl, $handoverNote)
+    // Never contains the address. Returns false when not really sent, so the admin page offers "Send email again".
+    public static function sendOrderDispatched(...$a)        { return PointsMail::orderDispatched(...$a); }
+    // ($email, $memberName, $trackingId, $goodyName, $variant, $points)
+    public static function sendOrderCancelled(...$a)         { return PointsMail::orderCancelled(...$a); }
 }

@@ -16,6 +16,7 @@
 --                                               admin_invites, password_resets,
 --                                               audit_log
 --   2. Forms and applications                   forms, applications,
+--                                               application_dispatches,
 --                                               application_notes, magic_links,
 --                                               email_verifications,
 --                                               feedback_responses,
@@ -50,7 +51,9 @@
 --  10. Goodies (member points)                  activity_types, events,
 --                                               event_attendance, point_awards,
 --                                               goodies, redemptions,
---                                               points_ledger, ch_session_hosts
+--                                               points_ledger, ch_session_hosts,
+--                                               point_claims,
+--                                               point_claim_messages
 --  11. Event cards (printed participation       card_events,
 --      cards, e.g. Train a Wikipedian)          card_participants
 --
@@ -165,6 +168,12 @@ CREATE TABLE IF NOT EXISTS `audit_log` (
 -- Forms and applications
 -- ============================================================
 
+-- The kind of a form is the schema's "kind" key (see FormModel::kindOf()):
+--   (no key)      program application
+--   scholarship   scholarship / fellowship (committee letters, award confirmation)
+--   swag          swag: an accepted application can be marked Dispatched
+--   feedback      feedback form (responses live in feedback_responses)
+-- Membership forms are recognised by their slug, not by a stored kind.
 CREATE TABLE IF NOT EXISTS `forms` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
   `form_type` varchar(100) NOT NULL,
@@ -181,13 +190,15 @@ CREATE TABLE IF NOT EXISTS `forms` (
 -- letter_failed:  1 only when a decision was saved but its letter could not be sent
 --                 (drives the "Resend letter" button). Applications decided before
 --                 letters were switched on stay 0, so they never show a resend button.
+-- status 'Dispatched': swag only. Set by ApplicationModel::dispatch() (Accepted -> Dispatched, with
+--                 courier details in application_dispatches); no other code path can set it.
 CREATE TABLE IF NOT EXISTS `applications` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
   `tracking_id` varchar(12) DEFAULT NULL,
   `form_id` int(11) NOT NULL,
   `email` varchar(255) NOT NULL,
   `applicant_name` varchar(255) DEFAULT NULL,
-  `status` enum('Draft','New','Under Review','Accepted','Rejected','Discarded') DEFAULT 'New',
+  `status` enum('Draft','New','Under Review','Accepted','Rejected','Discarded','Dispatched') DEFAULT 'New',
   `form_data` JSON DEFAULT NULL,
   `letter_sent_at` datetime DEFAULT NULL,
   `letter_failed` tinyint(1) NOT NULL DEFAULT 0,
@@ -198,6 +209,24 @@ CREATE TABLE IF NOT EXISTS `applications` (
   UNIQUE KEY `uniq_form_email` (`form_id`,`email`),
   UNIQUE KEY `tracking_id` (`tracking_id`),
   CONSTRAINT `applications_ibfk_1` FOREIGN KEY (`form_id`) REFERENCES `forms` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Swag: courier details of a dispatched application, one row each. Removed with the application
+-- (ON DELETE CASCADE) and by the PII scrub 30 days after dispatch (cron/scrub_pii.php).
+--   awb            the courier's consignment number; not the DCW- tracking ID
+--   tracking_url   optional link pasted from the courier's site
+--   email_sent_at  UTC; NULL = the applicant has not been emailed ("Send dispatch email again" is offered)
+CREATE TABLE IF NOT EXISTS `application_dispatches` (
+  `application_id` int(11) NOT NULL,
+  `courier` varchar(60) NOT NULL,
+  `awb` varchar(80) NOT NULL,
+  `tracking_url` varchar(500) DEFAULT NULL,
+  `dispatched_by` varchar(255) NOT NULL,
+  `dispatched_at` datetime NOT NULL,
+  `email_sent_at` datetime DEFAULT NULL,
+  `email_failed` tinyint(1) NOT NULL DEFAULT 0,
+  PRIMARY KEY (`application_id`),
+  CONSTRAINT `fk_dispatch_application` FOREIGN KEY (`application_id`) REFERENCES `applications` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `application_notes` (
@@ -805,6 +834,7 @@ CREATE TABLE IF NOT EXISTS `activity_types` (
   `points` int(10) UNSIGNED NOT NULL,
   `needs_evidence` tinyint(1) NOT NULL DEFAULT 0,
   `one_time` tinyint(1) NOT NULL DEFAULT 0,        -- can be awarded to a member only once
+  `member_claimable` tinyint(1) NOT NULL DEFAULT 0,  -- members may claim it (reviewers decide); never the built-in ones
   -- Used from Phase 2 (event finalise): a meetup under the minimum pays below_min_points.
   `min_attendees` int(10) UNSIGNED DEFAULT NULL,
   `below_min_points` int(10) UNSIGNED DEFAULT NULL,
@@ -878,12 +908,20 @@ CREATE TABLE IF NOT EXISTS `goodies` (
   `description` varchar(500) DEFAULT NULL,
   `points_cost` int(10) UNSIGNED NOT NULL,
   `variants_json` JSON DEFAULT NULL,                -- e.g. ["S","M","L","XL"]; NULL = no choice needed
+  `stock_json` text DEFAULT NULL,
+  `images_json` text DEFAULT NULL,                  -- [{"file":"7f3a9c1e5b2d4a60.jpg","alt":"..."}]; first is the cover; NULL = no pictures
   `is_active` tinyint(1) NOT NULL DEFAULT 1,
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uniq_goody_name` (`name`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- delivery_method .. email_sent_at record how an order was sent when it is marked Shipped:
+--   delivery_method   'courier' (courier + consignment/AWB number, optional tracking link)
+--                     or 'hand'  (handed over personally: who, where, when, in handover_note)
+--   dispatched_by     the reviewer, dispatched_at the time (UTC, shown in IST)
+--   email_sent_at     when the member was emailed; NULL = not emailed yet ("Send email again" is offered)
+-- None of this is personal data like the address is, so it stays after shipping_json is scrubbed.
 CREATE TABLE IF NOT EXISTS `redemptions` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
   `tracking_id` varchar(12) NOT NULL,               -- e.g. 'GD-7K4N9XQ2', unrelated to id
@@ -893,6 +931,14 @@ CREATE TABLE IF NOT EXISTS `redemptions` (
   `points_spent` int(10) UNSIGNED NOT NULL,         -- snapshot of the price at redemption
   `shipping_json` JSON DEFAULT NULL,                -- scrubbed after delivery: PointsModel::scrubShipping()
   `status` enum('Requested','Ordered','Shipped','Delivered','Cancelled') NOT NULL DEFAULT 'Requested',
+  `delivery_method` enum('courier','hand') DEFAULT NULL,   -- courier: courier + AWB; hand: handed over personally (details in handover_note)
+  `courier` varchar(60) DEFAULT NULL,
+  `awb` varchar(80) DEFAULT NULL,                   -- the courier's consignment number; not the GD- tracking ID
+  `tracking_url` varchar(500) DEFAULT NULL,         -- optional link pasted from the courier's site
+  `handover_note` varchar(255) DEFAULT NULL,        -- hand delivery: who, where, when
+  `dispatched_by` varchar(255) DEFAULT NULL,        -- the reviewer
+  `dispatched_at` datetime DEFAULT NULL,            -- UTC, shown in IST
+  `email_sent_at` datetime DEFAULT NULL,            -- NULL = member not emailed yet ("Send email again" is offered)
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
@@ -933,6 +979,55 @@ CREATE TABLE IF NOT EXISTS `ch_session_hosts` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_session_host` (`session_id`,`member_id`),
   CONSTRAINT `fk_ch_host_session` FOREIGN KEY (`session_id`) REFERENCES `ch_sessions` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================
+-- Goodies: members can claim points
+--
+-- A claim is a member's request for points for something DCW does not log
+-- itself (a first edit, mentoring a newcomer, ...). A reviewer approves it,
+-- which creates an ordinary point_awards row with source_ref 'claim-<id>'
+-- (so the second-approval rule, strikes, audit log and the unique keys that
+-- stop double awards apply exactly as for any other award), or rejects it,
+-- or asks for more information. Timestamps are UTC, shown in IST.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS `point_claims` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `tracking_id` varchar(12) NOT NULL,               -- e.g. 'PC-7K4N9XQ2'
+  `member_id` varchar(40) NOT NULL,
+  `activity_type_id` int(11) NOT NULL,
+  `event_date` date NOT NULL,                       -- when the member did it (claims close 90 days after)
+  `evidence_url` varchar(500) DEFAULT NULL,
+  `note` varchar(1000) DEFAULT NULL,                -- the member's own words
+  `status` enum('Submitted','Needs info','Approved','Rejected','Withdrawn') NOT NULL DEFAULT 'Submitted',
+  `decided_by` varchar(255) DEFAULT NULL,
+  `decided_at` datetime DEFAULT NULL,
+  `decision_note` varchar(1000) DEFAULT NULL,       -- the reason, shown to the member
+  `award_id` int(11) DEFAULT NULL,                  -- the award an approval created
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `tracking_id` (`tracking_id`),
+  KEY `idx_claim_member` (`member_id`,`status`),
+  KEY `idx_claim_status` (`status`),
+  KEY `activity_type_id` (`activity_type_id`),
+  KEY `award_id` (`award_id`),
+  CONSTRAINT `fk_point_claims_activity` FOREIGN KEY (`activity_type_id`) REFERENCES `activity_types` (`id`),
+  CONSTRAINT `fk_point_claims_award` FOREIGN KEY (`award_id`) REFERENCES `point_awards` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- The conversation on a claim ("Needs info" and the member's reply).
+CREATE TABLE IF NOT EXISTS `point_claim_messages` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `claim_id` int(11) NOT NULL,
+  `sender` enum('reviewer','member') NOT NULL,
+  `author` varchar(255) DEFAULT NULL,
+  `body` text NOT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_claim` (`claim_id`,`id`),
+  CONSTRAINT `fk_claim_msg_claim` FOREIGN KEY (`claim_id`) REFERENCES `point_claims` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================
@@ -1025,3 +1120,8 @@ INSERT IGNORE INTO `goodies` (`name`,`description`,`points_cost`,`variants_json`
   ('Notebook',     'DCW kraft notebook.', 150, NULL, 0),
   ('Mug',          'DCW mug.',            300, NULL, 0),
   ('T-shirt',      'DCW T-shirt.',        500, JSON_ARRAY('S','M','L','XL','XXL'), 0);
+
+-- A sensible starting set of claimable activities; reviewers can change it
+-- from the Activities and points tab. Safe to re-run.
+UPDATE `activity_types` SET `member_claimable` = 1
+ WHERE `code` IN ('first_edit','mentor_first_edit','mentor_first_article');

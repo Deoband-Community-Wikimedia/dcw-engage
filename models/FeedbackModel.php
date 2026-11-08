@@ -7,6 +7,8 @@
  * `applications`: no tracking ID, no status, no draft, no magic link, no review queue.
  */
 
+require_once __DIR__ . '/FormModel.php';   // FormModel::kindOf(): the one place a form's kind is decided
+
 class FeedbackModel {
     /** Retention used when config has no security.feedback_retention_months. */
     const DEFAULT_RETENTION_MONTHS = 12;
@@ -38,8 +40,15 @@ class FeedbackModel {
      *   schema_json  (raw JSON, e.g. from SELECT * FROM forms)
      * Use this wherever forms are listed as "programs" (home page, member dashboard)
      * so feedback forms are kept out of them.
+     *
+     * A row that has a slug (form_type) is decided by FormModel::kindOf(), so a membership slug always
+     * wins over a stored kind, the same as on the admin dashboard. A row with no slug falls back to the
+     * kind or schema it carries.
      */
     public static function isFeedbackRow(array $row): bool {
+        if (isset($row['form_type'])) {
+            return FormModel::kindOf($row) === 'feedback';
+        }
         if (isset($row['kind']) && $row['kind'] !== '') {
             return $row['kind'] === 'feedback';
         }

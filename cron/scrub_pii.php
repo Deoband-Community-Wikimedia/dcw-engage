@@ -2,17 +2,22 @@
 /**
  * PII Scrubbing Cron Job
  *
- * Two jobs, run in order:
+ * Three jobs, run in order:
  *   1. Scrub personal data from applications that have aged out of the
- *      retention window (Rejected or Accepted, older than 6 months).
+ *      retention window:
+ *        - Rejected or Accepted, older than 6 months;
+ *        - Dispatched (swag), older than 30 days: the delivery address is the most sensitive thing
+ *          a swag form collects and is no longer needed once the parcel is on its way.
  *      Membership applications are skipped: staff look members up through
  *      them for as long as the membership runs (MemberModel::TERM), which is
- *      longer than this window.
+ *      longer than this window. A scrubbed application also loses its courier
+ *      details (application_dispatches), so "Send dispatch email again" is not possible afterwards.
  *   2. Sweep /uploads for orphaned files — anything on disk that no row
  *      references. These are left behind by rejected or errored submissions
  *      and would otherwise never be cleaned up. Applications, reimbursement
  *      receipts and internet support receipts all share /uploads, so all
  *      three count as references.
+ *   3. Goodies: clear delivery details from finished orders.
  *
  * Terminal / cron only.
  */
@@ -62,8 +67,8 @@ try {
         "SELECT a.id, a.form_data, f.form_type
            FROM applications a
            JOIN forms f ON f.id = a.form_id
-          WHERE a.status IN ('Rejected', 'Accepted')
-            AND a.updated_at < NOW() - INTERVAL 6 MONTH
+          WHERE ((a.status IN ('Rejected', 'Accepted') AND a.updated_at < NOW() - INTERVAL 6 MONTH)
+              OR (a.status = 'Dispatched' AND a.updated_at < NOW() - INTERVAL 30 DAY))
             AND a.email NOT LIKE '[REDACTED]%'"
     );
     $applications = $stmt->fetchAll();
@@ -112,6 +117,14 @@ try {
                 'data'  => json_encode($formData),
                 'id'    => $app['id'],
             ]);
+
+            // Courier details of a dispatched swag application go with it. Kept in their own try so a
+            // missing table (migration not run yet) never counts as a failed scrub.
+            try {
+                $db->prepare('DELETE FROM application_dispatches WHERE application_id = ?')->execute([$app['id']]);
+            } catch (Exception $e) {
+                // application_dispatches does not exist yet: nothing to delete.
+            }
 
             // Only now that the row no longer points at them are the files removed.
             foreach ($filesToDelete as $filePath) {

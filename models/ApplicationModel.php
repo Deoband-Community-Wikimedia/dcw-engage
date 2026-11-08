@@ -9,14 +9,35 @@
  * hides the application from the review queue, and can be undone ("Restore" sets it back to New).
  * Applicants never see it: the public tracking lookup reports a discarded application as "Under Review",
  * and the member dashboard does the same (see dash_app_status() in includes/member_requests.php).
+ *
+ * "Dispatched" is for swag forms only: Accepted -> Dispatched, with the delivery details stored in
+ * application_dispatches. It is deliberately NOT in VALID_STATUSES, so updateStatus(), updateStatusBulk() and
+ * updateStatusIfOpen() can never set it; the only way is dispatch(), which needs the delivery details.
+ * A dispatch is either by courier (courier + consignment/AWB number, optional https tracking link) or
+ * HAND-DELIVERED (courier is HAND_DELIVERY, no AWB, no tracking link). Anything that shows dispatch details
+ * should use isHandDelivery() and say "Delivered by hand" instead of printing an empty AWB.
  */
 
 require_once __DIR__ . '/MemberModel.php';
 require_once __DIR__ . '/FormModel.php';   // FormModel::isOpen(): the one open/closed rule (active + deadline)
 
 class ApplicationModel {
-    /** Every status the applications.status column accepts. Keep in sync with the ENUM. */
+    /** Every status updateStatus() and friends may set. 'Dispatched' is NOT here: see dispatch(). Keep in sync with the ENUM. */
     private const VALID_STATUSES = ['Draft', 'New', 'Submitted', 'Under Review', 'Accepted', 'Rejected', 'Discarded'];
+
+    /**
+     * Statuses an applicant can no longer edit (resume page and saveApplication() both use this list).
+     */
+    public const LOCKED_STATUSES = ['Under Review', 'Accepted', 'Rejected', 'Discarded', 'Dispatched'];
+
+    /** Couriers offered when marking a swag application as dispatched. */
+    public const COURIERS = ['India Post', 'DTDC', 'Delhivery', 'Blue Dart', 'Other'];
+
+    /**
+     * Stored in application_dispatches.courier when a swag item was handed over in person.
+     * Such a dispatch has no AWB number (stored as an empty string) and no tracking link (NULL).
+     */
+    public const HAND_DELIVERY = 'Delivered by hand';
 
     /**
      * Applicant-facing status groups for the "My applications" filter (/member/applications).
@@ -28,6 +49,7 @@ class ApplicationModel {
         'submitted' => ['Submitted',    ['New', 'Submitted']],
         'review'    => ['Under review', ['Under Review', 'Discarded']],
         'accepted'  => ['Accepted',     ['Accepted']],
+        'dispatched'=> ['Dispatched',   ['Dispatched']],
         'rejected'  => ['Not accepted', ['Rejected']],
     ];
 
@@ -136,9 +158,9 @@ class ApplicationModel {
             $stmt->execute(['id' => $appId]);
             $currentStatus = $stmt->fetchColumn();
 
-            // Discarded is locked too: an applicant must not be able to edit a discarded
-            // application and quietly bring it back into the review queue.
-            if (in_array($currentStatus, ['Under Review', 'Accepted', 'Rejected', 'Discarded'])) {
+            // Discarded and Dispatched are locked too: an applicant must not be able to edit a discarded
+            // application and quietly bring it back into the review queue, or overwrite a dispatched one.
+            if (in_array($currentStatus, self::LOCKED_STATUSES, true)) {
                 throw new Exception("This application is locked and cannot be edited.");
             }
 
@@ -402,6 +424,20 @@ class ApplicationModel {
     }
 
     /**
+     * Accepted applications, counted per form: [form_id => count]. For swag forms these are the ones
+     * still waiting to be dispatched (a dispatched application is no longer Accepted).
+     */
+    public function countAcceptedByForm() {
+        $rows = $this->db->query("
+            SELECT form_id, COUNT(*) AS n
+            FROM applications
+            WHERE status = 'Accepted'
+            GROUP BY form_id
+        ")->fetchAll();
+        return array_column($rows, 'n', 'form_id');
+    }
+
+    /**
      * Get a single application by ID
      */
     public function getApplicationById($id) {
@@ -466,6 +502,84 @@ class ApplicationModel {
                 'form_id' => $formId
             ]);
         }
+    }
+
+    // ---------------------------------------------------------------------
+    // Swag: Accepted -> Dispatched
+    // ---------------------------------------------------------------------
+
+    /**
+     * True when a dispatch row (from dispatchFor()) records a hand delivery: no courier, no AWB number.
+     * Use this wherever dispatch details are shown or emailed, so an empty AWB is never printed.
+     */
+    public static function isHandDelivery(?array $dispatch): bool {
+        return $dispatch !== null && (string) ($dispatch['courier'] ?? '') === self::HAND_DELIVERY;
+    }
+
+    /**
+     * Accepted -> Dispatched, with the delivery details, in ONE transaction. Returns false (and changes
+     * nothing) when the application is not Accepted any more, e.g. a double click. Throws
+     * InvalidArgumentException, with a message safe to show, for bad details.
+     * The caller has already checked that the form is a swag form.
+     *
+     * Two ways to dispatch:
+     *   - By courier: $courier must be one of COURIERS, $awb is required, $url is optional (https only).
+     *   - By hand: pass $courier = HAND_DELIVERY. No AWB or link is needed; whatever is passed for them
+     *     is ignored (stored as '' and NULL).
+     */
+    public function dispatch(int $id, int $formId, string $courier, string $awb, string $url, string $by): bool {
+        $courier = trim($courier);
+        $awb = trim($awb);
+        $url = trim($url);
+
+        if ($courier === self::HAND_DELIVERY) {
+            $awb = '';
+            $url = '';
+        } else {
+            if (!in_array($courier, self::COURIERS, true)) {
+                throw new InvalidArgumentException('Choose a courier, or "Delivered by hand".');
+            }
+            if (!preg_match('/^[A-Za-z0-9\-\/ ]{3,80}$/', $awb)) {
+                throw new InvalidArgumentException('Enter the consignment (AWB) number: letters, digits, spaces and dashes, 3 to 80 characters.');
+            }
+            if ($url !== '' && (strlen($url) > 500 || !preg_match('#^https://\S+$#i', $url) || !filter_var($url, FILTER_VALIDATE_URL))) {
+                throw new InvalidArgumentException('The tracking link must start with https://.');
+            }
+        }
+
+        $this->db->beginTransaction();
+        try {
+            $st = $this->db->prepare("UPDATE applications SET status = 'Dispatched' WHERE id = :id AND form_id = :f AND status = 'Accepted'");
+            $st->execute(['id' => $id, 'f' => $formId]);
+            if ($st->rowCount() !== 1) {
+                $this->db->rollBack();
+                return false;
+            }
+            $this->db->prepare('INSERT INTO application_dispatches (application_id, courier, awb, tracking_url, dispatched_by, dispatched_at)
+                                VALUES (:a, :c, :w, :u, :b, UTC_TIMESTAMP())')
+                ->execute(['a' => $id, 'c' => $courier, 'w' => $awb, 'u' => $url !== '' ? $url : null, 'b' => $by]);
+            $this->db->commit();
+            return true;
+        } catch (Throwable $e) {
+            if ($this->db->inTransaction()) $this->db->rollBack();
+            throw $e;
+        }
+    }
+
+    /** The dispatch details of an application, or null. */
+    public function dispatchFor(int $id): ?array {
+        $st = $this->db->prepare('SELECT * FROM application_dispatches WHERE application_id = :id');
+        $st->execute(['id' => $id]);
+        return $st->fetch() ?: null;
+    }
+
+    /** Record whether the dispatch email went out (a failure never undoes the dispatch). */
+    public function markDispatchEmail(int $id, bool $sent): void {
+        $this->db->prepare('UPDATE application_dispatches
+                               SET email_sent_at = IF(:s = 1, UTC_TIMESTAMP(), email_sent_at),
+                                   email_failed = IF(:s2 = 1, 0, 1)
+                             WHERE application_id = :id')
+            ->execute(['s' => $sent ? 1 : 0, 's2' => $sent ? 1 : 0, 'id' => $id]);
     }
 
     /**

@@ -12,6 +12,10 @@ require_once __DIR__ . '/../../models/FormModel.php';
 Auth::requireLogin();
 requireRole(['owner', 'organizer', 'membership_coordinator']);
 
+// Form types the builder can create. Membership is not one of them: it comes from the URL slug.
+// 'application' stores no "kind" key; every other type is stored as the schema's "kind".
+const BUILDER_KINDS = ['application', 'scholarship', 'swag', 'feedback'];
+
 $formModel = new FormModel();
 
 $success = '';
@@ -22,7 +26,8 @@ $existingFormType = '';
 $existingNotifyEmails = '';
 $existingDeadlineInput = '';   // the saved deadline, in IST, in datetime-local format
 $existingUnlisted = false;     // "link only": live, but not listed on the home page
-$existingKind = 'application'; // 'application' or 'feedback'; fixed once the form exists
+// New form: ?kind=feedback (or scholarship, swag) preselects the type. Fixed once the form exists.
+$existingKind = in_array($_GET['kind'] ?? '', BUILDER_KINDS, true) ? (string) $_GET['kind'] : 'application';
 if (isset($_GET['edit'])) {
     $form = $formModel->getFormById($_GET['edit']);
     // Same response for "missing" and "not yours to open", so nobody can tell
@@ -37,7 +42,8 @@ if (isset($_GET['edit'])) {
     $existingNotifyEmails = $form['notify_emails'] ?? '';
     $existingDeadlineInput = FormModel::utcToIstInput($form['deadline_at'] ?? null);
     $existingUnlisted = !empty($form['schema']['unlisted']);
-    $existingKind = (($form['schema']['kind'] ?? '') === 'feedback') ? 'feedback' : 'application';
+    $k = FormModel::kindOf($form);
+    $existingKind = $k === 'membership' ? 'application' : $k;   // membership is never stored as a kind
 }
 
 // What the deadline box shows: what was just posted (so a failed save does not lose it), else the saved value.
@@ -79,13 +85,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             die("Form not found.");
         }
         $savedDeadlineInput = FormModel::utcToIstInput($target['deadline_at'] ?? null);
-        $savedKind = (($target['schema']['kind'] ?? '') === 'feedback') ? 'feedback' : 'application';
+        $k = FormModel::kindOf($target);
+        $savedKind = $k === 'membership' ? 'application' : $k;
     }
 
     // Form type: an existing form keeps the type it was created with (its responses live in a table
-    // that depends on it); only a new form takes the type from the select. The select is disabled
-    // when editing, so it is not even posted then.
-    $kind = $savedKind ?? ((($_POST['form_kind'] ?? '') === 'feedback') ? 'feedback' : 'application');
+    // that depends on it, and its review tools depend on it); only a new form takes the type from the
+    // select. The select is disabled when editing, so it is not even posted then.
+    $postedKind = (string) ($_POST['form_kind'] ?? '');
+    $kind = $savedKind ?? (in_array($postedKind, BUILDER_KINDS, true) ? $postedKind : 'application');
     $kindValue = $kind;
 
     // Normalise the comma-separated recipients and validate each one.
@@ -127,6 +135,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // into a membership slug (or a coordinator into another chapter's), or
         // create one, and bypass the rule above.
         $error = htmlspecialchars(FormModel::editDeniedMessage($formType));
+    } elseif (FormModel::slugConflictsWithKind($formType, $kind)) {
+        // A membership slug makes the form a membership form (FormModel::kindOf), so it cannot also be a
+        // scholarship, swag or feedback form: other pages read the schema's kind and would disagree.
+        $error = "Membership forms (URL slugs starting with membership-) must use the Application type.";
     } elseif ($badEmail !== null) {
         $error = "Notification email '" . htmlspecialchars($badEmail) . "' is not a valid address.";
     } elseif ($deadlineError !== null) {
@@ -151,12 +163,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 unset($decodedSchema['unlisted']);
             }
 
-            // Same for the form type: "kind": "feedback" is written here, not by builder.js.
+            // Same for the form type: "kind" is written here, not by builder.js.
             // Applications carry no "kind" key at all, so every existing form stays an application.
-            if ($kind === 'feedback') {
-                $decodedSchema['kind'] = 'feedback';
-            } else {
+            if ($kind === 'application') {
                 unset($decodedSchema['kind']);
+            } else {
+                $decodedSchema['kind'] = $kind;
             }
             // Preserve the legacy flat field list for review pages and filters that still read schema['fields'];
             // sections remains available for layout and display order.
@@ -244,6 +256,8 @@ engage_header([
                 <?php /* Disabled when editing: a disabled select is not posted, and the server keeps the saved type anyway. */ ?>
                 <select name="form_kind" id="form_kind" <?= isset($_GET['edit']) ? 'disabled' : '' ?> style="margin-bottom: 0;">
                     <option value="application" <?= $kindValue === 'application' ? 'selected' : '' ?>>Application (tracked, drafts, review queue)</option>
+                    <option value="scholarship" <?= $kindValue === 'scholarship' ? 'selected' : '' ?>>Scholarship / fellowship (letters, award confirmation)</option>
+                    <option value="swag" <?= $kindValue === 'swag' ? 'selected' : '' ?>>Swag (tracked, can be marked dispatched)</option>
                     <option value="feedback" <?= $kindValue === 'feedback' ? 'selected' : '' ?>>Feedback (receipt email only, no tracking)</option>
                 </select>
                 <span class="hint">
@@ -337,7 +351,7 @@ engage_header([
                 try {
                     var s = JSON.parse(out.value);
                     if (!s || typeof s !== 'object') return;
-                    if (kindSel.value === 'feedback') { s.kind = 'feedback'; } else { delete s.kind; }
+                    if (kindSel.value !== 'application') { s.kind = kindSel.value; } else { delete s.kind; }
                     if (unl && unl.checked) { s.unlisted = true; } else { delete s.unlisted; }
                     out.value = JSON.stringify(s);
                 } catch (e) { /* leave the value as builder.js set it */ }

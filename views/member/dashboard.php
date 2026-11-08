@@ -15,9 +15,12 @@ require_once __DIR__ . '/../../models/TechIssueModel.php';
 require_once __DIR__ . '/../../models/MemberCertificateModel.php';
 require_once __DIR__ . '/../../models/MemberProfileModel.php';
 require_once __DIR__ . '/../../models/PointsModel.php';
+require_once __DIR__ . '/../../models/MemberStrikeModel.php';
+require_once __DIR__ . '/../../models/PointClaimModel.php';
 require_once __DIR__ . '/../../includes/member_session.php';
 require_once __DIR__ . '/../../includes/member_requests.php';
 require_once __DIR__ . '/../../includes/cert_rows.php';
+require_once __DIR__ . '/../../includes/points_ui.php';
 
 /**
  * DCW Engage - member dashboard (/member/dashboard).
@@ -31,8 +34,10 @@ require_once __DIR__ . '/../../includes/cert_rows.php';
  * Certificates: only the latest few are shown here. The full list, with search and paging,
  * is /member/certificates.
  *
- * Goodies: the points balance is a chip in the quick links, and a tile in "More from DCW", both
- * linking to /member/goodies. They only appear once the goodies tables exist.
+ * Goodies: a card under "Requires your attention" shows the points balance, the next goal, the last three
+ * events and any order on its way, with buttons to redeem and to open the full history
+ * (/member/goodies, /member/goodies?view=history). The points chip in the quick links jumps to the card.
+ * The card only appears once the goodies tables exist.
  *
  * Link-only forms (schema "unlisted": true) are never listed. Feedback forms (schema "kind": "feedback")
  * are not applications, so they are kept out of "More from DCW" and get their own "Share your feedback"
@@ -57,7 +62,8 @@ require_once __DIR__ . '/../../includes/cert_rows.php';
  * It is rendered "bare" (top bar only); the greeting lives in the identity card below.
  *
  * Shared look comes from /assets/css/engage.css. Certificate rows, buttons and icons come from
- * includes/cert_rows.php. The <style> block below only adds what the dashboard needs, scoped under .dash.
+ * includes/cert_rows.php. Points titles and dates come from includes/points_ui.php. The <style> block
+ * below only adds what the dashboard needs, scoped under .dash.
  */
 MemberSession::requireLogin();
 $member = MemberSession::current();
@@ -156,6 +162,27 @@ $wmOk   = $wmName !== '' && !empty($dashProfile['username_verified_at']);
 // ---- Goodies points balance (null until the goodies tables exist, so nothing shows before then) ----
 $pointsBalance = null;
 try { $pointsBalance = (new PointsModel())->balance((string) $member['member_id']); } catch (Throwable $e) { app_log_ignored('dashboard.php:points', $e); /* tables not created yet */ }
+
+// ---- Goodies card: goal, recent activity, waiting awards, orders on their way (null = hide the card) ----
+$gd = null;
+if ($pointsBalance !== null) {
+    try {
+        $pm  = new PointsModel();
+        $mid = (string) $member['member_id'];
+        $gdCan = true;
+        try { if ((new MemberStrikeModel())->isStruck($mid)) $gdCan = false; } catch (Throwable $e) { app_log_ignored('dashboard.php:gd-strike', $e); }
+        $gd = [
+            'goal'    => PointsModel::nextGoal($pm->goodies(true), $pointsBalance, $gdCan),
+            'recent'  => array_slice($pm->ledgerDetailed($mid, 50), 0, 3),
+            'pending' => $pm->pendingForMember($mid),
+            'orders'  => PointsModel::ordersInProgress($pm->redemptionsForMember($mid)),
+        ];
+        $gd['pendingSum'] = (int) array_sum(array_column($gd['pending'], 'points'));
+        // Claims: null when the claim tables are not there yet (the button and alert are then left out).
+        $gd['claims'] = null;
+        try { $gd['claims'] = (new PointClaimModel())->forMember($mid); } catch (Throwable $e) { app_log_ignored('dashboard.php:gd-claims', $e); }
+    } catch (Throwable $e) { app_log_ignored('dashboard.php:gd', $e); /* card stays hidden */ }
+}
 
 // ---- What is open (each guarded so the page never breaks) -------------------------------------
 try { $internetOpen = (new InternetSupportModel())->isOpen(); } catch (Throwable $e) { $internetOpen = false; }
@@ -285,6 +312,13 @@ foreach ($techWaiting as $t) {
     $alerts[] = ['who' => 'Technical team', 'text' => 'New reply on “' . $t['title'] . '”',
                  'href' => '/member/report-problem?id=' . rawurlencode($t['tracking_id']), 'cta' => 'Read reply'];
 }
+// A reviewer replied on a points claim: the member has to answer.
+foreach (($gd['claims'] ?? []) as $gc) {
+    if ($gc['status'] === 'Needs info') {
+        $alerts[] = ['who' => 'Goodies', 'text' => 'A reviewer needs more information on your claim for ' . $gc['activity_name'],
+                     'href' => '/member/goodies?claim=' . rawurlencode((string) $gc['tracking_id']), 'cta' => 'Reply'];
+    }
+}
 // Internet support needs a verified Wikimedia username: nudge only when it is open and the member is active.
 if ($memberActive && $internetOpen) {
     $profileState = '';
@@ -378,6 +412,29 @@ cert_rows_css();   // icons, buttons and certificate rows shared with /member/ce
     .d-chip b { color: var(--tone); font-size: 15px; font-weight: 700; }
     .d-chip:hover { border-color: var(--tone); background: color-mix(in srgb, var(--tone) 6%, #fff); }
 
+    /* Goodies card: balance, the next goal, the last three events */
+    .d-gd { position: relative; overflow: hidden; display: grid; gap: 20px 32px; margin: 0 0 30px; padding: 24px 22px 20px; background: var(--card); border: 1px solid var(--border); border-radius: 16px; box-shadow: 0 6px 18px rgba(15,23,42,.06); }
+    .d-gd::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 5px; background: linear-gradient(90deg, var(--accent) 0 40%, var(--primary) 40% 70%, var(--leaf) 70% 100%); }
+    @media (min-width: 900px) { .d-gd { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+    .d-gd-k { margin: 0; font-size: 12.5px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+    .d-gd-big { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin: 2px 0 0; }
+    .d-gd-big b { font-size: 46px; line-height: 1.1; font-weight: 800; letter-spacing: -.02em; color: var(--primary-dark); font-variant-numeric: tabular-nums; }
+    .d-gd-big span { font-size: 16px; font-weight: 600; color: var(--muted); }
+    .d-gd-big em { align-self: center; padding: 2px 11px; border-radius: 999px; background: #fffbeb; border: 1px solid #fcd34d; color: #92400e; font-size: 13px; font-style: normal; font-weight: 700; }
+    .d-gd-goal { margin: 12px 0 0; font-size: 14.5px; }
+    .d-gd-bar { height: 9px; margin: 6px 0 0; border-radius: 999px; background: #e8edf2; overflow: hidden; }
+    .d-gd-bar i { display: block; height: 100%; border-radius: 999px; background: var(--leaf); }
+    .d-gd-acts { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0 0; }
+    .d-gd-side h3 { margin: 0 0 4px; font-size: 14px; font-weight: 800; }
+    .d-gd-side ul { list-style: none; margin: 0; padding: 0; }
+    .d-gd-side li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; padding: 8px 0; border-top: 1px solid var(--border); font-size: 14px; }
+    .d-gd-side li:first-child { border-top: 0; }
+    .d-gd-side li small { grid-column: 1; color: var(--muted); font-size: 12.5px; }
+    .d-gd-side li strong { grid-row: 1 / span 2; grid-column: 2; align-self: center; font-variant-numeric: tabular-nums; }
+    .d-gd-side li.earn strong { color: var(--leaf-dark); }
+    .d-gd-side li.spend strong { color: var(--accent); }
+    .d-gd-ord { margin: 12px 0 0; padding: 8px 12px; border-radius: 10px; background: var(--primary-tint); color: var(--primary-dark); font-size: 13.5px; font-weight: 600; }
+
     /* Requires your attention (same amber family as .action-banner) */
     .d-attn { margin: 0 0 30px; background: #fffbeb; border: 1px solid #fcd34d; border-radius: 14px; overflow: hidden; }
     .d-attn-head { display: flex; align-items: center; gap: 10px; padding: 13px 18px; font-weight: 800; color: #78350f; }
@@ -446,7 +503,7 @@ cert_rows_css();   // icons, buttons and certificate rows shared with /member/ce
             <a class="d-chip" style="--tone: var(--primary);" href="/member/applications"><?= dash_svg($icons, 'doc') ?><b><?= (int) $totalApplications ?></b> application<?= $totalApplications === 1 ? '' : 's' ?></a>
             <a class="d-chip" style="--tone: var(--primary);" href="#requests"><?= dash_svg($icons, 'card') ?><b><?= (int) $totalRequests ?></b> request<?= $totalRequests === 1 ? '' : 's' ?></a>
             <?php if ($pointsBalance !== null): ?>
-                <a class="d-chip" style="--tone: var(--accent);" href="/member/goodies"><?= dash_svg($icons, 'star') ?><b><?= number_format($pointsBalance) ?></b> point<?= $pointsBalance === 1 ? '' : 's' ?></a>
+                <a class="d-chip" style="--tone: var(--accent);" href="<?= $gd !== null ? '#goodies' : '/member/goodies' ?>"><?= dash_svg($icons, 'star') ?><b><?= number_format($pointsBalance) ?></b> point<?= $pointsBalance === 1 ? '' : 's' ?></a>
             <?php endif; ?>
             <a class="d-chip" style="--tone: <?= $wmName === '' ? 'var(--muted)' : ($wmOk ? 'var(--leaf-dark)' : '#b45309') ?>;" href="/member/profile#wikimedia"><?= dash_svg($icons, 'user') ?><?php if ($wmName === ''): ?>Add Wikimedia username<?php else: ?><b><?= htmlspecialchars($wmName) ?></b> <?= $wmOk ? 'Verified' : 'Not verified' ?><?php endif; ?></a>
             <a class="d-chip" style="--tone: var(--accent);" href="#conversations"><?= dash_svg($icons, 'chat') ?><b><?= count($tickets) ?></b> conversation<?= count($tickets) === 1 ? '' : 's' ?></a>
@@ -484,6 +541,49 @@ cert_rows_css();   // icons, buttons and certificate rows shared with /member/ce
                 </div>
             <?php endforeach; ?>
         </section>
+    <?php endif; ?>
+
+    <!-- Goodies: balance, next goal, latest activity -->
+    <?php if ($gd !== null): $gdNext = $gd['goal']['next']; $gdAff = (int) $gd['goal']['affordable']; ?>
+    <section class="d-gd" id="goodies" aria-label="My goodies">
+        <div>
+            <p class="d-gd-k">My goodies</p>
+            <div class="d-gd-big"><b><?= number_format($pointsBalance) ?></b><span>points</span>
+                <?php if ($gd['pendingSum'] > 0): ?><em>+<?= number_format($gd['pendingSum']) ?> waiting for approval</em><?php endif; ?></div>
+            <?php if ($gdNext): $gdCost = (int) $gdNext['points_cost']; $gdPct = max(3, min(100, (int) floor($pointsBalance / $gdCost * 100))); ?>
+                <p class="d-gd-goal"><strong><?= number_format($gdCost - $pointsBalance) ?> more points</strong> to get <?= htmlspecialchars((string) $gdNext['name']) ?></p>
+                <div class="d-gd-bar" role="progressbar" aria-valuemin="0" aria-valuemax="<?= $gdCost ?>" aria-valuenow="<?= max(0, $pointsBalance) ?>"><i style="width:<?= $gdPct ?>%"></i></div>
+            <?php elseif ($gdAff > 0): ?>
+                <p class="d-gd-goal">You have enough points for every goody on offer.</p>
+            <?php endif; ?>
+            <div class="d-gd-acts">
+                <a class="d-btn fill" href="/member/goodies#catalogue"><?= $gdAff > 0 ? 'Redeem (' . $gdAff . ' available)' : 'See goodies' ?></a>
+                <?php if ($gd['claims'] !== null): $gdOpen = count(array_filter($gd['claims'], fn($c) => in_array($c['status'], PointClaimModel::OPEN, true))); ?>
+                    <a class="d-btn line" href="/member/goodies?view=claim">Claim points<?= $gdOpen ? ' (' . $gdOpen . ' open)' : '' ?></a>
+                <?php endif; ?>
+                <a class="d-btn line" href="/member/goodies?view=history">Points history</a>
+            </div>
+        </div>
+        <div class="d-gd-side">
+            <h3>Recent activity</h3>
+            <?php if (empty($gd['recent'])): ?>
+                <p class="d-more" style="text-align:left;margin:0">No points yet. They are awarded for attending sessions, mentoring and contributing.</p>
+            <?php else: ?>
+                <ul>
+                    <?php foreach ($gd['recent'] as $gr): $gv = points_entry_view($gr); ?>
+                        <li class="<?= $gv['kind'] ?>">
+                            <span><?= points_h($gv['title']) ?></span>
+                            <small><?= points_h($gv['sub'] !== '' ? $gv['sub'] . ' · ' : '') ?><?= points_h(points_date((string) $gr['created_at'], 'j M')) ?></small>
+                            <strong><?= $gv['points'] >= 0 ? '+' : '−' ?><?= number_format(abs($gv['points'])) ?></strong>
+                        </li>
+                    <?php endforeach; ?>
+                </ul>
+            <?php endif; ?>
+            <?php foreach ($gd['orders'] as $go): ?>
+                <p class="d-gd-ord"><?= points_h($go['status'] === 'Shipped' ? 'Shipped' : 'Order placed') ?>: <?= points_h($go['goody_name']) ?> &middot; <a href="/member/goodies#orders"><?= points_h($go['tracking_id']) ?></a></p>
+            <?php endforeach; ?>
+        </div>
+    </section>
     <?php endif; ?>
 
     <!-- My certificates: the latest few. Everything else is on /member/certificates -->
@@ -674,9 +774,6 @@ cert_rows_css();   // icons, buttons and certificate rows shared with /member/ce
             <?php
             dash_tile($icons, '#106b9a', 'search', 'Track an application', 'Check the status of a public application (ID begins with DCW-).', '/track');
             dash_tile($icons, '#97161b', 'people', $memberActive ? 'Membership' : 'Renew membership', 'Join a club or renew your membership.', '/membership');
-            if ($pointsBalance !== null) {
-                dash_tile($icons, '#106b9a', 'star', 'My goodies', 'Redeem the points you have earned for contributing to DCW.', '/member/goodies');
-            }
             foreach ($programs as $p) {
                 $title = $p['title'] ?: ucwords(str_replace(['-', '_'], ' ', $p['form_type']));
                 $desc = !empty($p['description']) ? MiniWikiText::stripToPlainText($p['description']) : 'Currently open for applications.';
