@@ -14,17 +14,19 @@ require_once __DIR__ . '/../models/EventCardModel.php';
  * the only difference is what the image sources are: "var:name" for mPDF, data: URIs for the browser.
  *
  *   FRONT   0-8 mm        jali band (lanyard slot at the top)
- *           13-39         logos: event logo left + DCW logo right, or DCW alone, centred
- *           41            rule in the three DCW colours
- *           44-62         event name (bold) and edition
- *           64-102        the person's name, large; affiliation under it when there is one
- *           106-123       role band, full width of the panel
- *           126-134       "Knowledge is Human."
+ *           12-38         logos: event logo left + DCW logo right, or DCW alone, centred
+ *           40            rule in the three DCW colours
+ *           42-58         event name (bold) and edition
+ *           60-88         the person's name, large; affiliation under it (89-100) when there is one
+ *           103-118       role band, full width of the panel
+ *           120-134       theme line (some events) and "Knowledge is Human."
  *           136           rule
- *   BACK    same frame, event name, QR code, "Scan to verify", name + role, tagline, rule
+ *   BACK    13-29 event name, 31 rule, 34-84 QR code, 85-92 "Scan to verify", 93-106 name,
+ *           108-118 role band, 120-134 theme line and tagline, 136 rule
  *
  * $c = [
  *   'name', 'role', 'role_color', 'affiliation' (already resolved, may be ''), 'event_name', 'edition',
+ *   'theme'      => the event's theme line ('' for none),
  *   'frame'      => 'var:jaliXXXXXX' or data URI, '' for a plain coloured border,
  *   'event_logo' => 'var:evlogo' or data URI or '', 'event_logo_ratio' => w/h (0 = unknown),
  *   'dcw_logo'   => same,                          'dcw_logo_ratio'   => w/h,
@@ -66,6 +68,19 @@ function event_card_affiliation(string $role, string $typed): string
     if ($typed !== '') return $typed;
     $dcwRoles = ['organiser', 'organisers', 'organizer', 'organizers', 'volunteer', 'volunteers'];
     return in_array(mb_strtolower(trim($role), 'UTF-8'), $dcwRoles, true) ? EventCardModel::DEFAULT_AFFILIATION : '';
+}
+
+/** The event's theme line, printed above "Knowledge is Human." Empty for events without one. */
+function event_card_theme(string $eventName): string
+{
+    return stripos($eventName, 'Train-a-Wikipedian') !== false ? 'Identify, Learn, Think, Mentor' : '';
+}
+
+/** Font size in points for the affiliation line: as large as fits on one line, 14pt at most. */
+function event_card_aff_pt(string $aff): float
+{
+    $n = max(1, mb_strlen(trim($aff), 'UTF-8'));
+    return (float) max(9, min(14, floor(400 / $n)));
 }
 
 /** Font size in points for the person's name. Long names step down and wrap to two lines inside the box. */
@@ -143,12 +158,16 @@ function event_card_guides(array $c): string
         'border: 0.3mm dashed #ffffff; border-radius: 1.5mm; background-color: rgba(15, 23, 42, 0.35); font-size: 1pt; line-height: 1pt;');
 }
 
-/** "Knowledge is Human." between two eight-pointed stars, echoing the jali. */
-function event_card_tagline(array $t, float $top, float $left, float $w): string
+/** Optional theme line, then "Knowledge is Human." Fills a 14 mm block starting at $top. */
+function event_card_tagline(array $t, float $top, float $left, float $w, string $theme = ''): string
 {
-    $star = '<span style="color: ' . ($t['stripe'][1] ?? $t['accent']) . '; font-size: 8pt;">&#10036;</span>';
-    $html = '<div class="tag">' . $star . '&nbsp;&nbsp;' . htmlspecialchars(EVENT_CARD_TAGLINE, ENT_QUOTES, 'UTF-8') . '&nbsp;&nbsp;' . $star . '</div>';
-    return event_card_box($left, $top, $w, 8, event_card_middle($html, 8));
+    $tag = '<div class="tag">' . htmlspecialchars(EVENT_CARD_TAGLINE, ENT_QUOTES, 'UTF-8') . '</div>';
+    if ($theme === '') {
+        return event_card_box($left, $top, $w, 14, event_card_middle($tag, 14));
+    }
+    $th = '<div class="theme">' . htmlspecialchars($theme, ENT_QUOTES, 'UTF-8') . '</div>';
+    return event_card_box($left, $top, $w, 7, event_card_middle($th, 7))
+         . event_card_box($left, $top + 7, $w, 7, event_card_middle($tag, 7));
 }
 
 /** The shared <style> block. */
@@ -159,10 +178,11 @@ function event_card_css(array $t): string
         .ev   { font-size: 16pt; font-weight: bold; color: ' . $t['ink'] . '; line-height: 1.25; text-align: center; }
         .ed   { font-size: 8.5pt; font-weight: bold; color: ' . $t['accent'] . '; text-transform: uppercase; letter-spacing: 0.6mm; text-align: center; }
         .nm   { font-weight: bold; color: ' . $t['ink'] . '; line-height: 1.2; }
-        .aff  { font-size: 10.5pt; color: #334155; text-align: center; line-height: 1.3; }
+        .aff  { color: #334155; text-align: center; line-height: 1.3; }
         .band { font-weight: bold; text-transform: uppercase; }
-        .tag  { font-size: 10pt; font-weight: bold; color: ' . $t['ink'] . '; letter-spacing: 0.3mm; text-align: center; }
-        .scan { font-size: 9pt; font-weight: bold; color: ' . $t['accent'] . '; text-align: center; }
+        .theme { font-size: 10.5pt; font-weight: bold; color: ' . $t['ink'] . '; letter-spacing: 0.3mm; text-align: center; }
+        .tag  { font-size: 9pt; font-weight: bold; color: ' . $t['accent'] . '; letter-spacing: 0.3mm; text-align: center; }
+        .scan { font-size: 12pt; font-weight: bold; color: ' . $t['accent'] . '; text-align: center; }
     </style>';
 }
 
@@ -195,28 +215,30 @@ function event_card_front_html(array $c): string
     $roleColor = '#' . event_card_hex((string) ($c['role_color'] ?? ''));
     $aff       = trim((string) ($c['affiliation'] ?? ''));
     $edition   = trim((string) ($c['edition'] ?? ''));
+    $theme     = (string) ($c['theme'] ?? '');
 
     $out  = event_card_css($t);
     $out .= event_card_frame($c, $roleColor);
-    $out .= event_card_logos($c, 13);
-    $out .= event_card_rule($M, 41, $in, $t['stripe']);
+    $out .= event_card_logos($c, 12);
+    $out .= event_card_rule($M, 40, $in, $t['stripe']);
 
     $evHtml = '<div class="ev">' . $h($c['event_name'] ?? '') . '</div>'
             . ($edition !== '' ? '<div style="height: 1.4mm; font-size: 1pt; line-height: 1pt;">&nbsp;</div><div class="ed">' . $h($edition) . '</div>' : '');
-    $out .= event_card_box($M, 44, $in, 18, event_card_middle($evHtml, 18));
+    $out .= event_card_box($M, 42, $in, 16, event_card_middle($evHtml, 16));
 
     $nameHtml = '<div class="nm" style="font-size: ' . event_card_name_pt($name) . 'pt;">' . $h($name) . '</div>';
     if ($aff !== '') {
-        $out .= event_card_box($M, 64, $in, 28, event_card_middle($nameHtml, 28));
-        $out .= event_card_box($M, 93, $in, 9, event_card_middle('<div class="aff">' . $h($aff) . '</div>', 9));
+        $out .= event_card_box($M, 60, $in, 28, event_card_middle($nameHtml, 28));
+        $out .= event_card_box($M, 89, $in, 11, event_card_middle(
+            '<div class="aff" style="font-size: ' . event_card_aff_pt($aff) . 'pt;">' . $h($aff) . '</div>', 11));
     } else {
-        $out .= event_card_box($M, 64, $in, 38, event_card_middle($nameHtml, 38));
+        $out .= event_card_box($M, 60, $in, 41, event_card_middle($nameHtml, 41));
     }
 
     $band = '<div class="band" style="font-size: ' . ($pt = event_card_role_pt($role, 18, $in)) . 'pt; letter-spacing: ' . round($pt * 0.065, 2) . 'mm; color: ' . event_card_on($roleColor) . ';">' . $h($role) . '</div>';
-    $out .= event_card_box($M, 106, $in, 17, event_card_middle($band, 17, 'background-color: ' . $roleColor . ';'));
+    $out .= event_card_box($M, 103, $in, 15, event_card_middle($band, 15, 'background-color: ' . $roleColor . ';'));
 
-    $out .= event_card_tagline($t, 126, $M, $in);
+    $out .= event_card_tagline($t, 120, $M, $in, $theme);
     $out .= event_card_rule($M, 136, $in, $t['stripe']);
     $out .= event_card_guides($c);
 
@@ -235,6 +257,7 @@ function event_card_back_html(array $c): string
     $role      = trim((string) ($c['role'] ?? ''));
     $roleColor = '#' . event_card_hex((string) ($c['role_color'] ?? ''));
     $edition   = trim((string) ($c['edition'] ?? ''));
+    $theme     = (string) ($c['theme'] ?? '');
 
     $out  = event_card_css($t);
     $out .= event_card_frame($c, $roleColor);
@@ -244,18 +267,18 @@ function event_card_back_html(array $c): string
     $out .= event_card_box($M, 13, $in, 16, event_card_middle($ev, 16));
     $out .= event_card_rule($M, 31, $in, $t['stripe']);
 
-    $qrSize = 44;
-    $out .= event_card_box(($W - $qrSize) / 2, 35, $qrSize, $qrSize,
+    $qrSize = 50;
+    $out .= event_card_box(($W - $qrSize) / 2, 34, $qrSize, $qrSize,
         '<img src="' . $h($c['qr'] ?? '') . '" style="width: ' . $qrSize . 'mm; height: ' . $qrSize . 'mm;" />');
-    $out .= event_card_box($M, 80, $in, 7, event_card_middle('<div class="scan">Scan to verify</div>', 7));
+    $out .= event_card_box($M, 85, $in, 7, event_card_middle('<div class="scan">Scan to verify</div>', 7));
 
     $pt   = max(10.0, min(16.0, round(event_card_name_pt($name) * 0.62)));
-    $out .= event_card_box($M, 89, $in, 17, event_card_middle('<div class="nm" style="font-size: ' . $pt . 'pt;">' . $h($name) . '</div>', 17));
+    $out .= event_card_box($M, 93, $in, 13, event_card_middle('<div class="nm" style="font-size: ' . $pt . 'pt;">' . $h($name) . '</div>', 13));
 
     $band = '<div class="band" style="font-size: ' . ($bp = event_card_role_pt($role, 11, $in)) . 'pt; letter-spacing: ' . round($bp * 0.065, 2) . 'mm; color: ' . event_card_on($roleColor) . ';">' . $h($role) . '</div>';
-    $out .= event_card_box($M, 108, $in, 11, event_card_middle($band, 11, 'background-color: ' . $roleColor . ';'));
+    $out .= event_card_box($M, 108, $in, 10, event_card_middle($band, 10, 'background-color: ' . $roleColor . ';'));
 
-    $out .= event_card_tagline($t, 123, $M, $in);
+    $out .= event_card_tagline($t, 120, $M, $in, $theme);
     $out .= event_card_rule($M, 136, $in, $t['stripe']);
     $out .= event_card_guides($c);
 

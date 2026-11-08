@@ -85,6 +85,7 @@ function event_card_fields(array $event, array $p): array
         'affiliation' => event_card_affiliation($role, (string) ($p['affiliation'] ?? '')),
         'event_name'  => (string) $event['name'],
         'edition'     => (string) $event['edition'],
+        'theme'       => event_card_theme((string) $event['name']),
     ];
 }
 
