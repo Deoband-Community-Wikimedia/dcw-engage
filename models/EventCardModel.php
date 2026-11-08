@@ -23,6 +23,7 @@ class EventCardModel
         'Organiser'   => '#8f1c10',   // DCW red
         'Facilitator' => '#2f7a4f',   // DCW green, darkened for white text
         'Mentee'      => '#2d6499',   // DCW blue
+        'Volunteer' => '#349a68'
     ];
 
     /** Shown on the card when a person has no affiliation of their own. */
