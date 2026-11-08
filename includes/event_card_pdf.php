@@ -36,7 +36,7 @@ function event_card_logo_prepare(?string $uri): array
  * The jali frame in one role's colour, as PNG bytes; '' when it cannot be made (the card then gets a plain
  * border in the role colour, so printing never fails because of the artwork).
  *
- * assets/event-cards/jali-frame.png (built by tools/build_jali_frame.py) is an 8-bit indexed PNG whose palette
+ * assets/event-cards/jali-frame.png is an 8-bit indexed PNG whose palette
  * is a grey ramp: 0 = darkest stone ... 254 = lightest hole, 255 = the white panel. Re-colouring is just
  * rewriting the 256 palette entries, so there is no per-pixel work. One result per colour per request.
  */
