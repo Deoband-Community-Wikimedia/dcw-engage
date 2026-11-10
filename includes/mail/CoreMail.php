@@ -143,6 +143,12 @@ class CoreMail {
      *                             "This is an automated message; please do not reply."
      *                             Pass '' to drop that line (emails people can reply to), or
      *                             any plain text to show that instead. Escaped here.
+     *   attachments array         optional. A list of ['path' => file on disk, 'name' => file name shown to
+     *                             the recipient, 'type' => MIME type]. The file is read from 'path' while the
+     *                             email is sent and nothing is copied or stored, so 'path' may be PHP's own
+     *                             temporary upload file. If a file cannot be attached the email is NOT sent
+     *                             (false is returned), so a message that promises a document never goes out
+     *                             without it.
      *   dev_result  bool          what to return when nothing is really sent
      *                             (PHPMailer missing, or the placeholder host
      *                             smtp.example.com). Senders whose callers show
@@ -207,6 +213,12 @@ class CoreMail {
             $mail->Subject = $o['subject'];   // plain text: never HTML-escape a subject line
             $mail->Body    = self::template($o['html'], $o['header_sub'] ?? null, $o['footer_note'] ?? null);
             $mail->AltBody = $o['alt'];
+
+            // Attachments are read straight from the given path. addAttachment() throws when the file is
+            // missing or unreadable, which is caught below and makes this return false.
+            foreach ((array) ($o['attachments'] ?? []) as $att) {
+                $mail->addAttachment((string) ($att['path'] ?? ''), (string) ($att['name'] ?? ''), 'base64', (string) ($att['type'] ?? ''));
+            }
 
             $mail->send();
             return true;

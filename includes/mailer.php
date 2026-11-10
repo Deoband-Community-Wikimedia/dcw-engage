@@ -10,6 +10,8 @@
 //   InternetSupportMail.php  internet support (members only): received, status (incl. Info Requested)
 //   MemberSupportMail.php    member conversations with DCW Support: "you have a reply" / "status changed"
 //                            notifications (never contain the message text or any staff name)
+//   MemberMessageMail.php    a message typed by a support reviewer or owner to one member, with an optional PDF
+//                            (/admin/email-member). No Reply-To; points the member to DCW Support.
 //   PointsMail.php           Goodies (member points): claim decisions, and an order's receipt, dispatch
 //                            (courier + AWB, or by hand) and cancellation. Never contains an address.
 //   membership_mailer.php    membership emails (class MembershipMailer): club-specific wording, From name and reply-to
@@ -32,6 +34,7 @@ require_once __DIR__ . '/mail/OrganizerAccountMail.php';
 require_once __DIR__ . '/mail/ReimbursementMail.php';
 require_once __DIR__ . '/mail/InternetSupportMail.php';
 require_once __DIR__ . '/mail/MemberSupportMail.php';
+require_once __DIR__ . '/mail/MemberMessageMail.php';
 require_once __DIR__ . '/mail/PointsMail.php';
 require_once __DIR__ . '/mail/membership_mailer.php';
 require_once __DIR__ . '/mail/feedback_mailer.php';
@@ -107,6 +110,13 @@ class Mailer {
     // ($email, $memberName, $trackingId, $kind) where $kind is 'reply' or 'status'.
     // Called by ticket_notify() in models/MemberTicketModel.php.
     public static function sendMemberTicketUpdate(...$a)     { return MemberSupportMail::update(...$a); }
+
+    // --- Staff message to a member (/admin/email-member) ---------------------
+    // ($email, $memberName, $subject, $message, $attachment = null)
+    // $attachment is null or ['path' => temp file, 'name' => shown file name, 'type' => MIME type]; it is read from
+    // that path while sending and never stored. No Reply-To. Returns true only when really sent (false in dev mode),
+    // so the page never reports a send that did not happen.
+    public static function sendMemberMessage(...$a)          { return MemberMessageMail::send(...$a); }
 
     // --- Goodies (member points) --------------------------------------------
     // ($email, $memberName, $trackingId, $kind) $kind = approved | rejected | info. Called by PointClaimModel.

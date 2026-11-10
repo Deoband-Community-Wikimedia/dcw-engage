@@ -19,6 +19,7 @@ Auth::requireLogin();
 //   event_cards.php          -> requireRole(['organizer', 'owner'])   (event participation cards; has its own Events tab here)
 //   reimbursement_review.php -> requireRole(['support_reviewer', 'owner'])
 //   internet_review.php      -> requireRole(['support_reviewer', 'owner'])
+//   email_member.php         -> requireRole(['support_reviewer', 'owner'])   (email a member, optional PDF; in the Volunteer support tab)
 //   goodies.php              -> support_reviewer or owner (checked with Auth::hasAnyRole inside the view)
 //   finance/queue.php        -> requireRole(['finance', 'owner'])   (combined: reimbursements + internet support)
 //   finance/closed.php       -> requireRole(['finance', 'owner'])
@@ -37,6 +38,7 @@ $canReadFeedback         = Auth::hasAnyRole(['organizer', 'owner']);   // mirror
 $canManageEventCards     = Auth::hasAnyRole(['organizer', 'owner']);   // mirrors event_cards.php
 $canReviewReimbursements = Auth::hasAnyRole(['support_reviewer', 'owner']);
 $canReviewInternet       = Auth::hasAnyRole(['support_reviewer', 'owner']);
+$canEmailMembers         = Auth::hasAnyRole(['support_reviewer', 'owner']);   // mirrors email_member.php
 $canManageGoodies        = Auth::hasAnyRole(['support_reviewer', 'owner']);   // mirrors goodies.php
 $canProcessFinance       = Auth::hasAnyRole(['finance', 'owner']);
 $canReviewMembership     = Auth::hasAnyRole(['membership_coordinator', 'membership_reviewer', 'owner']);
@@ -82,7 +84,7 @@ $chapterLimited = Auth::hasAnyRole(['membership_coordinator'])
     && !Auth::hasAnyRole(['membership_reviewer', 'owner']);
 
 $canReviewAny  = $canReviewReimbursements || $canReviewInternet;
-$canSeeSupport = $canReviewAny || $canProcessFinance;
+$canSeeSupport = $canReviewAny || $canEmailMembers || $canProcessFinance;
 
 // Forms. Fetched after the role flags; each user only gets the forms
 // they could actually open (FormModel::userCanOpen, same rule as form_manager.php).
@@ -459,6 +461,11 @@ engage_header([
                         if ($canReviewInternet) {
                             lrow($icons, 'var(--leaf-dark, #3E7A53)', 'wifi', 'Internet support review',
                                 'Judge reasons and packages. No phone numbers shown.', '/admin/internet-review');
+                        }
+                        if ($canEmailMembers) {
+                            lrow($icons, 'var(--leaf-dark, #3E7A53)', 'chat', 'Email a member',
+                                'Send a message to a member, with an optional PDF such as a support letter. Their address is never shown.',
+                                '/admin/email-member');
                         }
                         if ($canProcessFinance) {
                             lrow($icons, '#C96A12', 'card', 'Finance queue',
