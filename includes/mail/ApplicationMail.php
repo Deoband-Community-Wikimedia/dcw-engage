@@ -2,7 +2,8 @@
 // includes/mail/ApplicationMail.php
 // Emails for event applications (tracking IDs start "DCW-"): verification code,
 // magic link, confirmation, status updates, "sent back for more information",
-// committee-written decision letters, swag dispatch notices, and the organizer alert.
+// a new resume link for a draft, committee-written decision letters, swag dispatch notices,
+// and the organizer alert.
 //
 // Emails to the applicant name the event only (CoreMail::eventTitle()), e.g. "Train-a-Wikipedian"
 // rather than "Scholarship Application Form: Train-a-Wikipedian, 4th Edition". The organizer
@@ -249,6 +250,49 @@ class ApplicationMail {
     }
 
     /**
+     * A reviewer created a new one-time link for an application that is waiting on the applicant (Draft).
+     * Emails the link, with an optional note typed by the reviewer. The wording is neutral on purpose: the
+     * draft may be one the applicant saved themselves, or one that was sent back for more information.
+     * (Unlike sentBack(), no message is required, because the original request is not stored.)
+     *
+     * dev_result is false for the same reason as sentBack(): the caller shows the link on screen when this
+     * returns false, so the organizer is never left without it.
+     */
+    public static function resumeLink($email, $applicantName, $trackingId, $formTitle, $message, $token) {
+        $e = fn($s) => CoreMail::e($s);
+        $applicantName = self::displayName($applicantName);
+        $fullTitle = $formTitle;                         // for the dev log
+        $formTitle = CoreMail::eventTitle($formTitle);   // what the applicant sees
+        $appUrl = CoreMail::appUrl() . '/resume/' . $token;
+        $url = $e($appUrl);
+        $message = trim((string) $message);
+
+        $noteHtml = $message !== ''
+            ? "<p><strong>Message from the reviewers:</strong><br>" . nl2br($e($message)) . "</p>"
+            : '';
+
+        $inner = "
+            <p>Dear <strong>" . $e($applicantName) . "</strong>,</p>
+            <p>Please find below your access link to continue your application for <strong>" . $e($formTitle) . "</strong> (Tracking ID: " . $e($trackingId) . ").</p>
+            $noteHtml
+            <div class='btn-wrapper'><a href='$url' class='btn'>Access Your Application</a></div>
+            <p>If the button above does not work, please copy and paste the following link into your browser:<br><br><a href='$url' style='color: #106b9a; word-break: break-all;'>$url</a></p>
+            <p style='margin-bottom:0;'>For security purposes, this link will expire automatically. Please do not share this link with anyone.</p>";
+
+        $alt = "Dear $applicantName,\n\nPlease find below your access link to continue your application for $formTitle (Tracking ID: $trackingId).\n\n"
+             . ($message !== '' ? "Message from the reviewers:\n$message\n\n" : '')
+             . "Access your application here:\n$appUrl\n\nFor security purposes, this link will expire automatically. Please do not share this link with anyone.\n\nDeoband Community Wikimedia";
+
+        return CoreMail::send([
+            'to' => $email, 'to_name' => $applicantName,
+            'subject' => "Your link to continue your $formTitle application",
+            'html' => $inner, 'alt' => $alt,
+            'dev_result' => false,
+            'dev_log' => "Resume link email for $email ($trackingId, $fullTitle): $appUrl",
+        ]);
+    }
+
+    /**
      * Swag: tells an accepted applicant their parcel has been dispatched, with the courier and the courier's
      * consignment (AWB) number, and an optional tracking link the organizer pasted from the courier.
      *
@@ -268,18 +312,18 @@ class ApplicationMail {
             : '';
 
         $inner = "<p>Dear <strong>" . $e($name) . "</strong>,</p>"
-               . "<p>Your swag for <strong>" . $e($event) . "</strong> has been dispatched to the address you provided.</p>"
+               . "<p>Your swag for <strong>" . $e($event) . "</strong> has been dispatched to your provided address.</p>"
                . "<div style='background:#f1f7fb; border-left:4px solid #106b9a; padding:14px 18px; margin:0 0 20px; line-height:1.7;'>"
                . "<strong>Courier:</strong> " . $e($courier) . "<br>"
                . "<strong>Consignment (AWB) number:</strong> <span style='font-family:Menlo,Consolas,monospace;'>" . $e($awb) . "</span></div>"
                . $link
-               . "<p style='font-size:14px; color:#64748b;'>Your application ID is " . $e($trackingId) . ". Please use the consignment number above when contacting the courier; the application ID is a different number.</p>"
+               . "<p style='font-size:14px; color:#64748b;'>Your application ID is " . $e($trackingId) . ". Please use the consignment number above when contacting the courier; note that your application ID is a distinct number.</p>"
                . CoreMail::button($page, 'View application status');
 
-        $alt = "Dear $name,\n\nYour swag for $event has been dispatched to the address you provided.\n\n"
+        $alt = "Dear $name,\n\nYour swag for $event has been dispatched to your provided address.\n\n"
              . "Courier: $courier\nConsignment (AWB) number: $awb\n"
              . ($trackUrl !== '' ? "Track your parcel: $trackUrl\n" : '')
-             . "\nYour application ID is $trackingId. Please use the consignment number above when contacting the courier; the application ID is a different number.\n"
+             . "\nYour application ID is $trackingId. Please use the consignment number above when contacting the courier; note that your application ID is a distinct number.\n"
              . "Status page: $page";
 
         return CoreMail::send([
@@ -362,7 +406,7 @@ class ApplicationMail {
      * in brand-colour small caps, so it reads as a sign-off and not as more body text.
      */
     private static function signatureHtml() {
-        return "<div style='width:48px; height:3px; background:#106b9a; margin:32px 0 14px; line-height:3px; font-size:0;'> </div>"
+        return "<div style='width:48px; height:3px; background:#106b9a; margin:32px 0 14px; line-height:3px; font-size:0;'> </div>"
              . "<p style='margin:0; font-size:17px; line-height:1.3; font-weight:bold; color:#0f172a;'>Scholarship Review Committee</p>"
              . "<p style='margin:3px 0 0; font-size:13px; line-height:1.3; font-weight:bold; letter-spacing:1px; text-transform:uppercase; color:#106b9a;'>Deoband Community Wikimedia</p>";
     }
@@ -382,13 +426,13 @@ class ApplicationMail {
 
         $inner = "<p>Dear <strong>" . $e($name) . "</strong>,</p>"
                . "<p>We have not yet received your response regarding your scholarship for <strong>" . $e($event) . "</strong>. "
-               . "Kindly confirm your participation and share your travel and accommodation details$by.</p>"
+               . "Please confirm your participation and share your travel and accommodation details$by.</p>"
                . CoreMail::button($url, 'Confirm my scholarship')
-               . "<p>If the button does not work, kindly copy this link into your browser:<br><a href='" . $e($url) . "' style='color:#106b9a; word-break:break-all;'>" . $e($url) . "</a></p>"
-               . "<p style='margin-bottom:0;'>This link is private to you. Please do not share it.</p>"
+               . "<p>If the button does not work, please copy this link into your browser:<br><a href='" . $e($url) . "' style='color:#106b9a; word-break:break-all;'>" . $e($url) . "</a></p>"
+               . "<p style='margin-bottom:0;'>This link is strictly private to you. Please do not share it with anyone.</p>"
                . self::signatureHtml();
 
-        $alt = "Dear $name,\n\nWe have not yet received your response regarding your scholarship for $event. Kindly confirm your participation and share your travel and accommodation details$byPlain.\n\n$url\n\nThis link is private to you. Please do not share it.\n\n--\nScholarship Review Committee\nDeoband Community Wikimedia\n";
+        $alt = "Dear $name,\n\nWe have not yet received your response regarding your scholarship for $event. Please confirm your participation and share your travel and accommodation details$byPlain.\n\n$url\n\nThis link is strictly private to you. Please do not share it with anyone.\n\n--\nScholarship Review Committee\nDeoband Community Wikimedia\n";
 
         return CoreMail::send([
             'to' => $email, 'to_name' => $name,
@@ -463,12 +507,12 @@ class ApplicationMail {
         $name = self::displayName($applicantName);
 
         $reasonHtml = trim((string) $reason) !== '' ? "<p><strong>Reason given:</strong><br>" . nl2br($e($reason)) . "</p>" : '';
-        $inner = "<p>Dear Organiser,</p>"
+        $inner = "<p>Dear Organizer,</p>"
                . "<p><strong>" . $e($name) . "</strong> (" . $e($trackingId) . ") has declined their scholarship for <strong>" . $e($formTitle) . "</strong>, and their seat is now available.</p>"
                . $reasonHtml
                . "<p>You may accept another applicant from the review queue whenever you are ready.</p>"
                . CoreMail::button($reviewUrl, 'Open application');
-        $alt = "Dear Organiser,\n\n$name ($trackingId) has declined their scholarship for $formTitle, and their seat is now available."
+        $alt = "Dear Organizer,\n\n$name ($trackingId) has declined their scholarship for $formTitle, and their seat is now available."
              . (trim((string) $reason) !== '' ? "\n\nReason given:\n$reason" : '')
              . "\n\nYou may accept another applicant from the review queue whenever you are ready.\n$reviewUrl";
 
@@ -549,14 +593,14 @@ class ApplicationMail {
         }
 
         $inner = "
-            <p>Dear Organiser,</p>
+            <p>Dear Organizer,</p>
             <p>$lineHtml</p>
             <p><strong>Tracking ID:</strong> " . $e($trackingId) . "<br>
             <strong>Applicant Name:</strong> " . $e($applicantName) . "<br>
             <strong>Email Address:</strong> " . $e($applicantEmail) . "</p>
             " . CoreMail::button($manageUrl, 'Review Application');
 
-        $alt = "Dear Organiser,\n\n$linePlain\nTracking ID: $trackingId\nApplicant Name: $applicantName ($applicantEmail)\n\nKindly review it here: $manageUrl";
+        $alt = "Dear Organizer,\n\n$linePlain\nTracking ID: $trackingId\nApplicant Name: $applicantName ($applicantEmail)\n\nKindly review it here: $manageUrl";
 
         return CoreMail::send([
             'to' => $recipients,

@@ -10,7 +10,7 @@ require_once __DIR__ . '/../../models/FeedbackModel.php';
 require_once __DIR__ . '/../../models/ApplicationModel.php';
 require_once __DIR__ . '/../../models/ScholarshipLetterModel.php';
 require_once __DIR__ . '/../../models/AwardConfirmationModel.php';   // award confirmation: link, response, settings
-require_once __DIR__ . '/../../includes/mailer.php';   // Mailer::sendStatusUpdate() and Mailer::sendSentBack()
+require_once __DIR__ . '/../../includes/mailer.php';   // Mailer::sendStatusUpdate(), Mailer::sendSentBack() and Mailer::sendResumeLink()
 require_once __DIR__ . '/../../includes/mail/ApplicationMail.php';   // ApplicationMail::decisionLetter()
 
 /**
@@ -54,7 +54,10 @@ require_once __DIR__ . '/../../includes/mail/ApplicationMail.php';   // Applicat
  * "Needs information" sets the application back to Draft, makes a one-time link (/resume/<token>) and EMAILS
  * the applicant your message plus that link (Mailer::sendSentBack). If the email cannot be sent, the link and
  * message are shown on screen instead so you can pass them on yourself. The status change is kept either way.
- * "Resend link" (Draft applications) does not email: it only shows a new one-time link.
+ * "Create a new link" (Draft applications) makes a new one-time link and EMAILS it to the applicant with an
+ * optional note (Mailer::sendResumeLink). The status does not change. If the email cannot be sent, the link
+ * (and note) are shown on screen instead so you can pass them on yourself. It is not offered in the bulk bar
+ * or on queue rows: only on the single-application page.
  * "Discard" sets Discarded and sends NOTHING (that is what $notifyApplicant already does for any status
  * other than Under Review / Accepted / Rejected). "Restore" puts a discarded application back to New.
  *
@@ -208,6 +211,18 @@ $emailSentBack = function (array $row, string $message, string $token): bool {
                                            $row['form_title'] ?: $row['form_type'], $message, $token);
     } catch (Throwable $e) {
         app_log("Send-back email failed for application #{$row['id']}: " . $e->getMessage());
+        return false;
+    }
+};
+
+// "Create a new link" on a Draft: emails the applicant the new one-time link, plus an optional note.
+// Returns true only when the email really went out; on false the caller shows the link on screen instead.
+$emailResumeLink = function (array $row, string $message, string $token): bool {
+    try {
+        return (bool) Mailer::sendResumeLink($row['email'], $row['applicant_name'], $row['tracking_id'],
+                                             $row['form_title'] ?: $row['form_type'], $message, $token);
+    } catch (Throwable $e) {
+        app_log("Resume-link email failed for application #{$row['id']}: " . $e->getMessage());
         return false;
     }
 };
@@ -584,11 +599,16 @@ if ($app && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $doneKey = $act;   // which confirmation message to show after the redirect
     try {
         if ($act === 'resend') {
+            // "Create a new link": emails the applicant the new one-time link, with an optional note.
             if ($app['status'] !== 'Draft') throw new Exception('Only an application waiting on the applicant can be sent a new link.');
+            $msg = trim((string) ($_POST['message'] ?? ''));
             $token = $model->generateMagicLink((int) $app['id'], true);
-            // Not emailed: the organizer passes this link on by hand.
-            $_SESSION['application_link'] = ['who' => $app['applicant_name'] ?: $app['email'], 'email' => $app['email'],
-                                             'message' => '', 'url' => $resumeUrl($token), 'emailFailed' => false];
+            if (!$emailResumeLink($app, $msg, $token)) {
+                // Email failed: show the link (and note) so the organizer can pass it on by hand.
+                $_SESSION['application_link'] = ['who' => $app['applicant_name'] ?: $app['email'], 'email' => $app['email'],
+                                                 'message' => $msg, 'url' => $resumeUrl($token), 'emailFailed' => true];
+                $doneKey = 'resend_manual';
+            }
         } elseif ($act === 'resend_letter') {
             if (!$letterOn($app['form_id']) || !in_array($app['status'], ['Accepted', 'Rejected'], true) || empty($app['letter_failed'])) {
                 throw new Exception('There is no unsent letter for this application.');
@@ -681,7 +701,8 @@ $doneText = ['approve' => 'Accepted.', 'reject' => 'Rejected.', 'review' => 'Mar
              'mark_declined' => 'Marked as declined. Nothing was emailed, and no place was released automatically.',
              'info' => 'Sent back to the applicant. They were emailed your message and a link to update their application.',
              'info_manual' => 'Sent back to the applicant, but the email could not be sent. See below.',
-             'resend' => 'New link created.',
+             'resend' => 'New link emailed to the applicant.',
+             'resend_manual' => 'New link created, but the email could not be sent. See below.',
              'dispatch' => 'Marked as dispatched.',
              'discard' => 'Discarded. The applicant was not notified.', 'restore' => 'Restored to the queue.'];
 if (!empty($_GET['done'])) $notice = $doneText[$_GET['done']] ?? 'Saved.';
@@ -743,8 +764,8 @@ if (!$id && isset($_GET['export_confirm'])) {
     exit;
 }
 
-// One-time link(s) to hand to the applicant: a new link from "Create a new link" (never emailed),
-// or the link from a send-back whose email could not be sent.
+// One-time link(s) to hand to the applicant: the link from a send-back or "Create a new link" whose email
+// could not be sent.
 $manual = $_SESSION['application_link'] ?? null;
 unset($_SESSION['application_link']);
 $bulk = $_SESSION['application_bulk'] ?? null;
@@ -966,9 +987,14 @@ engage_header([
     <?php elseif ($app['status'] === 'Draft'): ?>
     <section class="sect">
         <p style="margin:0 0 12px;">Waiting for the applicant to finish or update. It returns to the queue when they submit.</p>
-        <form method="POST"><?= CSRF::getInputField() ?>
+        <form method="POST" class="actform" style="margin-top:0; padding-top:0; border-top:0;"><?= CSRF::getInputField() ?>
             <input type="hidden" name="id" value="<?= (int) $app['id'] ?>">
-            <button name="action" value="resend" class="btn-ghost">Create a new link</button>
+            <div class="field">
+                <label>Note to include in the email (optional)</label>
+                <input type="text" name="message" style="width:100%">
+            </div>
+            <button name="action" value="resend" class="btn-ghost"
+                    onclick="return confirm('Email this applicant a new link to their application?');">Email a new link</button>
         </form>
     </section>
     <?php elseif ($app['status'] === 'Discarded'): ?>
