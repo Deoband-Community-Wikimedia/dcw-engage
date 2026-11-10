@@ -202,6 +202,14 @@ if ($route === '/' || $route === '/index.php') {
 } elseif ($route === '/admin/goodies') {
     require __DIR__ . '/views/admin/goodies.php';
 
+// Email a member: a support reviewer or owner finds a member, writes a message and optionally attaches one PDF
+// (for example a support letter). The member's address is never shown, there is no Reply-To, and the PDF is
+// sent straight from PHP's temporary upload and never stored. Role check is inside the view:
+// requireRole(['support_reviewer', 'owner']). Under /admin so Auth::isSafeNext() lets the login redirect
+// bring people back.
+} elseif ($route === '/admin/email-member') {
+    require __DIR__ . '/views/admin/email_member.php';
+
 // Old address: coordinators' chapters are now managed on the Team page (the separate view was removed).
 } elseif ($route === '/admin/membership-access') {
     header('Location: /admin/team', true, 302);
