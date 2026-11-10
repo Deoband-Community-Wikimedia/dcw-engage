@@ -1,85 +1,72 @@
 # DCW Engage
 
-DCW Engage is the portal used by the Deoband Community Wikimedia (DCW) community to manage open opportunities, application forms, member registration, and organizer workflows for scholarships, fellowships, internships, volunteering, and community support.
+DCW Engage is the engagement portal for Deoband Community Wikimedia (DCW). It brings together public program forms, membership, member services and rewards, and staff workflows for reviewing and administering them.
 
-This repository contains the backend, organizer workspace, member dashboard, public application forms, member authentication, and support infrastructure for the platform.
+- **Live portal:** <https://engage.dcwwiki.org/>
+- **License:** MIT
 
-## Highlights
+## What the portal does
 
-- Public-facing application and membership forms for multiple DCW programs and community workflows
-- Member onboarding with unique Member IDs (e.g., `A48213977`) generated per chapter upon approval
-- Secure member authentication with Member ID + password, failed-login tracking and account lockout
-- Member dashboard showing active membership status, support requests, and available programs
-- Organizer workspace with role-based access for forms, membership review, and support queues
-- Invitation-based onboarding for organizers with email verification and one-time token links
-- Save-draft and resume flows using cryptographically secure magic links
-- Form submission tracking and application review workflows with audit logs
-- Membership lifecycle: new applications, renewals (with Member ID verification), expiry tracking, and chapter-based coordinator access
-- Support ecosystem for members: Internet Support requests and Reimbursement claims with finance queue
-- Member support ticketing system for complaints, suggestions and questions with staff conversation tracking
-- File upload handling with sanitised filenames, strict MIME validation and file-type checking
-- Built-in retention and scrub logic for sensitive applicant data
-- Deployment automation and pull-request verification via GitHub Actions
+### Public forms and applications
 
-## Technology stack
+- Serves configurable program and opportunity forms from the form builder, including scholarship and other application forms, plus feedback forms.
+- Supports email verification, draft saving and resume links, file uploads, deadlines, and application tracking.
+- Provides staff queues for reviewing applications and feedback. Scholarship workflows include award/decline letters and private award-confirmation links; swag applications can be marked dispatched with courier tracking details.
+- Provides a public status lookup at `/track` for application tracking IDs.
 
-- Backend: PHP 8.2+
-- Database: MySQL/MariaDB via PDO
-- Mail: PHPMailer
-- Frontend: HTML, CSS, and vanilla JavaScript
-- Routing: Single-entry PHP front controller
-- Dependency management: Composer
-- CI/CD: GitHub Actions
+### Membership and member services
 
-## Project structure
+- Accepts membership applications and renewals for DCW chapters and clubs; authorized coordinators review applications within their assigned scope.
+- Creates and manages member accounts, Member IDs, membership expiry, sign-in and password recovery.
+- Provides a member dashboard for applications, profile details, certificates (when configured), and services.
+- Offers membership cards with QR verification and PDF downloads, along with a public member directory that members can opt out of.
+- Lets members earn and claim points, view the goodies catalogue, redeem points, and follow fulfilment.
+- Provides member-only Internet Support and reimbursement requests with follow-up conversations and receipt uploads. Staff have review and finance queues.
+- Includes member support tickets for questions, suggestions and complaints, as well as technical problem reporting.
+
+### Staff and organizer workflows
+
+- Form management, previews, application and feedback review, internal notes, and audit history.
+- Invitation-based team onboarding, role and chapter assignment, password recovery, and team administration.
+- Membership review and member-card management; community records for Conversation Hour attendance and technical contributors.
+- Goodies catalogue and points administration, event attendance and awards, and event participation cards.
+- Technical issue diagnostics and triage.
+- Role-based access for owners, organizers, membership coordinators/reviewers, support reviewers, finance staff, and member-support staff. Access to each queue is limited by the role and, where applicable, assigned chapter.
+
+## Technology
+
+- PHP 8.2 or newer, using PDO
+- MySQL 8.0+ or MariaDB 10.4+
+- Composer dependencies: PHPMailer for email and mPDF for PDF generation
+- HTML, CSS, and vanilla JavaScript; a PHP front controller handles application routes
+- Apache with `mod_rewrite` and `.htaccess` support for the provided rewrite and access-control rules
+
+## Repository layout
 
 ```text
 .
-├── .github/              # GitHub workflows and templates
-├── assets/               # Shared frontend assets
-├── bin/                  # Utility scripts, e.g. admin bootstrap
-├── cron/                 # Scheduled cleanup / maintenance jobs
-├── docs/                 # Status and project documentation
-├── includes/             # Core PHP app logic and config
-│   ├── auth.php          # Organizer authentication and session management
-│   ├── member_session.php # Member session and identity helpers
-│   ├── csrf.php          # CSRF token generation and validation
-│   ├── db.php            # PDO database connection (singleton)
-│   ├── config.example.php # Template for local configuration
-│   └── mail/             # Mail composition classes
-├── migrations/           # Dated, schema-only upgrade scripts for existing installs
-├── models/               # Domain models and business logic
-│   ├── MemberModel.php               # Membership and chapter logic
-│   ├── MemberAuthModel.php           # Member login and password management
-│   ├── ApplicationModel.php          # Form submissions and tracking
-│   ├── InternetSupportModel.php      # Internet support requests
-│   ├── ReimbursementModel.php        # Reimbursement claims
-│   ├── MemberTicketModel.php         # Support ticketing
-│   └── ...
-├── uploads/              # Uploaded application files
-├── views/                # Public and admin views
-│   ├── admin/            # Organizer workspace pages
-│   ├── member/           # Member dashboard and forms
-│   └── forms/            # Form rendering engine
-├── composer.json         # Composer dependencies
-├── database.sql          # Complete schema (no data) for a fresh install
-├── index.php             # Front-controller entry point
-├── README.md             # Project overview and setup guide
-├── SECURITY.md           # Security policy and responsible disclosure guidance
-├── CONTRIBUTING.md       # Contributing guidelines
-└── LICENSE               # MIT license
+├── .github/       # GitHub Actions workflows and templates
+├── assets/        # Frontend assets
+├── bin/           # Administrative and maintenance CLI tools
+├── cron/          # Scheduled privacy and retention jobs
+├── docs/          # Project notes and database-related documentation
+├── includes/      # Initialization, configuration, auth, database, mail and shared services
+├── migrations/    # Upgrade scripts for existing databases
+├── models/        # Application and domain logic
+├── uploads/       # User-uploaded files; served only through an access-checked route
+├── views/         # Public, member, admin, finance and form pages
+├── composer.json
+├── database.sql   # Complete schema for a fresh database
+└── index.php      # Front controller and route definitions
 ```
 
-## Local development setup
+## Local setup
 
-### Prerequisites
+### Requirements
 
-- PHP 8.2 or newer with `pdo_mysql` extension
-- MySQL 8.0+ or MariaDB 10.4+
-- Composer
-- Git
+Install PHP 8.2+, Composer, and MySQL 8.0+ or MariaDB 10.4+. PHP must have the PDO MySQL driver enabled. For Apache deployments, enable `mod_rewrite` and allow the repository's `.htaccess` rules to run.
 
-### 1. Clone the repository
+### 1. Install dependencies
 
 ```bash
 git clone https://github.com/Deoband-Community-Wikimedia/dcw-engage.git
@@ -87,178 +74,76 @@ cd dcw-engage
 composer install
 ```
 
-### 2. Create configuration
+### 2. Configure the application
 
-Copy the example config and update the local database and app settings:
+Copy the configuration template and edit it for your environment:
 
 ```bash
 cp includes/config.example.php includes/config.php
 ```
 
-Then edit `includes/config.php` to set:
+Set the application URL and environment, database credentials, SMTP settings, and security secrets in `includes/config.php`. Use strong, unique secrets for `field_encryption_key` and `otp_secret`; configure the field-encryption key as a base64-encoded 32-byte key. Keep `config.php` private and never commit it. The example configuration is not suitable for production unchanged.
 
-- database host, name, username, and password
-- app URL (for local development, usually `http://localhost:8000`)
-- mail configuration if you want to test email flows
-- security timing values (invitation expiry, magic-link expiry, password reset expiry)
-- field encryption key (a base64-encoded 32-byte key for sensitive data)
+Email-dependent features—including verification, invitations, password recovery, and notifications—require working SMTP settings.
 
-Important: `includes/config.php` is local-only and should never be committed.
+### 3. Create and initialize the database
 
-### 3. Prepare the database
-
-Create an empty database and import the schema. **A fresh install needs only `database.sql`**. It creates every table the app uses, plus a switched-off default settings row for Internet Support and Reimbursements:
+Create an empty database, then import the complete schema:
 
 ```bash
 mysql -u root -p your_database_name < database.sql
 ```
 
-Do **not** run `migrations/` on a fresh database. Those files are for upgrading an install that was set up before a table existed (each is a dated, schema-only `CREATE TABLE IF NOT EXISTS` file).
+A fresh installation needs `database.sql` only. Do **not** run the files in `migrations/` on a new database; they are for upgrading older installations. Database settings and credentials are configured in `includes/config.php`.
 
-#### Optional integrations
+### 4. Create the first owner account
 
-Two features read from external sources and are optional. If they are not configured, the related section is simply left out:
-
-- **"My certificates" panel:** copy `includes/certs_db.example.php` to `includes/certs_db.php` and fill in the certificates database credentials.
-- **"What's on" events section:** reads the wiki's public API, so it needs no credentials. Copy `includes/events_db.example.php` to `includes/events_db.php` only if you need to change the API URL or Cargo table name.
-
-Both real files are gitignored; never commit them.
-
-### 4. Create the first organizer account
-
-The application does not seed an organizer account automatically. Bootstrap the first owner with:
+No administrator is seeded in the database. Create the first owner from the command line:
 
 ```bash
 php bin/create_admin.php admin@example.com
 ```
 
-This creates or resets an organizer account and is useful for initial setup and recovery when all owners are locked out.
+### 5. Start the application
 
-### 5. Run the app locally
-
-```bash
-php -S localhost:8000
-```
-
-Then open:
-
-- Public portal: http://localhost:8000/
-- Organizer login: http://localhost:8000/admin/login
-- Member login: http://localhost:8000/member/login
-- Status lookup: http://localhost:8000/track
-- Member dashboard: http://localhost:8000/member/dashboard
-
-## Core features
-
-### Public applications and programs
-
-The platform hosts application forms for community programs and opportunities:
-
-- scholarships
-- fellowships
-- internships
-- volunteer roles
-- course registrations
-- club and initiative submissions
-- community feedback
-- program-specific forms with custom field layouts
-
-Each form supports file uploads, email verification, draft saving with resume links, and tracking lookup.
-
-### Membership lifecycle
-
-Members join through application or renewal:
-
-- **New applicants** apply for membership via a public form, choosing their chapter (generic DCW, AMU club, Jamia club, or Photographers club)
-- **Renewals** use their existing Member ID to extend membership; coordinators verify the ID matches their email and chapter
-- **Approval** creates a unique Member ID (e.g., `A48213977`: letter = chapter, 8 random digits) with a 1-year expiry date
-- **Login** uses Member ID + password, with failed-login tracking and 15-minute account lockout after 5 wrong attempts
-- **Dashboard** shows membership status, expiry date, available support programs, and member's own requests
-- **Chapter coordinators** review applications for their assigned chapters; owners and reviewers see all chapters
-
-### Organizer workspace
-
-Organizers manage forms, applications, and support workflows:
-
-- **Form builder** creates application forms with custom fields, auto-generated slugs, and schema storage
-- **Application review** filters by status, shows applicant names and submissions, supports bulk state changes and internal notes
-- **Membership review** filters by chapter (if coordinator), shows approval/rejection/resend options with audit logs
-- **Member access** allows owners to assign chapters to membership coordinators
-- **Support queues** for reviewing Internet Support requests and Reimbursement claims
-- **Finance processing** approves and tracks claim payments with receipt archival
-- **Member support** handles member complaints, suggestions and questions with status tracking
-- **Team management** (owners only) invites organizers and sets their roles and chapter permissions
-
-### Member support ecosystem
-
-Members can request help through their dashboard:
-
-- **Internet Support** — connectivity packages and support for internet-related needs
-- **Reimbursement** — expense reimbursement with line items and receipt upload
-- **Support tickets** — complaints, suggestions and questions routed to DCW Support staff
-
-Each request gets a tracking ID (e.g., `HQ-12345`), status updates via email, and visibility in the member's dashboard. Finance staff process payments; organizers and owners manage the support queue.
-
-### Organizer roles
-
-- `owner`: full administrative authority including invitations, team management, and all review queues
-- `organizer`: manages forms and application submissions (no support or membership access)
-- `membership_coordinator`: reviews membership applications for assigned chapters only
-- `membership_reviewer`: reviews all membership applications (no chapter restrictions)
-- `support_reviewer`: reviews Internet Support and Reimbursement claims
-- `finance`: processes approved claims and manages the payment queue
-- `member_support`: manages member support tickets (complaints and suggestions)
-
-### Security model
-
-- PDO prepared statements throughout the app to prevent SQL injection
-- CSRF checks for all state-changing requests
-- Strict file upload validation (MIME type, extension, double-extension checks)
-- Sanitised file naming for uploads
-- Organizer session management with password reset and account lockout
-- Magic-link based draft resume and email verification flows
-- Expiry-based lifecycle controls for invitations and reset tokens
-- Member passwords hashed with bcrypt, failed-login tracking
-- Field encryption for sensitive applicant data (using AES-256-GCM)
-- Audit logs recording who did what and when
-- Automated retention scrub for old, inactive, or rejected applications
-
-## CI and deployment
-
-This project uses GitHub Actions for verification and deployment:
-
-- `verify.yml`: runs PHP syntax validation on pull requests
-- `deploy.yml`: deploys the production site to configured hosting (via FTP/FTPS) when changes land on `main`, protecting key files and directories
-
-## Security policy
-
-Please review `SECURITY.md` before reporting issues or making sensitive changes.
-
-The project treats member and applicant data seriously. Do not expose secrets in commits, and never commit local configuration or upload data.
-
-## Contributing
-
-We welcome improvements from contributors. Before opening a PR:
-
-1. Keep configuration secrets and sensitive data out of version control.
-2. Use prepared statements and follow the existing security patterns throughout.
-3. Validate PHP syntax for any modified files.
-4. Review the repository's contributing guidance in `CONTRIBUTING.md`.
-
-Example syntax check:
+For local development, PHP's built-in server can use the front controller as its router:
 
 ```bash
-find . -type f -name "*.php" -exec php -l {} \;
+php -S localhost:8000 index.php
 ```
 
-## Current project status
+Then visit `http://localhost:8000/`. Useful routes include:
 
-The repository is actively evolving. The core platform, authentication systems (organizer and member), invitation flows, membership lifecycle, support ecosystem, and review infrastructure are in place. Form-specific UX enhancements, multi-step flows, and conditional field logic continue to be built out. A detailed status report is available in `docs/STATUS.md`.
+- `/admin/login` — organizer sign-in
+- `/member/login` — member sign-in
+- `/member/dashboard` — member dashboard (sign-in required)
+- `/track` — public application status lookup
+- `/membership` — membership landing page
+- `/members` — public member directory
 
-## License
+For production, deploy behind a web server configured to use the repository's rewrite and access-control rules. Do not expose configuration, SQL files, internal PHP directories, or uploaded files directly. The `/file` route checks access before returning uploaded content.
 
-This project is licensed under the MIT License. See `LICENSE` for details.
+## Optional integrations
 
-## Maintainers
+- **Certificates:** copy `includes/certs_db.example.php` to `includes/certs_db.php` and configure read-only credentials for the certificates database. Without it, the member certificates section has no external certificate data.
+- **What's on events:** the portal can read public event data from the DCW wiki API. Defaults are documented in `includes/events_db.example.php`; copy it to `includes/events_db.php` only if you need to change the API URL or Cargo table.
 
-This project is maintained by volunteers within the Deoband Community Wikimedia community. For support, review the repository documentation and issue tracker before reaching out directly.
+These real configuration files are gitignored. Never commit credentials.
+
+## Maintenance
+
+The `cron/` directory contains scheduled privacy and retention jobs, including `scrub_pii.php` and `scrub_feedback.php`; `bin/` also contains maintenance utilities such as receipt purging. Review each script and the deployment's retention requirements, then configure the appropriate jobs in the hosting environment. Do not run migration or data-maintenance scripts blindly against production.
+
+GitHub Actions workflows are in `.github/workflows/` (`verify.yml` and `deploy.yml`). Review the deployment workflow and required repository secrets before using it for a deployment.
+
+## Security and contributing
+
+Please read [SECURITY.md](SECURITY.md) before reporting security issues and [CONTRIBUTING.md](CONTRIBUTING.md) before submitting changes. Do not commit credentials, private configuration, production data, or uploaded files. Preserve the existing authorization, CSRF, prepared-statement, upload-validation, and data-retention protections when changing the application.
+
+A PHP syntax check for the repository can be run with:
+
+```bash
+find . -type f -name '*.php' -not -path './vendor/*' -exec php -l {} \;
+```
+
+See [docs/STATUS.md](docs/STATUS.md) for additional project notes; feature status can change as development continues.

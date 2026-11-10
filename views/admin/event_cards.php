@@ -9,7 +9,7 @@ require_once __DIR__ . '/../../models/EventCardModel.php';
 require_once __DIR__ . '/../../models/FormModel.php';
 
 /**
- * Event cards: create an event, add its people, print their cards.
+ * Event cards: create an event, add its people, preview and print their cards.
  * Access: organizer or owner (same as application review). Mirrors the dashboard flag $canManageEventCards.
  *
  * Screens (all on this one page):
@@ -17,13 +17,16 @@ require_once __DIR__ . '/../../models/FormModel.php';
  *   /admin/event-cards?event=7            one event: its people, add / import, download the print file
  *   /admin/event-cards?event=7&form=3     the same, with the confirmed awardees of form 3 listed to import
  *   /admin/event-cards?event=7&pdf=all    download the print file for everyone (pdf=<participant id> for one card)
+ *   /admin/event-cards?event=7&preview=12&side=back
+ *                                         one side of one card as an HTML page, for the preview iframes.
+ *                                         preview=0 is a draft; name, role and affiliation in the query string
+ *                                         override the saved values, so unsaved edits can be previewed.
  *
  * CSRF: every form carries CSRF::getInputField() and every POST is checked with CSRF::validate(). The three forms
  * that create rows (new event, add person, CSV upload) also carry a single-use submit token, so a double click
- * cannot create duplicates.
+ * cannot create duplicates. The preview and the print file are read-only GETs.
  *
  * Layout note: events are cards; people are one compact row each, and "Edit" opens that person's form in place.
- * Nothing about the actions, tokens or model calls changed.
  */
 
 /** Hidden CSRF field: the portal's own CSRF class (includes/csrf.php), field name csrf_token. */
@@ -69,6 +72,40 @@ if ($event !== null && isset($_GET['pdf'])) {
         app_log('Event card PDF failed: ' . $e->getMessage());
         $error = 'Could not build the print file: ' . $e->getMessage();
     }
+}
+
+// ---- Card preview (GET, read-only): one side of one card, for the iframes -------------------------
+if ($event !== null && isset($_GET['preview'])) {
+    $side    = ($_GET['side'] ?? 'front') === 'back' ? 'back' : 'front';
+    $pid     = (int) $_GET['preview'];
+    $roleKey = (string) array_key_first(EventCardModel::ROLES);
+    $row     = ['name' => '', 'role' => $roleKey, 'affiliation' => ''];
+    if ($pid > 0) {
+        foreach ($model->participants($eventId) as $x) {
+            if ((int) $x['id'] === $pid) { $row = $x; break; }
+        }
+    }
+    // Values typed into a form but not saved yet win over the saved ones.
+    foreach (['name' => 80, 'role' => 60, 'affiliation' => 120] as $k => $max) {
+        if (isset($_GET[$k]) && is_string($_GET[$k])) {
+            $row[$k] = mb_substr($_GET[$k], 0, $max, 'UTF-8');
+        }
+    }
+    if (!isset(EventCardModel::ROLES[(string) $row['role']])) {
+        $row['role'] = $roleKey;
+    }
+    header('X-Frame-Options: SAMEORIGIN');
+    header('Cache-Control: no-store');
+    try {
+        $page = event_card_preview_html($event, $row, $side);
+        header('Content-Type: text/html; charset=utf-8');
+        echo $page;
+    } catch (Throwable $e) {
+        app_log('Event card preview failed: ' . $e->getMessage());
+        http_response_code(500);
+        echo 'The preview could not be built.';
+    }
+    exit;
 }
 
 // ---- Actions (POST) ------------------------------------------------------------------------------
@@ -159,7 +196,7 @@ $initial = fn(string $s): string => mb_strtoupper(mb_substr(trim($s), 0, 1)) ?: 
 engage_header([
     'title'   => 'Event cards',
     'heading' => $event !== null ? trim($event['name'] . ' ' . $event['edition']) : 'Event cards',
-    'lead'    => $event !== null ? 'Add people, then download the print file.' : 'Set up an event, add its people and print their cards.',
+    'lead'    => $event !== null ? 'Add people, check their cards, then download the print file.' : 'Set up an event, add its people and print their cards.',
     'slim'    => true,
     'wide'    => true,
     'crumbs'  => [],
@@ -182,7 +219,7 @@ engage_header([
     .ec .b.red { background: #fff; color: #97161b; border-color: #e3b5b7; }
     .ec .b.red:hover { border-color: #97161b; }
     .ec .b.sm { padding: 6px 14px; font-size: 13px; }
-    .ec :is(.b, summary, input, select, textarea):focus-visible { outline: 2px solid var(--primary, #106b9a); outline-offset: 2px; }
+    .ec :is(.b, summary, input, select, textarea, .seg button):focus-visible { outline: 2px solid var(--primary, #106b9a); outline-offset: 2px; }
 
     .ec .fld { display: block; font-size: 13px; font-weight: 600; }
     .ec .fld small { display: block; margin-top: 2px; color: var(--muted, #64748b); font-weight: 400; font-size: 12px; }
@@ -247,6 +284,7 @@ engage_header([
 
     /* Add people */
     .ec .adds { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); align-items: start; }
+    .ec .adds .span { grid-column: 1 / -1; }
     .ec .picks { max-height: 260px; overflow: auto; margin: 10px 0; padding: 4px 12px; border: 1px solid var(--border, #e2e8f0); border-radius: 12px; }
     .ec .picks label { display: flex; gap: 8px; align-items: center; padding: 7px 0; border-top: 1px solid #eef2f6; font-size: 14px; cursor: pointer; }
     .ec .picks label:first-child { border-top: 0; }
@@ -255,10 +293,23 @@ engage_header([
     .ec .drop input { margin: 8px 0 0; }
     .ec code { padding: 1px 6px; border-radius: 6px; background: #eef2f6; font-size: 12.5px; }
 
+    /* Card preview: the modal on each person, and the live one beside "Add one person" */
+    .ec .seg { display: inline-flex; border: 1px solid var(--border, #cbd5e1); border-radius: 999px; overflow: hidden; background: #fff; }
+    .ec .seg button { border: 0; background: #fff; color: var(--ink, #1e293b); padding: 7px 16px; font-size: 13px; font-weight: 600; }
+    .ec .seg button.on { background: var(--ink, #1e293b); color: #fff; }
+    .ec iframe.card { display: block; width: 100%; aspect-ratio: 105 / 148; border: 0; border-radius: 12px; background: #eef2f6; }
+    .ec dialog.pv { width: min(92vw, 400px, calc((100vh - 120px) * .7095)); padding: 14px; border: 0; border-radius: 18px; background: var(--card, #fff); box-shadow: 0 24px 60px rgba(15,23,42,.35); }
+    .ec dialog.pv::backdrop { background: rgba(15,23,42,.55); }
+    .ec .pv-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+    .ec .live-wrap { display: grid; gap: 22px; grid-template-columns: minmax(0, 1fr) 250px; align-items: start; }
+    .ec .live .seg { margin-bottom: 10px; }
+
     @media (max-width: 640px) {
         .ec .pp > summary { grid-template-columns: 40px 1fr auto; }
         .ec .pp .ed { display: none; }
         .ec .pp > summary .pill { grid-column: 2; justify-self: start; grid-row: 2; }
+        .ec .live-wrap { grid-template-columns: 1fr; }
+        .ec .live { max-width: 250px; }
     }
     @media (prefers-reduced-motion: reduce) { .ec .ev { transition: none; } .ec .ev:hover { transform: none; } }
 </style>
@@ -328,11 +379,15 @@ engage_header([
     <h2>People</h2>
     <?php if ($people): ?>
         <div class="find"><input type="search" id="ec-q" placeholder="Search by name or affiliation…" aria-label="Search people"></div>
-        <?php foreach ($people as $p): $pid = (int) $p['id']; $col = EventCardModel::ROLES[$p['role']] ?? '#1b3f66'; ?>
-            <details class="pp" style="--rc:<?= $h($col) ?>" data-role="<?= $h($p['role']) ?>" data-find="<?= $h(mb_strtolower($p['name'] . ' ' . $p['affiliation'])) ?>">
+        <?php foreach ($people as $p):
+            $pid     = (int) $p['id'];
+            $col     = EventCardModel::ROLES[$p['role']] ?? '#1b3f66';
+            $affShow = event_card_affiliation((string) $p['role'], (string) $p['affiliation']);
+        ?>
+            <details class="pp" style="--rc:<?= $h($col) ?>" data-role="<?= $h($p['role']) ?>" data-find="<?= $h(mb_strtolower($p['name'] . ' ' . $affShow)) ?>">
                 <summary>
                     <span class="av" aria-hidden="true"><?= $h($initial((string) $p['name'])) ?></span>
-                    <span class="who"><b><?= $h($p['name']) ?></b><span><?= $h(trim((string) $p['affiliation']) !== '' ? $p['affiliation'] : EventCardModel::DEFAULT_AFFILIATION) ?></span></span>
+                    <span class="who"><b><?= $h($p['name']) ?></b><span><?= $h($affShow !== '' ? $affShow : 'No affiliation') ?></span></span>
                     <span class="pill"><?= $h($p['role']) ?></span>
                     <span class="ed" aria-hidden="true"></span>
                 </summary>
@@ -350,9 +405,10 @@ engage_header([
                                 <?php endforeach; ?>
                             </select>
                         </label>
-                        <label class="fld">Affiliation<input type="text" name="affiliation" value="<?= $h($p['affiliation']) ?>" maxlength="120" placeholder="<?= $h(EventCardModel::DEFAULT_AFFILIATION) ?>"></label>
+                        <label class="fld">Affiliation<input type="text" name="affiliation" value="<?= $h($p['affiliation']) ?>" maxlength="120" placeholder="<?= $h(event_card_affiliation((string) $p['role'], '') ?: 'Optional') ?>"></label>
                         <div class="foot">
                             <button type="submit" class="b sm">Save changes</button>
+                            <button type="button" class="b sm line" data-preview="<?= $pid ?>">Preview</button>
                             <a class="b sm line" href="/admin/event-cards?event=<?= $eventId ?>&amp;pdf=<?= $pid ?>">Card PDF</a>
                             <button type="submit" form="r<?= $pid ?>" formnovalidate class="b sm line grow"
                                     onclick="return confirm('Issue a new card? The old QR code stops working.');">Re-issue card</button>
@@ -385,7 +441,7 @@ engage_header([
 
         <div class="panel">
             <h3>Import mentees</h3>
-            <p>Confirmed scholarship awardees from one of your program forms.</p>
+            <p>Confirmed scholarship awardees from one of your program forms. Add their affiliation afterwards if the card should show one.</p>
             <form method="get" class="form-grid" style="grid-template-columns:1fr auto">
                 <input type="hidden" name="event" value="<?= $eventId ?>">
                 <select name="form" aria-label="Form" style="margin:0">
@@ -419,23 +475,6 @@ engage_header([
         </div>
 
         <div class="panel">
-            <h3>Add one person</h3>
-            <p>For organisers, facilitators and guests.</p>
-            <form method="post" class="form-grid" style="grid-template-columns:1fr">
-                <?= ec_csrf_field() ?>
-                <input type="hidden" name="action" value="add_person">
-                <?= CSRF::getSubmitField() ?>
-                <input type="hidden" name="event_id" value="<?= $eventId ?>">
-                <label class="fld">Name<input type="text" name="name" maxlength="80" required></label>
-                <label class="fld">Role<select name="role">
-                    <?php foreach (EventCardModel::ROLES as $role => $color): ?><option><?= $h($role) ?></option><?php endforeach; ?>
-                </select></label>
-                <label class="fld">Affiliation<small>Optional</small><input type="text" name="affiliation" maxlength="120" placeholder="<?= $h(EventCardModel::DEFAULT_AFFILIATION) ?>"></label>
-                <div><button type="submit" class="b">Add person</button></div>
-            </form>
-        </div>
-
-        <div class="panel">
             <h3>Upload a CSV</h3>
             <p>Columns: <code>name</code> <code>role</code> <code>affiliation</code> (affiliation is optional). Roles: <?= $h(implode(', ', array_keys(EventCardModel::ROLES))) ?>.</p>
             <form method="post" enctype="multipart/form-data">
@@ -448,7 +487,38 @@ engage_header([
             </form>
         </div>
 
+        <div class="panel span">
+            <h3>Add one person</h3>
+            <p>For organisers, volunteers, facilitators and guests. The card on the right updates as you type.</p>
+            <div class="live-wrap">
+                <form method="post" class="form-grid" style="grid-template-columns:1fr" id="ec-add">
+                    <?= ec_csrf_field() ?>
+                    <input type="hidden" name="action" value="add_person">
+                    <?= CSRF::getSubmitField() ?>
+                    <input type="hidden" name="event_id" value="<?= $eventId ?>">
+                    <label class="fld">Name<input type="text" name="name" maxlength="80" required></label>
+                    <label class="fld">Role<select name="role">
+                        <?php foreach (EventCardModel::ROLES as $role => $color): ?><option><?= $h($role) ?></option><?php endforeach; ?>
+                    </select></label>
+                    <label class="fld">Affiliation<small>Optional. Organisers and volunteers default to <?= $h(EventCardModel::DEFAULT_AFFILIATION) ?>.</small><input type="text" name="affiliation" maxlength="120"></label>
+                    <div><button type="submit" class="b">Add person</button></div>
+                </form>
+                <div class="live">
+                    <div class="seg" role="group" aria-label="Card side"><button type="button" data-side="front" class="on">Front</button><button type="button" data-side="back">Back</button></div>
+                    <iframe class="card" id="ec-live" title="Live card preview"></iframe>
+                </div>
+            </div>
+        </div>
+
     </div>
+
+    <dialog class="pv" id="ec-pv" aria-label="Card preview">
+        <div class="pv-bar">
+            <div class="seg" role="group" aria-label="Card side"><button type="button" data-side="front" class="on">Front</button><button type="button" data-side="back">Back</button></div>
+            <button type="button" class="b sm line" id="ec-pv-close">Close</button>
+        </div>
+        <iframe class="card" id="ec-pv-frame" title="Card preview"></iframe>
+    </dialog>
 
     <script>
     // Role chips and search narrow the people list in the browser; nothing is sent to the server.
@@ -471,6 +541,57 @@ engage_header([
             roles.querySelectorAll('.rchip').forEach(function (x) { x.classList.toggle('on', x === b); });
             run();
         });
+    })();
+
+    // Card previews. The server draws the card (same template as the PDF); these only point an iframe at it.
+    // A form's current values are sent along, so a name or role that is typed but not saved yet shows up too.
+    (function () {
+        var EVENT = <?= (int) $eventId ?>;
+        function url(pid, side, form) {
+            var u = new URLSearchParams({ event: EVENT, preview: pid, side: side });
+            if (form) ['name', 'role', 'affiliation'].forEach(function (k) {
+                if (form.elements[k]) u.set(k, form.elements[k].value);
+            });
+            return '/admin/event-cards?' + u.toString();
+        }
+        function segment(box, side) {
+            box.querySelectorAll('button').forEach(function (b) { b.classList.toggle('on', b.dataset.side === side); });
+        }
+
+        // Modal, one per page, opened from a person's row.
+        var dlg = document.getElementById('ec-pv'), frame = document.getElementById('ec-pv-frame');
+        var st = { pid: 0, form: null, side: 'front' };
+        function show() { frame.src = url(st.pid, st.side, st.form); segment(dlg.querySelector('.seg'), st.side); }
+        document.addEventListener('click', function (e) {
+            var b = e.target.closest('[data-preview]');
+            if (!b) return;
+            st = { pid: b.dataset.preview, form: document.getElementById('u' + b.dataset.preview), side: 'front' };
+            show();
+            if (dlg.showModal) dlg.showModal();
+        });
+        dlg.querySelector('.seg').addEventListener('click', function (e) {
+            var b = e.target.closest('button'); if (!b) return;
+            st.side = b.dataset.side; show();
+        });
+        document.getElementById('ec-pv-close').addEventListener('click', function () { dlg.close(); });
+        dlg.addEventListener('click', function (e) { if (e.target === dlg) dlg.close(); });
+        dlg.addEventListener('close', function () { frame.removeAttribute('src'); });
+
+        // Live preview beside "Add one person".
+        var add = document.getElementById('ec-add'), live = document.getElementById('ec-live');
+        if (add && live) {
+            var side = 'front', t;
+            var seg = live.parentNode.querySelector('.seg');
+            function draw() { live.src = url(0, side, add); }
+            function later() { clearTimeout(t); t = setTimeout(draw, 250); }
+            add.addEventListener('input', later);
+            add.addEventListener('change', later);
+            seg.addEventListener('click', function (e) {
+                var b = e.target.closest('button'); if (!b) return;
+                side = b.dataset.side; segment(seg, side); draw();
+            });
+            draw();
+        }
     })();
     </script>
 
