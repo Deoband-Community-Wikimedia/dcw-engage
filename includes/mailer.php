@@ -4,7 +4,7 @@
 // Facade. The emails now live in one class per subject under includes/mail/:
 //
 //   CoreMail.php        SMTP + the shared look (nothing else talks to PHPMailer)
-//   ApplicationMail.php      event applications: verification, magic link, received, status, sent back, swag dispatched, organizer alert
+//   ApplicationMail.php      event applications: verification, magic link, received, status, sent back, new resume link, swag dispatched, organizer alert
 //   OrganizerAccountMail.php organizer invitations and password resets
 //   ReimbursementMail.php    reimbursement (members only): received, status (incl. Info Requested)
 //   InternetSupportMail.php  internet support (members only): received, status (incl. Info Requested)
@@ -51,6 +51,11 @@ class Mailer {
     // "Needs information": what the organizer needs + the one-time /resume/<token> link.
     // Returns false when the email was not really sent, so the caller can show the link instead.
     public static function sendSentBack(...$a)            { return ApplicationMail::sentBack(...$a); }
+    // ($email, $applicantName, $trackingId, $formTitle, $message, $token)
+    // "Create a new link" on an application waiting on the applicant (Draft): emails the new /resume/<token>
+    // link, with an optional reviewer note ($message may be ''). Returns false when the email was not really
+    // sent, so the caller can show the link instead.
+    public static function sendResumeLink(...$a)          { return ApplicationMail::resumeLink(...$a); }
     // ($email, $applicantName, $trackingId, $formTitle, $courier, $awb, $trackUrl = '')
     // Swag: "your parcel has been dispatched" with courier and consignment number. Never contains the address.
     // Returns false when the email was not really sent, so the caller can offer "Send dispatch email again".
