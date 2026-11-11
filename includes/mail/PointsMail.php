@@ -3,18 +3,33 @@
 // Emails for Goodies (member points): decisions on claims, and the life of an order.
 //
 //   claimUpdate        a claim was approved, not approved, or a reviewer asks for more information
-//   orderPlaced        receipt for a redemption (tracking ID, what was ordered; never the address)
+//   orderPlaced        receipt for an order: tracking ID and the goodies in it (never the address)
 //   orderDispatched    the order is on its way: courier + consignment (AWB) number + optional tracking link,
-//                      or "handed over by hand". Never contains the delivery address.
-//   orderCancelled     the order was cancelled and the points were refunded
+//                      or "handed over by hand". Lists the units that are really being sent. Never the address.
+//   orderRefunded      part of an order will not be sent: those units were refunded, the rest is still coming
+//   orderCancelled     the whole order was cancelled and the points were refunded
 //
+// A "line" is ['name' => goody name, 'variant' => size or '', 'qty' => units].
 // None of them repeats what a reviewer wrote to the member (the reason or the question): the member reads that
 // signed in, behind the button. Called through the Mailer facade (includes/mailer.php).
 require_once __DIR__ . '/CoreMail.php';
 
 class PointsMail {
-    private static function goodsLine($goodyName, $variant) {
-        return (string) $goodyName . ((string) $variant !== '' ? ' (' . $variant . ')' : '');
+    /** "2 × T-shirt (M)" */
+    private static function linePlain(array $l) {
+        $q = max(1, (int) ($l['qty'] ?? 1));
+        $v = trim((string) ($l['variant'] ?? ''));
+        return $q . ' × ' . (string) ($l['name'] ?? '') . ($v !== '' ? ' (' . $v . ')' : '');
+    }
+
+    private static function linesHtml(array $lines) {
+        $li = '';
+        foreach ($lines as $l) $li .= '<li>' . CoreMail::e(self::linePlain($l)) . '</li>';
+        return "<ul style='margin:0 0 16px; padding-left:20px; line-height:1.7;'>$li</ul>";
+    }
+
+    private static function linesPlain(array $lines) {
+        return implode("\n", array_map(fn($l) => '  - ' . self::linePlain($l), $lines));
     }
 
     /**
@@ -56,43 +71,43 @@ class PointsMail {
         ]);
     }
 
-    /** ($email, $memberName, $trackingId, $goodyName, $variant, $points) */
-    public static function orderPlaced($email, $memberName, $trackingId, $goodyName, $variant, $points) {
+    /** ($email, $memberName, $trackingId, array $lines, $points) */
+    public static function orderPlaced($email, $memberName, $trackingId, $lines, $points) {
         $e = fn($s) => CoreMail::e($s);
-        $what = self::goodsLine($goodyName, $variant);
         $url = CoreMail::appUrl() . '/member/goodies#orders';
 
         $inner = '<p>' . CoreMail::greeting($memberName) . '</p>'
-               . "<p>Thank you. We have received your order for <strong>" . $e($what) . "</strong> (" . number_format((int) $points) . " points).</p>"
+               . "<p>Thank you. We have received your order (" . number_format((int) $points) . " points):</p>"
+               . self::linesHtml($lines)
                . "<p><strong>Order ID:</strong> " . $e($trackingId) . "</p>"
                . "<p>We will email you once it is dispatched. You can track its status at any time under <em>My orders</em>.</p>"
                . CoreMail::button($url, 'View my orders');
-        $alt = CoreMail::greeting($memberName, false) . "\n\nThank you. We have received your order for $what (" . number_format((int) $points) . " points).\nOrder ID: $trackingId\n\nWe will email you once it is dispatched. You can track it under My orders:\n$url\n\nDeoband Community Wikimedia";
+        $alt = CoreMail::greeting($memberName, false) . "\n\nThank you. We have received your order (" . number_format((int) $points) . " points):\n"
+             . self::linesPlain($lines) . "\n\nOrder ID: $trackingId\n\nWe will email you once it is dispatched. You can track it under My orders:\n$url\n\nDeoband Community Wikimedia";
 
         return CoreMail::send([
             'to' => $email, 'to_name' => CoreMail::cleanName($memberName),
             'subject' => "We have received your order - $trackingId",
             'html' => $inner, 'alt' => $alt,
-            'dev_result' => true, 'dev_log' => "Order receipt for $email ($trackingId, $what)",
+            'dev_result' => true, 'dev_log' => "Order receipt for $email ($trackingId)",
         ]);
     }
 
     /**
-     * ($email, $memberName, $trackingId, $goodyName, $variant, $method, $courier, $awb, $trackUrl, $handoverNote)
-     * $method is 'courier' or 'hand'. Never contains the address.
+     * ($email, $memberName, $trackingId, array $lines, $method, $courier, $awb, $trackUrl, $handoverNote)
+     * $lines are the units that are really being sent. $method is 'courier' or 'hand'. Never contains the address.
      * dev_result is false on purpose: the admin page treats false as "not sent" and offers "Send email again".
      */
-    public static function orderDispatched($email, $memberName, $trackingId, $goodyName, $variant, $method, $courier, $awb, $trackUrl, $handoverNote) {
+    public static function orderDispatched($email, $memberName, $trackingId, $lines, $method, $courier, $awb, $trackUrl, $handoverNote) {
         $e = fn($s) => CoreMail::e($s);
-        $what = self::goodsLine($goodyName, $variant);
         $page = CoreMail::appUrl() . '/member/goodies#orders';
 
         if ($method === 'hand') {
             $box = "<div style='background:#f1f7fb; border-left:4px solid #106b9a; padding:14px 18px; margin:0 0 20px; line-height:1.7;'>"
                  . "<strong>Delivery:</strong> by hand<br><strong>Details:</strong> " . $e($handoverNote) . "</div>";
             $boxPlain = "Delivery: by hand\nDetails: $handoverNote\n";
-            $intro = "Your order for <strong>" . $e($what) . "</strong> is being handed over to you.";
-            $introPlain = "Your order for $what is being handed over to you.";
+            $intro = "Your order is being handed over to you. It contains:";
+            $introPlain = "Your order is being handed over to you. It contains:";
             $subject = "Your order is being handed over - $trackingId";
         } else {
             $link = trim((string) $trackUrl) !== ''
@@ -101,15 +116,15 @@ class PointsMail {
                  . "<strong>Courier:</strong> " . $e($courier) . "<br>"
                  . "<strong>Consignment (AWB) number:</strong> <span style='font-family:Menlo,Consolas,monospace;'>" . $e($awb) . "</span></div>" . $link;
             $boxPlain = "Courier: $courier\nConsignment (AWB) number: $awb\n" . (trim((string) $trackUrl) !== '' ? "Track your parcel: $trackUrl\n" : '');
-            $intro = "Your order for <strong>" . $e($what) . "</strong> has been dispatched to the address you provided.";
-            $introPlain = "Your order for $what has been dispatched to the address you provided.";
+            $intro = "Your order has been dispatched to the address you provided. It contains:";
+            $introPlain = "Your order has been dispatched to the address you provided. It contains:";
             $subject = "Your order has been dispatched - $trackingId";
         }
 
-        $inner = '<p>' . CoreMail::greeting($memberName) . "</p><p>$intro</p>$box"
+        $inner = '<p>' . CoreMail::greeting($memberName) . "</p><p>$intro</p>" . self::linesHtml($lines) . $box
                . "<p style='font-size:14px; color:#64748b;'>Your order ID is " . $e($trackingId) . ($method === 'hand' ? '.' : ". Please quote the consignment number above when contacting the courier; the order ID is a separate number.") . "</p>"
                . CoreMail::button($page, 'View my orders');
-        $alt = CoreMail::greeting($memberName, false) . "\n\n$introPlain\n\n$boxPlain\nYour order ID is $trackingId.\nMy orders: $page\n\nDeoband Community Wikimedia";
+        $alt = CoreMail::greeting($memberName, false) . "\n\n$introPlain\n" . self::linesPlain($lines) . "\n\n$boxPlain\nYour order ID is $trackingId.\nMy orders: $page\n\nDeoband Community Wikimedia";
 
         return CoreMail::send([
             'to' => $email, 'to_name' => CoreMail::cleanName($memberName),
@@ -119,17 +134,40 @@ class PointsMail {
         ]);
     }
 
-    /** ($email, $memberName, $trackingId, $goodyName, $variant, $points) */
-    public static function orderCancelled($email, $memberName, $trackingId, $goodyName, $variant, $points) {
+    /** ($email, $memberName, $trackingId, array $lines, $points) $lines = the refunded units, $points = what was credited. */
+    public static function orderRefunded($email, $memberName, $trackingId, $lines, $points) {
         $e = fn($s) => CoreMail::e($s);
-        $what = self::goodsLine($goodyName, $variant);
+        $url = CoreMail::appUrl() . '/member/goodies#orders';
+
+        $inner = '<p>' . CoreMail::greeting($memberName) . '</p>'
+               . "<p>We are unable to send part of your order <strong>" . $e($trackingId) . "</strong>:</p>"
+               . self::linesHtml($lines)
+               . "<p><strong>" . number_format((int) $points) . " points</strong> have been credited back to your balance. The rest of your order will still be sent.</p>"
+               . "<p style='margin-bottom:0;'>You can read the details under <em>My orders</em>.</p>"
+               . CoreMail::button($url, 'View my orders');
+        $alt = CoreMail::greeting($memberName, false) . "\n\nWe are unable to send part of your order $trackingId:\n" . self::linesPlain($lines)
+             . "\n\n" . number_format((int) $points) . " points have been credited back to your balance. The rest of your order will still be sent.\n\nDetails under My orders:\n$url\n\nDeoband Community Wikimedia";
+
+        return CoreMail::send([
+            'to' => $email, 'to_name' => CoreMail::cleanName($memberName),
+            'subject' => "Part of your order was refunded - $trackingId",
+            'html' => $inner, 'alt' => $alt,
+            'dev_result' => true, 'dev_log' => "Order refund email for $email ($trackingId)",
+        ]);
+    }
+
+    /** ($email, $memberName, $trackingId, array $lines, $points) $points = everything credited back for this order. */
+    public static function orderCancelled($email, $memberName, $trackingId, $lines, $points) {
+        $e = fn($s) => CoreMail::e($s);
         $url = CoreMail::appUrl() . '/member/goodies';
 
         $inner = '<p>' . CoreMail::greeting($memberName) . '</p>'
-               . "<p>Your order <strong>" . $e($trackingId) . "</strong> for <strong>" . $e($what) . "</strong> has been cancelled, and <strong>" . number_format((int) $points) . " points</strong> have been credited back to your balance.</p>"
+               . "<p>Your order <strong>" . $e($trackingId) . "</strong> has been cancelled, and <strong>" . number_format((int) $points) . " points</strong> have been credited back to your balance. It contained:</p>"
+               . self::linesHtml($lines)
                . "<p style='margin-bottom:0;'>If you have any queries, please write to DCW Support from your dashboard.</p>"
                . CoreMail::button($url, 'View my points');
-        $alt = CoreMail::greeting($memberName, false) . "\n\nYour order $trackingId for $what has been cancelled, and " . number_format((int) $points) . " points have been credited back to your balance.\n\nIf you have any queries, please write to DCW Support from your dashboard.\n$url\n\nDeoband Community Wikimedia";
+        $alt = CoreMail::greeting($memberName, false) . "\n\nYour order $trackingId has been cancelled, and " . number_format((int) $points) . " points have been credited back to your balance. It contained:\n"
+             . self::linesPlain($lines) . "\n\nIf you have any queries, please write to DCW Support from your dashboard.\n$url\n\nDeoband Community Wikimedia";
 
         return CoreMail::send([
             'to' => $email, 'to_name' => CoreMail::cleanName($memberName),
