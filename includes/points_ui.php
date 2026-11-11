@@ -85,8 +85,9 @@ function points_entry_view(array $r): array
             break;
 
         case 'refund':
-            $v['title'] = 'Order cancelled: points refunded';
-            $v['sub']   = trim(($r['goody_name'] ?? '') . ' ' . ($r['order_tracking'] ?? ''));
+            $partial = (int) ($r['refund_id'] ?? 0) > 0;      // a refund of named units, not an old whole-order refund
+            $v['title'] = $partial ? 'Refund: ' . ((string) ($r['goody_name'] ?? '') !== '' ? $r['goody_name'] : 'item') : 'Order cancelled: points refunded';
+            $v['sub']   = $partial ? (string) ($r['order_tracking'] ?? '') : trim(($r['goody_name'] ?? '') . ' ' . ($r['order_tracking'] ?? ''));
             $v['emoji'] = '↩️';
             break;
 
