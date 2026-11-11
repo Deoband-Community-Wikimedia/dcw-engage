@@ -22,12 +22,14 @@ require_once __DIR__ . '/../../includes/goodies_orders_admin.php';
  *                models/PointClaimModel.php. ?status= filters it: open (default), Approved, Rejected, Withdrawn, all.
  *   guide        read-only "what earns points" view of every active activity and its points
  *   activities   what can earn points and how many; changing points revises awards already made (#208).
- *                "Members can claim it" switches an activity on for claiming. "Edit points in bulk" (?mode=bulk)
- *                edits many at once: review first, then one transaction.
- *   catalogue    add and edit goodies, their point costs, pictures and (optionally) their stock
+ *                "Members can claim it" switches an activity on for claiming; "Cooldown (days)" makes a claim
+ *                repeatable (for example 100+ edits in 30 days) and "Needs a verified Wikimedia username" gates it.
+ *                "Edit points in bulk" (?mode=bulk) edits many at once: review first, then one transaction.
+ *   catalogue    add and edit goodies, their point costs, pictures, an optional "max per order" and (optionally) their stock
  *   redemptions  the order queue: Requested > Ordered > Shipped > Delivered (or Cancelled, which refunds
- *                the points and puts the item back in stock). "Mark shipped…" records HOW it is sent: courier +
- *                consignment (AWB) number, or by hand. The member is emailed and sees the same on My orders
+ *                the points and puts the items back in stock). An order is a cart of several goodies; part of it
+ *                can be refunded ("order_refund") while the rest ships. "Mark shipped…" records HOW it is sent:
+ *                courier + consignment (AWB) number, or by hand. The member is emailed and sees the same on My orders
  *                (includes/goodies_orders_admin.php; ?status= filters the queue by order status).
  *
  * Stock (catalogue tab): optional per goody. "Track stock" off = unlimited. On = one number, or one number
@@ -402,7 +404,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
             $r = $model->saveGoody(((int) ($_POST['id'] ?? 0)) ?: null, (string) ($_POST['name'] ?? ''), (string) ($_POST['description'] ?? ''),
-                (int) ($_POST['points_cost'] ?? 0), (string) ($_POST['variants'] ?? ''), !empty($_POST['is_active']), $actor, $stock);
+                (int) ($_POST['points_cost'] ?? 0), (string) ($_POST['variants'] ?? ''), !empty($_POST['is_active']), $actor, $stock,
+                trim((string) ($_POST['max_per_order'] ?? '')) !== '' ? (int) $_POST['max_per_order'] : null);
             $kind = $r['ok'] ? 'ok' : 'error';
             $msg  = $r['ok'] ? 'Catalogue updated.' : $r['error'];
 
@@ -427,7 +430,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif (str_starts_with($do, 'claim_')) {
             // $ownIds, not $planOwn: nobody decides a claim from their own Member ID, owners included.
             $back = goodies_claims_post($do, $claimModel, $actor, $isOwner, $ownIds);
-        } elseif ($do === 'order_status' || $do === 'order_resend') {
+        } elseif ($do === 'order_status' || $do === 'order_resend' || $do === 'order_refund') {
             $back = 'redemptions';
             goodies_orders_post($do, $model, $actor);
         }
@@ -1306,6 +1309,7 @@ engage_header([
                                 <?php if ((int) $t['needs_evidence']): ?><span class="ac-tag">Evidence link</span><?php endif; ?>
                                 <?php if ((int) ($t['one_time'] ?? 0)): ?><span class="ac-tag">Once per member</span><?php endif; ?>
                                 <?php if (!empty($t['member_claimable'])): ?><span class="ac-tag">Members can claim</span><?php endif; ?>
+                                <?php if (($t['cooldown_days'] ?? null) !== null): ?><span class="ac-tag">Every <?= (int) $t['cooldown_days'] ?> days</span><?php endif; ?>
                                 <?php if ($hasMin): ?><span class="ac-tag">Host: <?= (int) $t['below_min_points'] ?> pts under <?= (int) $t['min_attendees'] ?> attendees</span><?php endif; ?>
                             </div>
                             <div class="pg-pts"><?= number_format((int) $t['points']) ?><small>points</small></div>
@@ -1497,18 +1501,20 @@ engage_header([
                     </select>
                 </label>
                 <label>Points<input type="number" name="points" min="1" max="10000" required></label>
+                <label>Cooldown (days)<small>Optional. A member can claim it again only after this many days.</small><input type="number" name="cooldown_days" min="1" max="365"></label>
                 <div class="ac-flags">
                     <label class="gd-tg"><input type="checkbox" name="needs_evidence" value="1"> Needs an evidence link</label>
                     <label class="gd-tg"><input type="checkbox" name="one_time" value="1"> Only once per member</label>
                     <label class="gd-tg"><input type="checkbox" name="is_active" value="1" checked> Can be awarded</label>
                     <label class="gd-tg"><input type="checkbox" name="member_claimable" value="1"> Members can claim it</label>
+                    <label class="gd-tg"><input type="checkbox" name="needs_username" value="1"> Needs a verified Wikimedia username</label>
                 </div>
                 <div class="ac-foot"><button type="submit" class="gd-btn">Add activity</button></div>
             </form>
         </section>
     </details>
 
-    <p class="gd-info"><strong>Changing points revises past awards.</strong> Every award already made for that activity moves each member’s balance by the difference, and it shows in their history. Awards of <?= (int) PointsModel::SECOND_APPROVAL_AT ?> points or more made by a reviewer need a second reviewer (awards made by an owner are the exception). An activity that has been awarded can be switched off but not deleted. <strong>Members can claim it</strong> lets members ask for these points themselves; you decide each claim on the Claims tab.</p>
+    <p class="gd-info"><strong>Changing points revises past awards.</strong> Every award already made for that activity moves each member’s balance by the difference, and it shows in their history. Awards of <?= (int) PointsModel::SECOND_APPROVAL_AT ?> points or more made by a reviewer need a second reviewer (awards made by an owner are the exception). An activity that has been awarded can be switched off but not deleted. <strong>Members can claim it</strong> lets members ask for these points themselves; you decide each claim on the Claims tab. A <strong>cooldown</strong> makes a claim repeatable (for example every 30 days), and cannot be combined with “Only once per member”.</p>
 
     <?php foreach ($groupOrder as $cat): $rows = $groups[$cat]; ?>
         <section class="ac-group" data-cat="<?= htmlspecialchars($cat) ?>" style="--h:<?= $gdHue($cat) ?>">
@@ -1532,6 +1538,7 @@ engage_header([
                                 <?php if ($hasMin): ?><span class="ac-tag">Host: <?= (int) $t['below_min_points'] ?> pts under <?= (int) $t['min_attendees'] ?> attendees</span><?php endif; ?>
                                 <?php if ($builtIn): ?><span class="ac-tag">Used by the app</span><?php endif; ?>
                                 <?php if (!empty($t['member_claimable'])): ?><span class="ac-tag">Members can claim</span><?php endif; ?>
+                                <?php if (($t['cooldown_days'] ?? null) !== null): ?><span class="ac-tag">Every <?= (int) $t['cooldown_days'] ?> days</span><?php endif; ?>
                                 <span><?= $used ? 'Awarded ' . $used . ' time' . ($used === 1 ? '' : 's') : 'Not awarded yet' ?></span>
                             </span>
                         </div>
@@ -1551,13 +1558,15 @@ engage_header([
                             </select>
                         </label>
                         <label>Points<input type="number" name="points" value="<?= (int) $t['points'] ?>" min="1" max="10000" required></label>
+                        <label>Cooldown (days)<small>Optional. A member can claim it again only after this many days.</small><input type="number" name="cooldown_days" value="<?= ($t['cooldown_days'] ?? null) === null ? '' : (int) $t['cooldown_days'] ?>" min="1" max="365"></label>
                         <label>Minimum attendance<small>Optional. For hosts only.</small><input type="number" name="min_attendees" value="<?= $t['min_attendees'] === null ? '' : (int) $t['min_attendees'] ?>" min="1" max="1000"></label>
                         <label>Points under the minimum<small>What the host earns below it.</small><input type="number" name="below_min_points" value="<?= $t['below_min_points'] === null ? '' : (int) $t['below_min_points'] ?>" min="0" max="10000"></label>
                         <div class="ac-flags">
                             <label class="gd-tg"><input type="checkbox" name="needs_evidence" value="1"<?= (int) $t['needs_evidence'] ? ' checked' : '' ?>> Needs an evidence link</label>
                             <label class="gd-tg"><input type="checkbox" name="one_time" value="1"<?= (int) ($t['one_time'] ?? 0) ? ' checked' : '' ?>> Only once per member</label>
                             <label class="gd-tg"><input type="checkbox" name="is_active" value="1"<?= $on ? ' checked' : '' ?>> Can be awarded</label>
-                            <?php if (!$builtIn): ?><label class="gd-tg"><input type="checkbox" name="member_claimable" value="1"<?= !empty($t['member_claimable']) ? ' checked' : '' ?>> Members can claim it</label><?php endif; ?>
+                            <?php if (!$builtIn): ?><label class="gd-tg"><input type="checkbox" name="member_claimable" value="1"<?= !empty($t['member_claimable']) ? ' checked' : '' ?>> Members can claim it</label>
+                            <label class="gd-tg"><input type="checkbox" name="needs_username" value="1"<?= !empty($t['needs_username']) ? ' checked' : '' ?>> Needs a verified Wikimedia username</label><?php endif; ?>
                         </div>
                         <div class="ac-foot">
                             <button type="submit" class="gd-btn">Save changes</button>
@@ -1629,6 +1638,7 @@ engage_header([
                 <label>Name<input type="text" name="name" required maxlength="120"></label>
                 <label>Cost (points)<input type="number" name="points_cost" min="1" max="100000" required></label>
                 <label>Sizes or options<small>Comma separated, optional</small><input type="text" name="variants" placeholder="S, M, L, XL"></label>
+                <label>Max per order<small>Blank = no limit. Big items 1, smaller items 2.</small><input type="number" name="max_per_order" min="1" max="99" placeholder="e.g. 1"></label>
                 <label class="wide">Description<input type="text" name="description" maxlength="500"></label>
                 <?php $gdImages(null); ?>
                 <?php $gdStock(null); ?>
@@ -1638,7 +1648,7 @@ engage_header([
         </section>
     </details>
 
-    <p class="gd-info">Members only see goodies that are switched on. Changing a cost never affects orders already placed. With <strong>Track stock</strong> on, each order takes one item from stock and a cancelled order puts it back. The first picture of a goody is its cover on the member page; without a picture members see a coloured initial.</p>
+    <p class="gd-info">Members only see goodies that are switched on. Changing a cost never affects orders already placed. With <strong>Track stock</strong> on, each order takes its units from stock and a cancelled order puts them back. <strong>Max per order</strong> caps the units of a goody in one order, across all its sizes. The first picture of a goody is its cover on the member page; without a picture members see a coloured initial.</p>
 
     <section>
         <h4 style="margin:0 0 10px;font-size:15px">Catalogue <span style="color:var(--muted);font-weight:500;font-size:13px"><?= count($goodies) ?></span></h4>
@@ -1658,6 +1668,7 @@ engage_header([
                                     <span class="ac-tag<?= $n !== null && $n < 1 ? ' warn' : '' ?>"><?= htmlspecialchars($v) ?><?= $n !== null ? ': ' . $n : '' ?></span>
                                 <?php endforeach;
                             elseif ($tracked): ?><span class="ac-tag<?= PointsModel::inStock($g) ? '' : ' warn' ?>"><?= (int) PointsModel::stockFor($g) ?> in stock</span><?php endif; ?>
+                            <?php if ($g['max_per_order'] !== null): ?><span class="ac-tag">Max <?= (int) $g['max_per_order'] ?> per order</span><?php endif; ?>
                             <?php if ($g['images']): ?><span class="ac-tag"><?= count($g['images']) ?> picture<?= count($g['images']) === 1 ? '' : 's' ?></span><?php endif; ?>
                             <?php if ((string) $g['description'] !== ''): ?><span><?= htmlspecialchars(mb_strimwidth((string) $g['description'], 0, 90, '…')) ?></span><?php endif; ?>
                         </span>
@@ -1672,6 +1683,7 @@ engage_header([
                     <label>Name<input type="text" name="name" value="<?= htmlspecialchars($g['name']) ?>" required maxlength="120"></label>
                     <label>Cost (points)<input type="number" name="points_cost" value="<?= (int) $g['points_cost'] ?>" min="1" max="100000" required></label>
                     <label>Options<small>Comma separated</small><input type="text" name="variants" value="<?= htmlspecialchars(implode(', ', $g['variants'])) ?>"></label>
+                    <label>Max per order<small>Blank = no limit</small><input type="number" name="max_per_order" min="1" max="99" value="<?= $g['max_per_order'] === null ? '' : (int) $g['max_per_order'] ?>"></label>
                     <label class="wide">Description<input type="text" name="description" value="<?= htmlspecialchars((string) $g['description']) ?>" maxlength="500"></label>
                     <?php $gdImages($g); ?>
                     <?php $gdStock($g); ?>
@@ -1752,7 +1764,7 @@ engage_header([
         <?php else: foreach ($orders as $o): $ship = $o['shipping']; ?>
             <div class="gd-row">
                 <div>
-                    <strong><?= htmlspecialchars($o['goody_name']) ?><?= $o['variant'] ? ' (' . htmlspecialchars((string) $o['variant']) . ')' : '' ?> · <?= (int) $o['points_spent'] ?> pts</strong>
+                    <strong><?= htmlspecialchars($o['goody_name']) ?> · <?= (int) $o['net_points'] ?> pts<?= (int) $o['refunded_points'] > 0 ? ' (' . (int) $o['refunded_points'] . ' refunded)' : '' ?></strong>
                     <p><code><?= htmlspecialchars((string) $o['tracking_id']) ?></code> · Member <?= htmlspecialchars((string) $o['member_id']) ?> · <?= htmlspecialchars($when($o['created_at'])) ?> · <strong><?= htmlspecialchars((string) $o['status']) ?></strong></p>
                     <?php if ($ship): ?>
                         <p>Ship to <?= htmlspecialchars((string) ($ship['name'] ?? '')) ?>, <?= htmlspecialchars((string) ($ship['phone'] ?? '')) ?> · <?= nl2br(htmlspecialchars((string) ($ship['address'] ?? ''))) ?></p>
@@ -1760,6 +1772,7 @@ engage_header([
                         <p>Shipping details cleared.</p>
                     <?php endif; ?>
                     <?php goodies_order_info($o); ?>
+                    <?php goodies_order_items($o); ?>
                 </div>
                 <div>
                     <?php goodies_order_actions($o); ?>
