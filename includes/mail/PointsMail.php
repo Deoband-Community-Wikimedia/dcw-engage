@@ -5,7 +5,7 @@
 //   claimUpdate        a claim was approved, not approved, or a reviewer asks for more information
 //   orderPlaced        receipt for an order: tracking ID and the goodies in it (never the address)
 //   orderDispatched    the order is on its way: courier + consignment (AWB) number + optional tracking link,
-//                      or "handed over by hand". Lists the units that are really being sent. Never the address.
+//                      or "handed over in person". Lists the units that are really being sent. Never the address.
 //   orderRefunded      part of an order will not be sent: those units were refunded, the rest is still coming
 //   orderCancelled     the whole order was cancelled and the points were refunded
 //
@@ -42,9 +42,9 @@ class PointsMail {
 
         if ($kind === 'approved') {
             $subject = "Your points claim has been approved - $trackingId";
-            $line = "Good news: your claim <strong>" . $e($trackingId) . "</strong> for points has been approved. The points have been credited to your balance. "
+            $line = "Good news: your claim <strong>" . $e($trackingId) . "</strong> for points has been approved and credited to your balance. "
                   . "A large award may initially appear as <em>waiting for approval</em> until a second reviewer confirms it.";
-            $plain = "Good news: your claim $trackingId for points has been approved. The points have been credited to your balance. A large award may initially appear as waiting for approval until a second reviewer confirms it.";
+            $plain = "Good news: your claim $trackingId for points has been approved and credited to your balance. A large award may initially appear as waiting for approval until a second reviewer confirms it.";
             $button = 'View my points';
             $url = CoreMail::appUrl() . '/member/goodies';
         } elseif ($kind === 'rejected') {
@@ -104,11 +104,11 @@ class PointsMail {
 
         if ($method === 'hand') {
             $box = "<div style='background:#f1f7fb; border-left:4px solid #106b9a; padding:14px 18px; margin:0 0 20px; line-height:1.7;'>"
-                 . "<strong>Delivery:</strong> by hand<br><strong>Details:</strong> " . $e($handoverNote) . "</div>";
-            $boxPlain = "Delivery: by hand\nDetails: $handoverNote\n";
-            $intro = "Your order is being handed over to you. It contains:";
-            $introPlain = "Your order is being handed over to you. It contains:";
-            $subject = "Your order is being handed over - $trackingId";
+                 . "<strong>Delivery:</strong> In person<br><strong>Details:</strong> " . $e($handoverNote) . "</div>";
+            $boxPlain = "Delivery: In person\nDetails: $handoverNote\n";
+            $intro = "Your order is ready to be handed over to you. It contains:";
+            $introPlain = "Your order is ready to be handed over to you. It contains:";
+            $subject = "Your order is ready for handover - $trackingId";
         } else {
             $link = trim((string) $trackUrl) !== ''
                 ? "<p><strong>Track your parcel:</strong> <a href='" . $e($trackUrl) . "' style='color:#106b9a; word-break:break-all;'>" . $e($trackUrl) . "</a></p>" : '';
@@ -116,8 +116,8 @@ class PointsMail {
                  . "<strong>Courier:</strong> " . $e($courier) . "<br>"
                  . "<strong>Consignment (AWB) number:</strong> <span style='font-family:Menlo,Consolas,monospace;'>" . $e($awb) . "</span></div>" . $link;
             $boxPlain = "Courier: $courier\nConsignment (AWB) number: $awb\n" . (trim((string) $trackUrl) !== '' ? "Track your parcel: $trackUrl\n" : '');
-            $intro = "Your order has been dispatched to the address you provided. It contains:";
-            $introPlain = "Your order has been dispatched to the address you provided. It contains:";
+            $intro = "Your order has been dispatched to your provided address. It contains:";
+            $introPlain = "Your order has been dispatched to your provided address. It contains:";
             $subject = "Your order has been dispatched - $trackingId";
         }
 
@@ -140,17 +140,17 @@ class PointsMail {
         $url = CoreMail::appUrl() . '/member/goodies#orders';
 
         $inner = '<p>' . CoreMail::greeting($memberName) . '</p>'
-               . "<p>We are unable to send part of your order <strong>" . $e($trackingId) . "</strong>:</p>"
+               . "<p>We are unable to fulfill part of your order <strong>" . $e($trackingId) . "</strong>:</p>"
                . self::linesHtml($lines)
                . "<p><strong>" . number_format((int) $points) . " points</strong> have been credited back to your balance. The rest of your order will still be sent.</p>"
-               . "<p style='margin-bottom:0;'>You can read the details under <em>My orders</em>.</p>"
+               . "<p style='margin-bottom:0;'>You can check the details under <em>My orders</em>.</p>"
                . CoreMail::button($url, 'View my orders');
-        $alt = CoreMail::greeting($memberName, false) . "\n\nWe are unable to send part of your order $trackingId:\n" . self::linesPlain($lines)
+        $alt = CoreMail::greeting($memberName, false) . "\n\nWe are unable to fulfill part of your order $trackingId:\n" . self::linesPlain($lines)
              . "\n\n" . number_format((int) $points) . " points have been credited back to your balance. The rest of your order will still be sent.\n\nDetails under My orders:\n$url\n\nDeoband Community Wikimedia";
 
         return CoreMail::send([
             'to' => $email, 'to_name' => CoreMail::cleanName($memberName),
-            'subject' => "Part of your order was refunded - $trackingId",
+            'subject' => "Part of your order has been refunded - $trackingId",
             'html' => $inner, 'alt' => $alt,
             'dev_result' => true, 'dev_log' => "Order refund email for $email ($trackingId)",
         ]);
