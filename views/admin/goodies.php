@@ -22,8 +22,8 @@ require_once __DIR__ . '/../../includes/goodies_orders_admin.php';
  *                models/PointClaimModel.php. ?status= filters it: open (default), Approved, Rejected, Withdrawn, all.
  *   guide        read-only "what earns points" view of every active activity and its points
  *   activities   what can earn points and how many; changing points revises awards already made (#208).
- *                "Members can claim it" switches an activity on for claiming; "Cooldown (days)" makes a claim
- *                repeatable (for example 100+ edits in 30 days) and "Needs a verified Wikimedia username" gates it.
+ *                "Members can claim it" switches an activity on for claiming and "Cooldown (days)" makes a claim
+ *                repeatable (for example 100+ edits in 30 days).
  *                "Edit points in bulk" (?mode=bulk) edits many at once: review first, then one transaction.
  *   catalogue    add and edit goodies, their point costs, pictures, an optional "max per order" and (optionally) their stock
  *   redemptions  the order queue: Requested > Ordered > Shipped > Delivered (or Cancelled, which refunds
@@ -1507,7 +1507,6 @@ engage_header([
                     <label class="gd-tg"><input type="checkbox" name="one_time" value="1"> Only once per member</label>
                     <label class="gd-tg"><input type="checkbox" name="is_active" value="1" checked> Can be awarded</label>
                     <label class="gd-tg"><input type="checkbox" name="member_claimable" value="1"> Members can claim it</label>
-                    <label class="gd-tg"><input type="checkbox" name="needs_username" value="1"> Needs a verified Wikimedia username</label>
                 </div>
                 <div class="ac-foot"><button type="submit" class="gd-btn">Add activity</button></div>
             </form>
@@ -1565,8 +1564,7 @@ engage_header([
                             <label class="gd-tg"><input type="checkbox" name="needs_evidence" value="1"<?= (int) $t['needs_evidence'] ? ' checked' : '' ?>> Needs an evidence link</label>
                             <label class="gd-tg"><input type="checkbox" name="one_time" value="1"<?= (int) ($t['one_time'] ?? 0) ? ' checked' : '' ?>> Only once per member</label>
                             <label class="gd-tg"><input type="checkbox" name="is_active" value="1"<?= $on ? ' checked' : '' ?>> Can be awarded</label>
-                            <?php if (!$builtIn): ?><label class="gd-tg"><input type="checkbox" name="member_claimable" value="1"<?= !empty($t['member_claimable']) ? ' checked' : '' ?>> Members can claim it</label>
-                            <label class="gd-tg"><input type="checkbox" name="needs_username" value="1"<?= !empty($t['needs_username']) ? ' checked' : '' ?>> Needs a verified Wikimedia username</label><?php endif; ?>
+                            <?php if (!$builtIn): ?><label class="gd-tg"><input type="checkbox" name="member_claimable" value="1"<?= !empty($t['member_claimable']) ? ' checked' : '' ?>> Members can claim it</label><?php endif; ?>
                         </div>
                         <div class="ac-foot">
                             <button type="submit" class="gd-btn">Save changes</button>
