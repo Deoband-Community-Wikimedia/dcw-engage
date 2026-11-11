@@ -66,11 +66,10 @@ UPDATE `goodies` SET `max_per_order` = 2 WHERE `name` = 'Notebook';
 
 -- 6. Repeating claims.
 ALTER TABLE `activity_types`
-  ADD COLUMN `cooldown_days` smallint(5) UNSIGNED DEFAULT NULL AFTER `member_claimable`,
-  ADD COLUMN `needs_username` tinyint(1) NOT NULL DEFAULT 0 AFTER `cooldown_days`;
+  ADD COLUMN `cooldown_days` smallint(5) UNSIGNED DEFAULT NULL AFTER `member_claimable`;
 
 -- The 100+ edits activity: switched OFF until a reviewer sets its points and turns it on (Activities and points tab).
 INSERT IGNORE INTO `activity_types`
-  (`code`,`name`,`category`,`points`,`needs_evidence`,`one_time`,`member_claimable`,`cooldown_days`,`needs_username`,`is_active`)
+  (`code`,`name`,`category`,`points`,`needs_evidence`,`one_time`,`member_claimable`,`cooldown_days`,`is_active`)
 VALUES
-  ('edits_100_30d','Made 100+ edits in the last 30 days','contribute',100,1,0,1,30,1,0);
+  ('edits_100_30d','Made 100+ edits in the last 30 days','contribute',100,1,0,1,30,0);
