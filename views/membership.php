@@ -116,7 +116,7 @@ $alreadyLabel = '';
 $alreadyPending = false;
 if ($alreadyKey !== '') {
     $alreadyLabel = MEMBERSHIP_NEW[$alreadyKey][0];
-    $alreadyPending = ($held[$alreadyKey]['status'] ?? '') !== 'approved';
+    $alreadyPending = ($held[$alreadyKey]['status'] ?? '') !== 'active';
 }
 
 engage_header([
