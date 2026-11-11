@@ -4,6 +4,9 @@
 //   /member/goodies?view=claim        the claim form, the member's claims, and the ways to earn that are not claimable
 //   /member/goodies?claim=PC-XXXXXXXX one claim: status, the conversation, reply / withdraw
 // Needs includes/points_ui.php (points_h, points_cat_hue, points_cat_emoji) and models/PointClaimModel.php.
+//
+// Members never see who the reviewer is. Every reviewer message is labelled "DCW reviewer", and the model does not
+// hand reviewer emails (decided_by, message author) to this page at all. Keep it that way: never print them here.
 
 /** [label, colour] for a claim as the member sees it. */
 function points_claim_status(array $c): array
@@ -72,15 +75,19 @@ function points_claim_css(): void
 /** The claim form. $old is what the member typed last time (kept when a check fails). */
 function points_claim_render_form(array $activities, array $old = []): void
 {
-    $ist   = new DateTimeZone('Asia/Kolkata');
-    $today = new DateTimeImmutable('today', $ist);
-    $min   = $today->modify('-' . PointClaimModel::WINDOW_DAYS . ' days')->format('Y-m-d');
-    $max   = $today->format('Y-m-d');
-    $sel   = (int) ($old['activity_type_id'] ?? 0);
+    $ist      = new DateTimeZone('Asia/Kolkata');
+    $today    = new DateTimeImmutable('today', $ist);
+    $earliest = PointClaimModel::windowStart($today);
+    $min      = $earliest->format('Y-m-d');
+    $max      = $today->format('Y-m-d');
+    $minLabel = $earliest->format('j M Y');
+    $maxLabel = $today->format('j M Y');
+    $days     = (int) PointClaimModel::WINDOW_DAYS;
+    $sel      = (int) ($old['activity_type_id'] ?? 0);
     ?>
     <section class="pc-card">
         <h2>Claim points</h2>
-        <p class="sub">For something you did that DCW did not log for you. A reviewer checks it, usually within a few days. Claims must be made within <?= (int) PointClaimModel::WINDOW_DAYS ?> days of the activity.</p>
+        <p class="sub">For something you did that DCW did not log for you. A reviewer checks it, usually within a few days. Claims must be made within <?= $days ?> days of the activity, so you can claim things that happened from <strong><?= points_h($minLabel) ?></strong> to <strong><?= points_h($maxLabel) ?></strong>.</p>
         <?php if (!$activities): ?>
             <div class="pc-empty">Nothing can be claimed right now. Points for Conversation Hours and other logged sessions are added for you.</div>
         <?php else: ?>
@@ -101,7 +108,10 @@ function points_claim_render_form(array $activities, array $old = []): void
             </div>
 
             <label class="l" for="pc-date">When did it happen?</label>
-            <input type="date" id="pc-date" name="event_date" required min="<?= $min ?>" max="<?= $max ?>" value="<?= points_h($old['event_date'] ?? '') ?>">
+            <input type="date" id="pc-date" name="event_date" required min="<?= $min ?>" max="<?= $max ?>"
+                   data-min-label="<?= points_h($minLabel) ?>" data-max-label="<?= points_h($maxLabel) ?>"
+                   value="<?= points_h($old['event_date'] ?? '') ?>">
+            <span class="hint">Pick a date from <?= points_h($minLabel) ?> to <?= points_h($maxLabel) ?>. Older activity can't be claimed here; if there is a good reason, write to DCW Support.</span>
 
             <label class="l" for="pc-ev">Evidence link <span id="pc-ev-star" style="color:var(--accent-light)" hidden>*</span></label>
             <input type="url" id="pc-ev" name="evidence_url" maxlength="500" placeholder="https://" value="<?= points_h($old['evidence_url'] ?? '') ?>">
@@ -122,6 +132,15 @@ function points_claim_render_form(array $activities, array $old = []): void
                 ev.required = !!need; star.hidden = !need;
             }
             f.addEventListener('change', sync); sync();
+
+            var d = document.getElementById('pc-date');
+            function dateCheck() {
+                d.setCustomValidity('');
+                if (d.validity.rangeUnderflow) d.setCustomValidity('Claims can only be made for ' + d.dataset.minLabel + ' or later (<?= $days ?> days).');
+                else if (d.validity.rangeOverflow) d.setCustomValidity('The date cannot be after ' + d.dataset.maxLabel + '.');
+            }
+            d.addEventListener('input', dateCheck); d.addEventListener('change', dateCheck); dateCheck();
+
             f.addEventListener('submit', function () { setTimeout(function () { f.querySelector('.go').disabled = true; }, 0); });
         })();
         </script>
