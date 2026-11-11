@@ -929,8 +929,8 @@ class PointsModel
 
     /**
      * Create ($id = null) or update an activity. $in holds the form fields: name, category, points,
-     * needs_evidence, one_time, min_attendees, below_min_points, is_active, member_claimable,
-     * cooldown_days (a member can claim it again only after this many days) and needs_username.
+     * needs_evidence, one_time, min_attendees, below_min_points, is_active, member_claimable and
+     * cooldown_days (a member can claim it again only after this many days).
      * @return array{ok:bool, error?:string, revised?:int, members?:int, change?:int}
      */
     public function saveActivity(?int $id, array $in, string $actorEmail): array
@@ -959,7 +959,7 @@ class PointsModel
             ':e' => !empty($in['needs_evidence']) ? 1 : 0, ':o' => !empty($in['one_time']) ? 1 : 0,
             ':min' => $min, ':below' => $below, ':act' => !empty($in['is_active']) ? 1 : 0,
             ':claim' => !empty($in['member_claimable']) ? 1 : 0,   // members may claim it (needs the member_claimable column)
-            ':cool' => $cool, ':needu' => !empty($in['needs_username']) ? 1 : 0,
+            ':cool' => $cool,
         ];
 
         if (!$id) {
@@ -969,8 +969,8 @@ class PointsModel
             for ($i = 2; $this->activityTypeByCode($code); $i++) $code = $base . '_' . $i;
             try {
                 $st = $this->pdo->prepare(
-                    'INSERT INTO activity_types (code, name, category, points, needs_evidence, one_time, min_attendees, below_min_points, is_active, member_claimable, cooldown_days, needs_username)
-                     VALUES (:code, :n, :c, :p, :e, :o, :min, :below, :act, :claim, :cool, :needu)'
+                    'INSERT INTO activity_types (code, name, category, points, needs_evidence, one_time, min_attendees, below_min_points, is_active, member_claimable, cooldown_days)
+                     VALUES (:code, :n, :c, :p, :e, :o, :min, :below, :act, :claim, :cool)'
                 );
                 $st->execute($fields + [':code' => $code]);
             } catch (PDOException $e) {
@@ -993,7 +993,7 @@ class PointsModel
             $st = $this->pdo->prepare(
                 'UPDATE activity_types SET name = :n, category = :c, points = :p, needs_evidence = :e, one_time = :o,
                         min_attendees = :min, below_min_points = :below, is_active = :act, member_claimable = :claim,
-                        cooldown_days = :cool, needs_username = :needu WHERE id = :id'
+                        cooldown_days = :cool WHERE id = :id'
             );
             $st->execute($fields + [':id' => $id]);
 
