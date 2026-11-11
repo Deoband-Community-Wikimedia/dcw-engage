@@ -136,6 +136,8 @@ function goodies_claims_render(PointClaimModel $claims, string $status, array $o
                 <div class="cl-facts">
                     <div><span>It happened on</span><?= gd_h(date('j M Y', strtotime((string) $c['event_date']))) ?></div>
                     <div><span>Evidence</span><?php if (!empty($c['evidence_url'])): ?><a href="<?= gd_h($c['evidence_url']) ?>" target="_blank" rel="noopener noreferrer"><?= gd_h($c['evidence_url']) ?></a><?php else: ?><?= (int) $c['needs_evidence'] ? '<strong style="color:#97161b">Missing</strong>' : 'None given' ?><?php endif; ?></div>
+                    <?php if (!empty($c['needs_username']) || !empty($c['wm_username'])): ?><div><span>Wikimedia username</span><?= !empty($c['wm_username']) ? gd_h($c['wm_username']) . ' (verified)' : '<strong style="color:#97161b">Not verified</strong>' ?></div><?php endif; ?>
+                    <?php if (!empty($c['prev_claim_at'])): ?><div><span>Previous claim for this</span><?= gd_h($when($c['prev_claim_at'])) ?><?= !empty($c['cooldown_days']) ? ' (can be claimed every ' . (int) $c['cooldown_days'] . ' days)' : '' ?></div><?php endif; ?>
                     <?php if (!empty($c['note'])): ?><div style="grid-column:1/-1"><span>Member’s note</span><?= nl2br(gd_h($c['note'])) ?></div><?php endif; ?>
                     <?php if ($c['status'] === 'Rejected' && !empty($c['decision_note'])): ?><div style="grid-column:1/-1"><span>Reason given</span><?= gd_h($c['decision_note']) ?></div><?php endif; ?>
                     <?php if (!empty($c['decided_by'])): ?><div><span>Decided by</span><?= gd_h($c['decided_by']) ?> · <?= gd_h($when($c['decided_at'])) ?></div><?php endif; ?>
