@@ -836,7 +836,6 @@ CREATE TABLE IF NOT EXISTS `activity_types` (
   `one_time` tinyint(1) NOT NULL DEFAULT 0,        -- can be awarded to a member only once
   `member_claimable` tinyint(1) NOT NULL DEFAULT 0,  -- members may claim it (reviewers decide); never the built-in ones
   `cooldown_days` smallint(5) UNSIGNED DEFAULT NULL,   -- a member can claim it again only after this many days (a repeating claim)
-  `needs_username` tinyint(1) NOT NULL DEFAULT 0,      -- the claim needs a verified Wikimedia username
   -- Used from Phase 2 (event finalise): a meetup under the minimum pays below_min_points.
   `min_attendees` int(10) UNSIGNED DEFAULT NULL,
   `below_min_points` int(10) UNSIGNED DEFAULT NULL,
@@ -1165,5 +1164,5 @@ UPDATE `activity_types` SET `member_claimable` = 1
  WHERE `code` IN ('first_edit','mentor_first_edit','mentor_first_article');
 
 INSERT IGNORE INTO `activity_types`
-  (`code`,`name`,`category`,`points`,`needs_evidence`,`one_time`,`member_claimable`,`cooldown_days`,`needs_username`,`is_active`)
-VALUES ('edits_100_30d','Made 100+ edits in the last 30 days','contribute',100,1,0,1,30,1,0);
+  (`code`,`name`,`category`,`points`,`needs_evidence`,`one_time`,`member_claimable`,`cooldown_days`,`is_active`)
+VALUES ('edits_100_30d','Made 100+ edits in the last 30 days','contribute',100,1,0,1,30,0);
