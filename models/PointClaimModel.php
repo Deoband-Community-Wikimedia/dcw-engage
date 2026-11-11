@@ -19,7 +19,6 @@
  *  - at most MAX_OPEN claims waiting at once
  *  - a repeating activity (cooldown_days, e.g. "100+ edits in the last 30 days"): the date is always today, and
  *    it can be claimed again only after the cooldown. Only claims that are waiting or approved start the cooldown.
- *  - an activity that needs a verified Wikimedia username (needs_username) needs one on the member's profile
  *
  * Rules enforced when a reviewer decides:
  *  - nobody approves a claim made by their own Member ID, owner or not. (Awards an owner makes themselves
@@ -147,11 +146,6 @@ class PointClaimModel
                 $eventDate = $today->format('Y-m-d');
                 $until = $this->cooldownUntil($memberId, $typeId, $cool);
                 if ($until) return ['ok' => false, 'error' => 'You can claim "' . $type['name'] . '" again on ' . $until->format('j M Y') . '.'];
-            }
-            if ((int) ($type['needs_username'] ?? 0)) {
-                $st = $this->pdo->prepare("SELECT 1 FROM member_profile WHERE member_id = :m AND username_verified_at IS NOT NULL AND wikimedia_username <> '' LIMIT 1");
-                $st->execute([':m' => $memberId]);
-                if (!$st->fetchColumn()) return ['ok' => false, 'error' => 'This claim needs a verified Wikimedia username. Add yours on your profile and wait for it to be verified.'];
             }
 
             $date  = DateTimeImmutable::createFromFormat('!Y-m-d', $eventDate, $ist);
@@ -331,7 +325,7 @@ class PointClaimModel
 
         $st = $this->pdo->prepare(
             'SELECT c.*, t.name AS activity_name, t.category, t.code AS activity_code, t.points AS activity_points, t.needs_evidence,
-                    t.cooldown_days, t.needs_username,
+                    t.cooldown_days,
                     a.status AS award_status,
                     (SELECT m.full_name FROM members m WHERE m.member_id = c.member_id ORDER BY m.id DESC LIMIT 1) AS member_name,
                     (SELECT p.wikimedia_username FROM member_profile p WHERE p.member_id = c.member_id AND p.username_verified_at IS NOT NULL) AS wm_username,
