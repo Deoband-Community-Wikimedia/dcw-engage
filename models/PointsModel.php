@@ -21,8 +21,10 @@
  *    batch reference so a double click cannot award twice. Bulk point edits revise past awards exactly like a
  *    single edit does, all in one transaction.
  *  - Stock (optional per goody, per size when the goody has sizes) lives in goodies.stock_json. NULL means
- *    not tracked (unlimited). A redemption takes one item from stock inside its transaction, under a row lock
- *    on the goody, so the last item cannot be sold twice. Cancelling an order puts the item back.
+ *    not tracked (unlimited). A redemption takes its units from stock inside its transaction, under a row lock
+ *    on the goody, so the last item cannot be sold twice. Cancelling an order puts the items back.
+ *  - An order is a cart: one redemptions row, its goodies in redemption_items. Part of an order can be refunded
+ *    (redemption_refunds) while it is Requested or Ordered. A goody may cap the units per order (max_per_order).
  *  - Pictures (optional per goody) live in goodies.images_json, in display order, the first being the cover.
  *    The files are in uploads/goodies/. GoodyImages checks, resizes and stores them; this class only keeps
  *    the list (goodyImages(), setGoodyImages()) and hands it to the pages as $goody['images'].
@@ -46,6 +48,10 @@ class PointsModel
 
     /** The most people one bulk award can include. */
     public const BULK_MAX = 200;
+
+    /** Most different goodies/sizes in one order, and most units of a goody that has no "max per order". */
+    public const MAX_LINES = 20;
+    public const MAX_UNITS = 50;
 
     /** Allowed redemption status moves. Cancelling refunds the points. */
     public const REDEMPTION_FLOW = [
@@ -118,17 +124,16 @@ class PointsModel
     public function ledgerDetailed(string $memberId, int $limit = 2000): array
     {
         $st = $this->pdo->prepare(
-            "SELECT l.id, l.points, l.entry_type, l.reason, l.created_at, l.award_id, l.redemption_id,
+            "SELECT l.id, l.points, l.entry_type, l.reason, l.created_at, l.award_id, l.redemption_id, l.refund_id,
                     a.tier, t.name AS activity_name, t.category, t.code AS activity_code,
                     s.title AS session_title, s.held_on AS session_date,
-                    g.name AS goody_name, r.tracking_id AS order_tracking
+                    r.tracking_id AS order_tracking
                FROM points_ledger l
                LEFT JOIN point_awards a   ON a.id = l.award_id
                LEFT JOIN activity_types t ON t.id = a.activity_type_id
                LEFT JOIN ch_sessions s    ON a.source_ref LIKE 'ch-session-%'
                                          AND s.id = CAST(SUBSTRING(a.source_ref, 12) AS UNSIGNED)
                LEFT JOIN redemptions r    ON r.id = l.redemption_id
-               LEFT JOIN goodies g        ON g.id = r.goody_id
               WHERE l.member_id = :m
               ORDER BY l.id DESC
               LIMIT " . max(1, (int) $limit)
@@ -136,9 +141,33 @@ class PointsModel
         $st->execute([':m' => $memberId]);
         $rows = $st->fetchAll(PDO::FETCH_ASSOC);
 
+        // What each order / refund was for: a refund names its own units, an order is summarised ("T-shirt (M) +2 more").
+        $orderIds = $refundIds = [];
+        foreach ($rows as $r) {
+            if ($r['redemption_id'] !== null) $orderIds[(int) $r['redemption_id']] = true;
+            if ((int) $r['refund_id'] > 0) $refundIds[(int) $r['refund_id']] = true;
+        }
+        $orderItems = [];
+        foreach (array_chunk(array_keys($orderIds), 500) as $chunk) {
+            $in = implode(',', array_fill(0, count($chunk), '?'));
+            $q = $this->pdo->prepare("SELECT i.redemption_id, i.qty, i.variant, g.name FROM redemption_items i JOIN goodies g ON g.id = i.goody_id WHERE i.redemption_id IN ($in) ORDER BY i.id");
+            $q->execute($chunk);
+            foreach ($q->fetchAll(PDO::FETCH_ASSOC) as $i) $orderItems[(int) $i['redemption_id']][] = $i;
+        }
+        $refundNames = [];
+        foreach (array_chunk(array_keys($refundIds), 500) as $chunk) {
+            $in = implode(',', array_fill(0, count($chunk), '?'));
+            $q = $this->pdo->prepare("SELECT f.id, f.qty, i.variant, g.name FROM redemption_refunds f JOIN redemption_items i ON i.id = f.item_id JOIN goodies g ON g.id = i.goody_id WHERE f.id IN ($in)");
+            $q->execute($chunk);
+            foreach ($q->fetchAll(PDO::FETCH_ASSOC) as $f) $refundNames[(int) $f['id']] = self::itemLabel((string) $f['name'], (string) ($f['variant'] ?? ''), (int) $f['qty']);
+        }
+
         // Balance after each row: start from today's balance and step back through the newer rows.
         $running = $this->balance($memberId);
         foreach ($rows as &$r) {
+            $r['goody_name'] = (int) $r['refund_id'] > 0
+                ? ($refundNames[(int) $r['refund_id']] ?? '')
+                : ($r['redemption_id'] !== null ? self::orderSummary($orderItems[(int) $r['redemption_id']] ?? []) : '');
             $r['balance_after'] = $running;
             $running -= (int) $r['points'];
         }
@@ -900,7 +929,8 @@ class PointsModel
 
     /**
      * Create ($id = null) or update an activity. $in holds the form fields: name, category, points,
-     * needs_evidence, one_time, min_attendees, below_min_points, is_active.
+     * needs_evidence, one_time, min_attendees, below_min_points, is_active, member_claimable and
+     * cooldown_days (a member can claim it again only after this many days).
      * @return array{ok:bool, error?:string, revised?:int, members?:int, change?:int}
      */
     public function saveActivity(?int $id, array $in, string $actorEmail): array
@@ -910,8 +940,10 @@ class PointsModel
         $points = (int) ($in['points'] ?? 0);
         $minRaw = trim((string) ($in['min_attendees'] ?? ''));
         $belowRaw = trim((string) ($in['below_min_points'] ?? ''));
+        $coolRaw = trim((string) ($in['cooldown_days'] ?? ''));
         $min = $minRaw === '' ? null : (int) $minRaw;
         $below = $belowRaw === '' ? null : (int) $belowRaw;
+        $cool = $coolRaw === '' ? null : (int) $coolRaw;
 
         if ($name === '' || mb_strlen($name) > 160) return ['ok' => false, 'error' => 'Give the activity a name (up to 160 characters).'];
         if (!isset(self::CATEGORIES[$category])) return ['ok' => false, 'error' => 'Choose a category.'];
@@ -919,12 +951,15 @@ class PointsModel
         if (($min === null) !== ($below === null)) return ['ok' => false, 'error' => 'Set both the minimum attendance and the points below it, or neither.'];
         if ($min !== null && ($min < 1 || $min > 1000)) return ['ok' => false, 'error' => 'The minimum attendance must be between 1 and 1000.'];
         if ($below !== null && ($below < 0 || $below >= $points)) return ['ok' => false, 'error' => 'Points below the minimum must be less than the full points.'];
+        if ($cool !== null && ($cool < 1 || $cool > 365)) return ['ok' => false, 'error' => 'The cooldown must be between 1 and 365 days.'];
+        if ($cool !== null && !empty($in['one_time'])) return ['ok' => false, 'error' => 'An activity cannot be both once-only and repeatable with a cooldown. Clear one of them.'];
 
         $fields = [
             ':n' => $name, ':c' => $category, ':p' => $points,
             ':e' => !empty($in['needs_evidence']) ? 1 : 0, ':o' => !empty($in['one_time']) ? 1 : 0,
             ':min' => $min, ':below' => $below, ':act' => !empty($in['is_active']) ? 1 : 0,
             ':claim' => !empty($in['member_claimable']) ? 1 : 0,   // members may claim it (needs the member_claimable column)
+            ':cool' => $cool,
         ];
 
         if (!$id) {
@@ -934,8 +969,8 @@ class PointsModel
             for ($i = 2; $this->activityTypeByCode($code); $i++) $code = $base . '_' . $i;
             try {
                 $st = $this->pdo->prepare(
-                    'INSERT INTO activity_types (code, name, category, points, needs_evidence, one_time, min_attendees, below_min_points, is_active, member_claimable)
-                     VALUES (:code, :n, :c, :p, :e, :o, :min, :below, :act, :claim)'
+                    'INSERT INTO activity_types (code, name, category, points, needs_evidence, one_time, min_attendees, below_min_points, is_active, member_claimable, cooldown_days)
+                     VALUES (:code, :n, :c, :p, :e, :o, :min, :below, :act, :claim, :cool)'
                 );
                 $st->execute($fields + [':code' => $code]);
             } catch (PDOException $e) {
@@ -957,7 +992,8 @@ class PointsModel
             }
             $st = $this->pdo->prepare(
                 'UPDATE activity_types SET name = :n, category = :c, points = :p, needs_evidence = :e, one_time = :o,
-                        min_attendees = :min, below_min_points = :below, is_active = :act, member_claimable = :claim WHERE id = :id'
+                        min_attendees = :min, below_min_points = :below, is_active = :act, member_claimable = :claim,
+                        cooldown_days = :cool WHERE id = :id'
             );
             $st->execute($fields + [':id' => $id]);
 
@@ -1159,7 +1195,7 @@ class PointsModel
         return $s === null || array_sum($s) > 0;
     }
 
-    /** Each goody comes with 'variants', 'stock' (null = not tracked) and 'images' (the first is the cover). */
+    /** Each goody comes with 'variants', 'stock' (null = not tracked), 'images' (the first is the cover) and 'max_per_order' (null = no limit). */
     public function goodies(bool $onlyActive = true): array
     {
         $sql = 'SELECT * FROM goodies' . ($onlyActive ? ' WHERE is_active = 1' : '') . ' ORDER BY points_cost, name';
@@ -1168,6 +1204,7 @@ class PointsModel
             $r['variants'] = $r['variants_json'] ? (json_decode((string) $r['variants_json'], true) ?: []) : [];
             $r['stock'] = self::decodeStock($r['stock_json'] ?? null);
             $r['images'] = GoodyImages::decode($r['images_json'] ?? null);
+            $r['max_per_order'] = ($r['max_per_order'] ?? null) === null ? null : max(1, (int) $r['max_per_order']);
         }
         unset($r);
         return $rows;
@@ -1177,10 +1214,11 @@ class PointsModel
      * Create ($id = null) or update a goody. $variantsCsv is "S, M, L".
      * $stock is null when stock is not tracked, otherwise [size => quantity] (or [STOCK_ALL => quantity] when
      * the goody has no sizes). Sizes missing from $stock count as 0.
+     * $maxPerOrder is the most units one order may hold (1 to 99), or null for no limit.
      * Pictures are saved separately (setGoodyImages), so this never changes them.
      * @return array{ok:bool, error?:string, id?:int}
      */
-    public function saveGoody(?int $id, string $name, string $description, int $cost, string $variantsCsv, bool $active, string $actorEmail, ?array $stock = null): array
+    public function saveGoody(?int $id, string $name, string $description, int $cost, string $variantsCsv, bool $active, string $actorEmail, ?array $stock = null, ?int $maxPerOrder = null): array
     {
         $name = trim($name);
         if ($name === '' || mb_strlen($name) > 120) return ['ok' => false, 'error' => 'Give the goody a name (up to 120 characters).'];
@@ -1188,6 +1226,7 @@ class PointsModel
         $variants = array_values(array_unique(array_filter(array_map(fn($v) => mb_substr(trim($v), 0, 60), explode(',', $variantsCsv)), fn($v) => $v !== '')));
         $json = $variants ? json_encode($variants, JSON_UNESCAPED_UNICODE) : null;
         $desc = mb_substr(trim($description), 0, 500);
+        $cap = $maxPerOrder === null ? null : max(1, min(99, $maxPerOrder));
 
         $stockJson = null;
         if ($stock !== null) {
@@ -1202,12 +1241,12 @@ class PointsModel
 
         try {
             if ($id) {
-                $st = $this->pdo->prepare('UPDATE goodies SET name = :n, description = :d, points_cost = :c, variants_json = :v, stock_json = :k, is_active = :a WHERE id = :id');
-                $st->execute([':n' => $name, ':d' => $desc, ':c' => $cost, ':v' => $json, ':k' => $stockJson, ':a' => $active ? 1 : 0, ':id' => $id]);
+                $st = $this->pdo->prepare('UPDATE goodies SET name = :n, description = :d, points_cost = :c, variants_json = :v, stock_json = :k, max_per_order = :mx, is_active = :a WHERE id = :id');
+                $st->execute([':n' => $name, ':d' => $desc, ':c' => $cost, ':v' => $json, ':k' => $stockJson, ':mx' => $cap, ':a' => $active ? 1 : 0, ':id' => $id]);
                 $goodyId = $id;
             } else {
-                $st = $this->pdo->prepare('INSERT INTO goodies (name, description, points_cost, variants_json, stock_json, is_active) VALUES (:n, :d, :c, :v, :k, :a)');
-                $st->execute([':n' => $name, ':d' => $desc, ':c' => $cost, ':v' => $json, ':k' => $stockJson, ':a' => $active ? 1 : 0]);
+                $st = $this->pdo->prepare('INSERT INTO goodies (name, description, points_cost, variants_json, stock_json, max_per_order, is_active) VALUES (:n, :d, :c, :v, :k, :mx, :a)');
+                $st->execute([':n' => $name, ':d' => $desc, ':c' => $cost, ':v' => $json, ':k' => $stockJson, ':mx' => $cap, ':a' => $active ? 1 : 0]);
                 $goodyId = (int) $this->pdo->lastInsertId();
             }
         } catch (PDOException $e) {
@@ -1216,7 +1255,7 @@ class PointsModel
             throw $e;
         }
         $this->audit($actorEmail, $id ? 'goodies.catalogue_edit' : 'goodies.catalogue_add', $name,
-            $cost . ' pts, ' . ($active ? 'active' : 'inactive') . ', stock ' . ($stockJson ?? 'not tracked'));
+            $cost . ' pts, ' . ($active ? 'active' : 'inactive') . ', stock ' . ($stockJson ?? 'not tracked') . ', max per order ' . ($cap ?? 'none'));
         return ['ok' => true, 'id' => $goodyId];
     }
 
@@ -1240,14 +1279,43 @@ class PointsModel
     }
 
     // ---- Redemptions ---------------------------------------------------------------------------
+    //
+    // An order is ONE row in redemptions: one GD- tracking ID, one address, one status, one parcel. Its goodies are
+    // lines in redemption_items. Points are debited once for the whole order (ledger refund_id 0).
+    // Part of an order can be refunded (a goody that is out of stock, say) while it is Requested or Ordered: that is a
+    // row in redemption_refunds (units, points, reason) with its own ledger row (refund_id = that row's id), and
+    // the rest of the order ships. When nothing is left the order becomes Cancelled by itself.
+    // Each goody may have a "max per order" (goodies.max_per_order), counted across all its sizes.
 
-    /**
-     * A member spends points. $shipping holds name, phone and address (already validated by the page).
-     * When the goody tracks stock, one item is taken from stock in the same transaction.
-     * @return array{ok:bool, error?:string, tracking_id?:string}
-     */
+    /** One goody, one unit: the old single-item call, now a cart of one. */
     public function redeem(string $memberId, int $goodyId, string $variant, array $shipping): array
     {
+        return $this->redeemCart($memberId, [['goody_id' => $goodyId, 'variant' => $variant, 'qty' => 1]], $shipping);
+    }
+
+    /**
+     * A member spends points on a cart. Prices, stock, limits and the balance are all read here, never taken from the
+     * browser. All or nothing: one order and one debit, or no change at all.
+     * @param list<array{goody_id:int, variant:string, qty:int}> $cart
+     * @return array{ok:bool, error?:string, tracking_id?:string, units?:int}
+     */
+    public function redeemCart(string $memberId, array $cart, array $shipping): array
+    {
+        $want = [];   // "goodyId|variant" => the line, repeated lines merged
+        foreach ($cart as $c) {
+            if (!is_array($c)) continue;
+            $gid = (int) ($c['goody_id'] ?? 0);
+            $qty = (int) ($c['qty'] ?? 0);
+            $var = trim((string) ($c['variant'] ?? ''));
+            if ($gid < 1 || $qty < 1) continue;
+            $k = $gid . '|' . $var;
+            $want[$k] = ['goody_id' => $gid, 'variant' => $var, 'qty' => ($want[$k]['qty'] ?? 0) + $qty];
+        }
+        if (!$want) return ['ok' => false, 'error' => 'Your cart is empty.'];
+        if (count($want) > self::MAX_LINES) return ['ok' => false, 'error' => 'Please keep an order to ' . self::MAX_LINES . ' different goodies or sizes.'];
+        $units = [];  // goody id => units across all sizes
+        foreach ($want as $w) $units[$w['goody_id']] = ($units[$w['goody_id']] ?? 0) + $w['qty'];
+
         // A per-member advisory lock: two simultaneous clicks queue up instead of both seeing the old balance.
         $lock = 'dcw_pts_' . md5($memberId);
         $got = $this->pdo->prepare('SELECT GET_LOCK(:l, 5)');
@@ -1255,65 +1323,95 @@ class PointsModel
         if ((int) $got->fetchColumn() !== 1) return ['ok' => false, 'error' => 'Please try again in a moment.'];
 
         try {
-            $st = $this->pdo->prepare('SELECT * FROM goodies WHERE id = :id AND is_active = 1');
-            $st->execute([':id' => $goodyId]);
-            $g = $st->fetch(PDO::FETCH_ASSOC);
-            if (!$g) return ['ok' => false, 'error' => 'That goody is not available.'];
-
-            $variants = $g['variants_json'] ? (json_decode((string) $g['variants_json'], true) ?: []) : [];
-            if ($variants && !in_array($variant, $variants, true)) return ['ok' => false, 'error' => 'Please choose a size or option.'];
-            if (!$variants) $variant = '';
-
-            $cost = (int) $g['points_cost'];
-            if ($this->balance($memberId) < $cost) return ['ok' => false, 'error' => 'You do not have enough points for this yet.'];
-
             $this->pdo->beginTransaction();
+            $fail = function (string $msg): array {
+                if ($this->pdo->inTransaction()) $this->pdo->rollBack();
+                return ['ok' => false, 'error' => $msg];
+            };
             try {
-                // Stock is shared by every member, so lock the goody row (the per-member lock is not enough).
-                $sk = $this->pdo->prepare('SELECT stock_json FROM goodies WHERE id = :id FOR UPDATE');
-                $sk->execute([':id' => $goodyId]);
-                $stock = self::decodeStock($sk->fetchColumn());
-                if ($stock !== null) {
-                    $key = $variants ? $variant : self::STOCK_ALL;
-                    if (($stock[$key] ?? 0) < 1) {
-                        $this->pdo->rollBack();
-                        return ['ok' => false, 'error' => 'Sorry, this goody is out of stock. Your points have not been spent.'];
+                // Stock is shared by every member, so lock the goody rows (in id order, so two carts cannot deadlock).
+                $ids = array_keys($units);
+                sort($ids);
+                $in = implode(',', array_fill(0, count($ids), '?'));
+                $st = $this->pdo->prepare("SELECT * FROM goodies WHERE id IN ($in) ORDER BY id FOR UPDATE");
+                $st->execute($ids);
+                $goodies = [];
+                foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $g) $goodies[(int) $g['id']] = $g;
+
+                $total = 0; $lines = []; $stocks = []; $touched = []; $unitCount = 0;
+                foreach ($want as $w) {
+                    $g = $goodies[$w['goody_id']] ?? null;
+                    if (!$g || !(int) $g['is_active']) return $fail('A goody in your cart is no longer available. Please check your cart.');
+                    $gid = (int) $g['id'];
+                    $variants = $g['variants_json'] ? (json_decode((string) $g['variants_json'], true) ?: []) : [];
+                    $variant = $w['variant'];
+                    if ($variants) {
+                        if (!in_array($variant, $variants, true)) return $fail('Please choose a size or option for ' . $g['name'] . '.');
+                    } else {
+                        $variant = '';
                     }
-                    $stock[$key]--;
+                    $label = self::itemLabel((string) $g['name'], $variant);
+                    $cap = ($g['max_per_order'] ?? null) === null ? self::MAX_UNITS : (int) $g['max_per_order'];
+                    if ($units[$gid] > $cap) return $fail('You can order at most ' . $cap . ' of "' . $g['name'] . '" in one order.');
+
+                    if (!array_key_exists($gid, $stocks)) $stocks[$gid] = self::decodeStock($g['stock_json'] ?? null);
+                    if ($stocks[$gid] !== null) {
+                        $key = $variants ? $variant : self::STOCK_ALL;
+                        $left = (int) ($stocks[$gid][$key] ?? 0);
+                        if ($left < $w['qty']) {
+                            return $fail($left < 1 ? 'Sorry, ' . $label . ' is out of stock. Nothing was spent.'
+                                                   : 'Only ' . $left . ' of ' . $label . ' left. Nothing was spent.');
+                        }
+                        $stocks[$gid][$key] = $left - $w['qty'];
+                        $touched[$gid] = true;
+                    }
+                    $each = (int) $g['points_cost'];
+                    $total += $each * $w['qty'];
+                    $unitCount += $w['qty'];
+                    $lines[] = ['goody_id' => $gid, 'variant' => $variant, 'qty' => $w['qty'], 'points_each' => $each, 'name' => (string) $g['name']];
+                }
+                if ($this->balance($memberId) < $total) return $fail('You do not have enough points for this order. Nothing was spent.');
+
+                foreach (array_keys($touched) as $gid) {
                     $this->pdo->prepare('UPDATE goodies SET stock_json = :s WHERE id = :id')
-                        ->execute([':s' => json_encode($stock, JSON_UNESCAPED_UNICODE), ':id' => $goodyId]);
+                        ->execute([':s' => json_encode($stocks[$gid], JSON_UNESCAPED_UNICODE), ':id' => $gid]);
                 }
 
-                $tracking = $this->insertRedemption($memberId, $goodyId, $variant, $cost, $shipping);
+                $tracking = $this->insertRedemption($memberId, $total, $shipping);
                 $rid = (int) $this->pdo->lastInsertId();
-                $lg = $this->pdo->prepare("INSERT INTO points_ledger (member_id, points, entry_type, redemption_id, reason, actor_email) VALUES (:m, :p, 'redemption', :r, :why, :a)");
-                $lg->execute([':m' => $memberId, ':p' => -$cost, ':r' => $rid, ':why' => mb_substr('Redeemed: ' . $g['name'] . ' (' . $tracking . ')', 0, 255), ':a' => $memberId]);
+                $ins = $this->pdo->prepare('INSERT INTO redemption_items (redemption_id, goody_id, variant, qty, points_each) VALUES (:r, :g, :v, :q, :p)');
+                foreach ($lines as $l) {
+                    $ins->execute([':r' => $rid, ':g' => $l['goody_id'], ':v' => $l['variant'] !== '' ? $l['variant'] : null, ':q' => $l['qty'], ':p' => $l['points_each']]);
+                }
+                $summary = self::orderSummary($lines);
+                $lg = $this->pdo->prepare("INSERT INTO points_ledger (member_id, points, entry_type, redemption_id, refund_id, reason, actor_email) VALUES (:m, :p, 'redemption', :r, 0, :why, :a)");
+                $lg->execute([':m' => $memberId, ':p' => -$total, ':r' => $rid, ':why' => mb_substr('Redeemed: ' . $summary . ' (' . $tracking . ')', 0, 255), ':a' => $memberId]);
                 $this->pdo->commit();
             } catch (Throwable $e) {
                 if ($this->pdo->inTransaction()) $this->pdo->rollBack();
-                $this->log('redeem failed: ' . $e->getMessage());
+                $this->log('redeemCart failed: ' . $e->getMessage());
                 return ['ok' => false, 'error' => 'Could not place the order. Your points have not been spent.'];
             }
             // The member's own action, so the actor is the member (no staff account is involved).
-            $this->audit('member ' . $memberId, 'goodies.redeem', $tracking, $g['name'] . ($variant !== '' ? ' (' . $variant . ')' : '') . ', ' . $cost . ' pts');
-            $this->mailMember($memberId, 'sendOrderPlaced', [$tracking, (string) $g['name'], $variant, $cost]);
-            return ['ok' => true, 'tracking_id' => $tracking];
+            $this->audit('member ' . $memberId, 'goodies.redeem', $tracking, $summary . ', ' . $unitCount . ' unit(s), ' . $total . ' pts');
+            $this->mailMember($memberId, 'sendOrderPlaced', [$tracking, array_map(fn($l) => ['name' => $l['name'], 'variant' => $l['variant'], 'qty' => $l['qty']], $lines), $total]);
+            return ['ok' => true, 'tracking_id' => $tracking, 'units' => $unitCount];
         } finally {
             $rel = $this->pdo->prepare('SELECT RELEASE_LOCK(:l)');
             $rel->execute([':l' => $lock]);
         }
     }
 
-    /** Inserts the redemption under a fresh public ID (GD- plus 8 characters, unrelated to the row id). */
-    private function insertRedemption(string $memberId, int $goodyId, string $variant, int $cost, array $shipping): string
+    /** Inserts the order under a fresh public ID (GD- plus 8 characters, unrelated to the row id). */
+    private function insertRedemption(string $memberId, int $cost, array $shipping): string
     {
         $alphabet = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';   // no 0/O or 1/I/L
         for ($try = 0; $try < 5; $try++) {
             $id = 'GD-';
             for ($i = 0; $i < 8; $i++) $id .= $alphabet[random_int(0, strlen($alphabet) - 1)];
             try {
-                $st = $this->pdo->prepare('INSERT INTO redemptions (tracking_id, member_id, goody_id, variant, points_spent, shipping_json) VALUES (:t, :m, :g, :v, :c, :s)');
-                $st->execute([':t' => $id, ':m' => $memberId, ':g' => $goodyId, ':v' => $variant !== '' ? $variant : null, ':c' => $cost, ':s' => json_encode($shipping, JSON_UNESCAPED_UNICODE)]);
+                $st = $this->pdo->prepare('INSERT INTO redemptions (tracking_id, member_id, goody_id, variant, points_spent, shipping_json) VALUES (:t, :m, NULL, NULL, :c, :s)');
+                $st->execute([':t' => $id, ':m' => $memberId, ':c' => $cost, ':s' => json_encode($shipping, JSON_UNESCAPED_UNICODE)]);
                 return $id;
             } catch (PDOException $e) {
                 if ($try === 4 || (string) $e->getCode() !== '23000') throw $e;   // only retry a duplicate tracking ID
@@ -1322,22 +1420,88 @@ class PointsModel
         throw new RuntimeException('Could not generate a tracking ID.');
     }
 
+    /** "T-shirt (M) ×2": a goody, its size and (above one) the units. */
+    public static function itemLabel(string $name, string $variant = '', int $qty = 1): string
+    {
+        return $name . ($variant !== '' ? ' (' . $variant . ')' : '') . ($qty > 1 ? ' ×' . $qty : '');
+    }
+
+    /** One line for an order: "T-shirt (M)", or "T-shirt (M) +2 more". Each item has name, variant and qty. */
+    public static function orderSummary(array $items): string
+    {
+        $items = array_values($items);
+        if (!$items) return 'Order';
+        $first = self::itemLabel((string) $items[0]['name'], (string) ($items[0]['variant'] ?? ''), (int) ($items[0]['qty'] ?? 1));
+        return count($items) > 1 ? $first . ' +' . (count($items) - 1) . ' more' : $first;
+    }
+
+    /**
+     * Adds to each order: 'items' (name, variant, qty, qty_refunded, qty_open, points_each, stock_left, refunds),
+     * 'goody_name' (a one-line summary, kept so older pages keep working), 'refunded_points' and 'net_points'.
+     */
+    private function attachItems(array $rows): array
+    {
+        if (!$rows) return [];
+        $ids = array_map(fn($r) => (int) $r['id'], $rows);
+        $in = implode(',', array_fill(0, count($ids), '?'));
+
+        $it = $this->pdo->prepare("SELECT i.id, i.redemption_id, i.goody_id, i.variant, i.qty, i.qty_refunded, i.points_each,
+                                          g.name, g.variants_json, g.stock_json
+                                     FROM redemption_items i JOIN goodies g ON g.id = i.goody_id
+                                    WHERE i.redemption_id IN ($in) ORDER BY i.id");
+        $it->execute($ids);
+        $items = [];
+        foreach ($it->fetchAll(PDO::FETCH_ASSOC) as $i) {
+            $stock = self::decodeStock($i['stock_json'] ?? null);
+            $hasVariants = !empty($i['variants_json']) && (json_decode((string) $i['variants_json'], true) ?: []);
+            $i['id'] = (int) $i['id'];
+            $i['qty'] = (int) $i['qty'];
+            $i['qty_refunded'] = (int) $i['qty_refunded'];
+            $i['qty_open'] = max(0, $i['qty'] - $i['qty_refunded']);
+            $i['points_each'] = (int) $i['points_each'];
+            $i['stock_left'] = $stock === null ? null : (int) ($stock[$hasVariants ? (string) ($i['variant'] ?? '') : self::STOCK_ALL] ?? 0);
+            $i['refunds'] = [];
+            unset($i['variants_json'], $i['stock_json']);
+            $items[(int) $i['redemption_id']][$i['id']] = $i;
+        }
+
+        $rf = $this->pdo->prepare("SELECT id, redemption_id, item_id, qty, points, reason, created_at FROM redemption_refunds WHERE redemption_id IN ($in) ORDER BY id");
+        $rf->execute($ids);
+        $refunded = [];
+        foreach ($rf->fetchAll(PDO::FETCH_ASSOC) as $f) {
+            $rid = (int) $f['redemption_id'];
+            $refunded[$rid] = ($refunded[$rid] ?? 0) + (int) $f['points'];
+            if (isset($items[$rid][(int) $f['item_id']])) $items[$rid][(int) $f['item_id']]['refunds'][] = $f;
+        }
+
+        foreach ($rows as &$r) {
+            $rid = (int) $r['id'];
+            $list = array_values($items[$rid] ?? []);
+            $r['items'] = $list;
+            $r['goody_name'] = self::orderSummary($list);
+            $r['refunded_points'] = (int) ($refunded[$rid] ?? 0);
+            $r['net_points'] = max(0, (int) $r['points_spent'] - $r['refunded_points']);
+        }
+        unset($r);
+        return $rows;
+    }
+
     public function redemptionsForMember(string $memberId): array
     {
         $st = $this->pdo->prepare(
-            'SELECT r.tracking_id, r.variant, r.points_spent, r.status, r.created_at, g.name AS goody_name,
+            'SELECT r.id, r.tracking_id, r.points_spent, r.status, r.created_at,
                     r.delivery_method, r.courier, r.awb, r.tracking_url, r.handover_note
-             FROM redemptions r JOIN goodies g ON g.id = r.goody_id
+             FROM redemptions r
              WHERE r.member_id = :m ORDER BY r.id DESC LIMIT 50'
         );
         $st->execute([':m' => $memberId]);
-        return $st->fetchAll(PDO::FETCH_ASSOC);
+        return $this->attachItems($st->fetchAll(PDO::FETCH_ASSOC));
     }
 
     /** For the reviewer queue. $status = '' means every status. */
     public function redemptionQueue(string $status = ''): array
     {
-        $sql = 'SELECT r.*, g.name AS goody_name FROM redemptions r JOIN goodies g ON g.id = r.goody_id';
+        $sql = 'SELECT r.* FROM redemptions r';
         $args = [];
         if ($status !== '' && isset(self::REDEMPTION_FLOW[$status])) { $sql .= ' WHERE r.status = :s'; $args[':s'] = $status; }
         $st = $this->pdo->prepare($sql . ' ORDER BY r.id DESC LIMIT 200');
@@ -1345,11 +1509,139 @@ class PointsModel
         $rows = $st->fetchAll(PDO::FETCH_ASSOC);
         foreach ($rows as &$r) $r['shipping'] = $r['shipping_json'] ? (json_decode((string) $r['shipping_json'], true) ?: []) : [];
         unset($r);
-        return $rows;
+        return $this->attachItems($rows);
+    }
+
+    /** The lines of an order for an email: name, variant, qty (only what is still open when $onlyOpen). */
+    private function emailLines(int $redemptionId, bool $onlyOpen): array
+    {
+        $st = $this->pdo->prepare('SELECT g.name, i.variant, i.qty, i.qty_refunded FROM redemption_items i JOIN goodies g ON g.id = i.goody_id WHERE i.redemption_id = :r ORDER BY i.id');
+        $st->execute([':r' => $redemptionId]);
+        $out = [];
+        foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $i) {
+            $q = $onlyOpen ? (int) $i['qty'] - (int) $i['qty_refunded'] : (int) $i['qty'];
+            if ($q < 1) continue;
+            $out[] = ['name' => (string) $i['name'], 'variant' => (string) ($i['variant'] ?? ''), 'qty' => $q];
+        }
+        return $out;
+    }
+
+    private function refundedTotal(int $redemptionId): int
+    {
+        $st = $this->pdo->prepare('SELECT COALESCE(SUM(points), 0) FROM redemption_refunds WHERE redemption_id = :r');
+        $st->execute([':r' => $redemptionId]);
+        return (int) $st->fetchColumn();
+    }
+
+    /** The still-open lines of an order, locked, in goody order (so stock locks follow the same order as redeemCart). */
+    private function openItems(int $redemptionId): array
+    {
+        $st = $this->pdo->prepare('SELECT id, goody_id, variant, qty, qty_refunded, points_each, (qty - qty_refunded) AS qty_open
+                                     FROM redemption_items WHERE redemption_id = :r AND qty > qty_refunded ORDER BY goody_id, id FOR UPDATE');
+        $st->execute([':r' => $redemptionId]);
+        return $st->fetchAll(PDO::FETCH_ASSOC);
     }
 
     /**
-     * Move a redemption along. Cancelling refunds the points with a new ledger row and puts the item back in stock.
+     * Refund $qty units of one line, INSIDE an open transaction that already holds the order's row lock.
+     * Writes the refund row, bumps qty_refunded, writes the ledger credit and (when $restock) puts the units back
+     * in stock. Returns the points refunded.
+     */
+    private function refundInTx(array $item, int $qty, string $reason, bool $restock, string $actorEmail, array $order): int
+    {
+        $points = $qty * (int) $item['points_each'];
+        $this->pdo->prepare('INSERT INTO redemption_refunds (redemption_id, item_id, qty, points, reason, restocked, refunded_by) VALUES (:r, :i, :q, :p, :why, :rs, :by)')
+            ->execute([':r' => $order['id'], ':i' => $item['id'], ':q' => $qty, ':p' => $points, ':why' => mb_substr($reason, 0, 255), ':rs' => $restock ? 1 : 0, ':by' => $actorEmail]);
+        $refundId = (int) $this->pdo->lastInsertId();
+        $this->pdo->prepare('UPDATE redemption_items SET qty_refunded = qty_refunded + :q WHERE id = :id')->execute([':q' => $qty, ':id' => $item['id']]);
+
+        $g = $this->pdo->prepare('SELECT name, stock_json FROM goodies WHERE id = :id' . ($restock ? ' FOR UPDATE' : ''));
+        $g->execute([':id' => $item['goody_id']]);
+        $goody = $g->fetch(PDO::FETCH_ASSOC) ?: ['name' => 'goody', 'stock_json' => null];
+
+        $label = self::itemLabel((string) $goody['name'], (string) ($item['variant'] ?? ''), $qty);
+        $this->pdo->prepare("INSERT INTO points_ledger (member_id, points, entry_type, redemption_id, refund_id, reason, actor_email) VALUES (:m, :p, 'refund', :r, :f, :why, :a)")
+            ->execute([':m' => $order['member_id'], ':p' => $points, ':r' => $order['id'], ':f' => $refundId,
+                       ':why' => mb_substr('Refund: ' . $order['tracking_id'] . ' (' . $label . ')', 0, 255), ':a' => $actorEmail]);
+
+        if ($restock) {
+            $stock = self::decodeStock($goody['stock_json']);
+            if ($stock !== null) {
+                $key = (string) ($item['variant'] ?? '') !== '' ? (string) $item['variant'] : self::STOCK_ALL;
+                if (array_key_exists($key, $stock)) {
+                    $stock[$key] += $qty;
+                    $this->pdo->prepare('UPDATE goodies SET stock_json = :s WHERE id = :id')
+                        ->execute([':s' => json_encode($stock, JSON_UNESCAPED_UNICODE), ':id' => $item['goody_id']]);
+                }
+            }
+        }
+        return $points;
+    }
+
+    /**
+     * Refund some or all units of one order line (for example the goody is out of stock) and let the rest of the
+     * order ship. Only while the order is Requested or Ordered. $restock puts the units back in stock: leave it off
+     * when the reason is that they are out of stock. When the last open unit is refunded the order becomes Cancelled.
+     * The member is emailed after the change is saved ('email' says whether it went; null = could not tell).
+     * @return array{ok:bool, error?:string, points?:int, cancelled?:bool, email?:bool}
+     */
+    public function refundItem(int $itemId, int $qty, string $reason, bool $restock, string $actorEmail): array
+    {
+        $reason = trim($reason);
+        if ($reason === '') return ['ok' => false, 'error' => 'Give a reason. The member reads it.'];
+        if (mb_strlen($reason) > 255) return ['ok' => false, 'error' => 'Please keep the reason under 255 characters.'];
+
+        $st = $this->pdo->prepare('SELECT redemption_id FROM redemption_items WHERE id = :id');
+        $st->execute([':id' => $itemId]);
+        $rid = (int) $st->fetchColumn();
+        if ($rid < 1) return ['ok' => false, 'error' => 'That item no longer exists.'];
+
+        $this->pdo->beginTransaction();
+        try {
+            $st = $this->pdo->prepare('SELECT * FROM redemptions WHERE id = :id FOR UPDATE');
+            $st->execute([':id' => $rid]);
+            $order = $st->fetch(PDO::FETCH_ASSOC);
+            if (!$order || !in_array($order['status'], ['Requested', 'Ordered'], true)) {
+                $this->pdo->rollBack();
+                return ['ok' => false, 'error' => 'Items can only be refunded before the order is shipped.'];
+            }
+            $st = $this->pdo->prepare('SELECT id, goody_id, variant, qty, qty_refunded, points_each, (qty - qty_refunded) AS qty_open FROM redemption_items WHERE id = :id AND redemption_id = :r FOR UPDATE');
+            $st->execute([':id' => $itemId, ':r' => $rid]);
+            $item = $st->fetch(PDO::FETCH_ASSOC);
+            if (!$item || $qty < 1 || $qty > (int) $item['qty_open']) {
+                $this->pdo->rollBack();
+                return ['ok' => false, 'error' => 'Choose how many units to refund (1 to ' . (int) ($item['qty_open'] ?? 0) . ').'];
+            }
+            $points = $this->refundInTx($item, $qty, $reason, $restock, $actorEmail, $order);
+            $left = $this->pdo->prepare('SELECT COALESCE(SUM(qty - qty_refunded), 0) FROM redemption_items WHERE redemption_id = :r');
+            $left->execute([':r' => $rid]);
+            $cancelled = (int) $left->fetchColumn() === 0;
+            if ($cancelled) $this->pdo->prepare("UPDATE redemptions SET status = 'Cancelled' WHERE id = :id")->execute([':id' => $rid]);
+            $this->pdo->commit();
+        } catch (Throwable $e) {
+            if ($this->pdo->inTransaction()) $this->pdo->rollBack();
+            $this->log('refundItem failed: ' . $e->getMessage());
+            return ['ok' => false, 'error' => 'Could not refund the item.'];
+        }
+
+        $this->audit($actorEmail, 'goodies.redemption_refund', (string) $order['tracking_id'],
+            $qty . ' unit(s), ' . $points . ' pts' . ($restock ? ', back in stock' : '') . ': ' . mb_substr($reason, 0, 150) . ($cancelled ? ' (order now cancelled)' : ''));
+
+        if ($cancelled) {
+            $email = $this->mailMember((string) $order['member_id'], 'sendOrderCancelled', [(string) $order['tracking_id'], $this->emailLines($rid, false), $this->refundedTotal($rid)]);
+        } else {
+            $n = $this->pdo->prepare('SELECT g.name, i.variant FROM redemption_items i JOIN goodies g ON g.id = i.goody_id WHERE i.id = :id');
+            $n->execute([':id' => $itemId]);
+            $row = $n->fetch(PDO::FETCH_ASSOC) ?: ['name' => 'item', 'variant' => ''];
+            $email = $this->mailMember((string) $order['member_id'], 'sendOrderRefunded',
+                [(string) $order['tracking_id'], [['name' => (string) $row['name'], 'variant' => (string) ($row['variant'] ?? ''), 'qty' => $qty]], $points]);
+        }
+        return ['ok' => true, 'points' => $points, 'cancelled' => $cancelled, 'email' => $email];
+    }
+
+    /**
+     * Move a redemption along. Cancelling refunds every unit still open (and puts them back in stock).
+     * To refund only part of an order use refundItem().
      *
      * Marking an order Shipped needs $dispatch, because the member is told how it is coming:
      *   method           'courier' or 'hand'
@@ -1389,20 +1681,8 @@ class PointsModel
             }
 
             if ($to === 'Cancelled') {
-                $lg = $this->pdo->prepare("INSERT INTO points_ledger (member_id, points, entry_type, redemption_id, reason, actor_email) VALUES (:m, :p, 'refund', :r, :why, :a)");
-                $lg->execute([':m' => $r['member_id'], ':p' => (int) $r['points_spent'], ':r' => $id, ':why' => 'Refund: ' . $r['tracking_id'], ':a' => $actorEmail]);
-
-                // Put the item back in stock (only when the goody tracks stock and that size still exists).
-                $gs = $this->pdo->prepare('SELECT stock_json FROM goodies WHERE id = :id FOR UPDATE');
-                $gs->execute([':id' => $r['goody_id']]);
-                $stock = self::decodeStock($gs->fetchColumn());
-                if ($stock !== null) {
-                    $key = (string) ($r['variant'] ?? '') !== '' ? (string) $r['variant'] : self::STOCK_ALL;
-                    if (array_key_exists($key, $stock)) {
-                        $stock[$key]++;
-                        $this->pdo->prepare('UPDATE goodies SET stock_json = :s WHERE id = :id')
-                            ->execute([':s' => json_encode($stock, JSON_UNESCAPED_UNICODE), ':id' => $r['goody_id']]);
-                    }
+                foreach ($this->openItems($id) as $it) {
+                    $this->refundInTx($it, (int) $it['qty_open'], 'Order cancelled', true, $actorEmail, $r);
                 }
             }
             $this->pdo->commit();
@@ -1419,10 +1699,7 @@ class PointsModel
         if ($to === 'Shipped') {
             $email = $this->sendDispatchEmail($id);
         } elseif ($to === 'Cancelled') {
-            $g = $this->pdo->prepare('SELECT name FROM goodies WHERE id = :id');
-            $g->execute([':id' => $r['goody_id']]);
-            $email = $this->mailMember((string) $r['member_id'], 'sendOrderCancelled',
-                [(string) $r['tracking_id'], (string) $g->fetchColumn(), (string) ($r['variant'] ?? ''), (int) $r['points_spent']]);
+            $email = $this->mailMember((string) $r['member_id'], 'sendOrderCancelled', [(string) $r['tracking_id'], $this->emailLines($id, false), $this->refundedTotal($id)]);
         }
         return ['ok' => true, 'email' => $email];
     }
@@ -1450,16 +1727,16 @@ class PointsModel
         return ['error' => 'Choose how it is being sent: courier or by hand.'];
     }
 
-    /** Email the member how their order is coming. Records email_sent_at on success. Returns whether it went out. */
+    /** Email the member how their order is coming (the units still open). Records email_sent_at on success. Returns whether it went out. */
     private function sendDispatchEmail(int $id): bool
     {
-        $st = $this->pdo->prepare('SELECT r.*, g.name AS goody_name FROM redemptions r JOIN goodies g ON g.id = r.goody_id WHERE r.id = :id');
+        $st = $this->pdo->prepare('SELECT * FROM redemptions WHERE id = :id');
         $st->execute([':id' => $id]);
         $r = $st->fetch(PDO::FETCH_ASSOC);
         if (!$r || !$r['delivery_method']) return false;
 
         $ok = $this->mailMember((string) $r['member_id'], 'sendOrderDispatched', [
-            (string) $r['tracking_id'], (string) $r['goody_name'], (string) ($r['variant'] ?? ''), (string) $r['delivery_method'],
+            (string) $r['tracking_id'], $this->emailLines($id, true), (string) $r['delivery_method'],
             (string) ($r['courier'] ?? ''), (string) ($r['awb'] ?? ''), (string) ($r['tracking_url'] ?? ''), (string) ($r['handover_note'] ?? ''),
         ]);
         if ($ok) $this->pdo->prepare('UPDATE redemptions SET email_sent_at = :t WHERE id = :id')->execute([':t' => gmdate('Y-m-d H:i:s'), ':id' => $id]);

@@ -835,6 +835,7 @@ CREATE TABLE IF NOT EXISTS `activity_types` (
   `needs_evidence` tinyint(1) NOT NULL DEFAULT 0,
   `one_time` tinyint(1) NOT NULL DEFAULT 0,        -- can be awarded to a member only once
   `member_claimable` tinyint(1) NOT NULL DEFAULT 0,  -- members may claim it (reviewers decide); never the built-in ones
+  `cooldown_days` smallint(5) UNSIGNED DEFAULT NULL,   -- a member can claim it again only after this many days (a repeating claim)
   -- Used from Phase 2 (event finalise): a meetup under the minimum pays below_min_points.
   `min_attendees` int(10) UNSIGNED DEFAULT NULL,
   `below_min_points` int(10) UNSIGNED DEFAULT NULL,
@@ -910,6 +911,7 @@ CREATE TABLE IF NOT EXISTS `goodies` (
   `variants_json` JSON DEFAULT NULL,                -- e.g. ["S","M","L","XL"]; NULL = no choice needed
   `stock_json` text DEFAULT NULL,
   `images_json` text DEFAULT NULL,                  -- [{"file":"7f3a9c1e5b2d4a60.jpg","alt":"..."}]; first is the cover; NULL = no pictures
+  `max_per_order` tinyint(3) UNSIGNED DEFAULT NULL,   -- most units of this goody in one order, across all sizes; NULL = no limit
   `is_active` tinyint(1) NOT NULL DEFAULT 1,
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
@@ -926,7 +928,7 @@ CREATE TABLE IF NOT EXISTS `redemptions` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
   `tracking_id` varchar(12) NOT NULL,               -- e.g. 'GD-7K4N9XQ2', unrelated to id
   `member_id` varchar(40) NOT NULL,
-  `goody_id` int(11) NOT NULL,
+  `goody_id` int(11) DEFAULT NULL,                   -- unused by new orders (see redemption_items); kept for orders made before carts
   `variant` varchar(60) DEFAULT NULL,
   `points_spent` int(10) UNSIGNED NOT NULL,         -- snapshot of the price at redemption
   `shipping_json` JSON DEFAULT NULL,                -- scrubbed after delivery: PointsModel::scrubShipping()
@@ -949,6 +951,40 @@ CREATE TABLE IF NOT EXISTS `redemptions` (
   CONSTRAINT `fk_redemptions_goody` FOREIGN KEY (`goody_id`) REFERENCES `goodies` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- An order (one row in redemptions, one GD- tracking ID) holds its goodies as items.
+CREATE TABLE IF NOT EXISTS `redemption_items` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `redemption_id` int(11) NOT NULL,
+  `goody_id` int(11) NOT NULL,
+  `variant` varchar(60) DEFAULT NULL,
+  `qty` smallint(5) UNSIGNED NOT NULL DEFAULT 1,
+  `qty_refunded` smallint(5) UNSIGNED NOT NULL DEFAULT 0,   -- units refunded so far; qty - qty_refunded still ships
+  `points_each` int(10) UNSIGNED NOT NULL,                  -- the price at order time
+  PRIMARY KEY (`id`),
+  KEY `idx_item_redemption` (`redemption_id`),
+  KEY `idx_item_goody` (`goody_id`),
+  CONSTRAINT `fk_items_redemption` FOREIGN KEY (`redemption_id`) REFERENCES `redemptions` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_items_goody` FOREIGN KEY (`goody_id`) REFERENCES `goodies` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- One row per refund action (a whole order, or some units of one line). Each has its own ledger row.
+CREATE TABLE IF NOT EXISTS `redemption_refunds` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `redemption_id` int(11) NOT NULL,
+  `item_id` int(11) NOT NULL,
+  `qty` smallint(5) UNSIGNED NOT NULL,
+  `points` int(10) UNSIGNED NOT NULL,
+  `reason` varchar(255) NOT NULL,                           -- shown to the member on My orders
+  `restocked` tinyint(1) NOT NULL DEFAULT 0,
+  `refunded_by` varchar(255) NOT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_refund_redemption` (`redemption_id`),
+  KEY `idx_refund_item` (`item_id`),
+  CONSTRAINT `fk_refunds_redemption` FOREIGN KEY (`redemption_id`) REFERENCES `redemptions` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_refunds_item` FOREIGN KEY (`item_id`) REFERENCES `redemption_items` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- Append-only. The application only inserts and reads here.
 CREATE TABLE IF NOT EXISTS `points_ledger` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
@@ -957,12 +993,13 @@ CREATE TABLE IF NOT EXISTS `points_ledger` (
   `entry_type` enum('award','redemption','refund','reversal','revaluation') NOT NULL,   -- revaluation: an activity's points were changed
   `award_id` int(11) DEFAULT NULL,
   `redemption_id` int(11) DEFAULT NULL,
+  `refund_id` int(11) NOT NULL DEFAULT 0,           -- 0 for an award or an order's debit; the redemption_refunds id for a refund
   `reason` varchar(255) NOT NULL,
   `actor_email` varchar(255) NOT NULL,              -- snapshot, like audit_log.actor_email
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uniq_ledger_award` (`award_id`),                          -- one ledger row per approved award
-  UNIQUE KEY `uniq_ledger_redemption` (`redemption_id`,`entry_type`),   -- one debit and at most one refund
+  UNIQUE KEY `uniq_ledger_redemption` (`redemption_id`,`entry_type`,`refund_id`),   -- one debit per order, and one row per refund
   KEY `idx_ledger_member` (`member_id`),
   CONSTRAINT `fk_points_ledger_award` FOREIGN KEY (`award_id`) REFERENCES `point_awards` (`id`),
   CONSTRAINT `fk_points_ledger_redemption` FOREIGN KEY (`redemption_id`) REFERENCES `redemptions` (`id`)
@@ -1115,13 +1152,17 @@ INSERT IGNORE INTO `activity_types` (`code`,`name`,`category`,`points`,`needs_ev
   ('mentor_first_edit',    'Mentor a newcomer to their first edit',     'community',  100, 1, NULL, NULL, 0),
   ('mentor_first_article', 'Mentor a newcomer to their first article',  'community',  150, 1, NULL, NULL, 0);
 
-INSERT IGNORE INTO `goodies` (`name`,`description`,`points_cost`,`variants_json`,`is_active`) VALUES
-  ('Sticker pack', 'DCW stickers.',       50,  NULL, 0),
-  ('Notebook',     'DCW kraft notebook.', 150, NULL, 0),
-  ('Mug',          'DCW mug.',            300, NULL, 0),
-  ('T-shirt',      'DCW T-shirt.',        500, JSON_ARRAY('S','M','L','XL','XXL'), 0);
+INSERT IGNORE INTO `goodies` (`name`,`description`,`points_cost`,`variants_json`,`max_per_order`,`is_active`) VALUES
+  ('Sticker pack', 'DCW stickers.',       50,  NULL, NULL, 0),
+  ('Notebook',     'DCW kraft notebook.', 150, NULL, 2,    0),
+  ('Mug',          'DCW mug.',            300, NULL, 1,    0),
+  ('T-shirt',      'DCW T-shirt.',        500, JSON_ARRAY('S','M','L','XL','XXL'), 1, 0);
 
 -- A sensible starting set of claimable activities; reviewers can change it
 -- from the Activities and points tab. Safe to re-run.
 UPDATE `activity_types` SET `member_claimable` = 1
  WHERE `code` IN ('first_edit','mentor_first_edit','mentor_first_article');
+
+INSERT IGNORE INTO `activity_types`
+  (`code`,`name`,`category`,`points`,`needs_evidence`,`one_time`,`member_claimable`,`cooldown_days`,`is_active`)
+VALUES ('edits_100_30d','Made 100+ edits in the last 30 days','contribute',100,1,0,1,30,0);

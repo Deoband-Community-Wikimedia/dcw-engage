@@ -13,7 +13,8 @@
 //   MemberMessageMail.php    a message typed by a support reviewer or owner to one member, with an optional PDF
 //                            (/admin/email-member). No Reply-To; points the member to DCW Support.
 //   PointsMail.php           Goodies (member points): claim decisions, and an order's receipt, dispatch
-//                            (courier + AWB, or by hand) and cancellation. Never contains an address.
+//                            (courier + AWB, or by hand), part refund and cancellation. Orders list their goodies
+//                            ($lines). Never contains an address.
 //   membership_mailer.php    membership emails (class MembershipMailer): club-specific wording, From name and reply-to
 //   feedback_mailer.php      feedback forms (class FeedbackMailer): receipt to the respondent, alert to organizers.
 //                            No tracking ID and no link in the receipt.
@@ -122,11 +123,16 @@ class Mailer {
     // ($email, $memberName, $trackingId, $kind) $kind = approved | rejected | info. Called by PointClaimModel.
     // Never contains the reviewer's words: the member reads those signed in.
     public static function sendPointClaimUpdate(...$a)       { return PointsMail::claimUpdate(...$a); }
-    // ($email, $memberName, $trackingId, $goodyName, $variant, $points). Called by PointsModel::redeem().
+    // ($email, $memberName, $trackingId, $lines, $points). Called by PointsModel::redeemCart().
+    // $lines = [['name' => goody, 'variant' => size or '', 'qty' => units], ...]. Never contains the address.
     public static function sendOrderPlaced(...$a)            { return PointsMail::orderPlaced(...$a); }
-    // ($email, $memberName, $trackingId, $goodyName, $variant, $method ['courier'|'hand'], $courier, $awb, $trackUrl, $handoverNote)
-    // Never contains the address. Returns false when not really sent, so the admin page offers "Send email again".
+    // ($email, $memberName, $trackingId, $lines, $method ['courier'|'hand'], $courier, $awb, $trackUrl, $handoverNote)
+    // $lines = the units really being sent. Never contains the address. Returns false when not really sent,
+    // so the admin page offers "Send email again".
     public static function sendOrderDispatched(...$a)        { return PointsMail::orderDispatched(...$a); }
-    // ($email, $memberName, $trackingId, $goodyName, $variant, $points)
+    // ($email, $memberName, $trackingId, $lines, $points). $lines = the refunded units, $points = what was credited.
+    // Part of an order was refunded; the rest still ships.
+    public static function sendOrderRefunded(...$a)          { return PointsMail::orderRefunded(...$a); }
+    // ($email, $memberName, $trackingId, $lines, $points). The whole order was cancelled; $points = everything credited back.
     public static function sendOrderCancelled(...$a)         { return PointsMail::orderCancelled(...$a); }
 }

@@ -23,21 +23,25 @@ require_once __DIR__ . '/../../models/GoodyImages.php';
  * Claims are PointClaimModel's (migrations/2026_11_goodies_claims.sql). If those tables are not there yet the
  * claim buttons are simply left out. A claim never changes the balance: a reviewer approves it into an award.
  *
+ * Cart: a card opens a detail dialog (pictures, size, quantity) and "Add to cart" puts it in the member's cart. The cart
+ * lives in the browser (localStorage, one per Member ID) and is only a convenience: checkout posts the lines to
+ * PointsModel::redeemCart(), which re-reads prices, stock, limits and the balance itself and either places ONE order
+ * (one GD- tracking ID, one address) or nothing at all. Each goody can have a "max per order" (goodies.max_per_order).
+ * Pictures open in a viewer that can zoom (click, or the Zoom button), from the card and from the detail dialog.
+ *
  * Points history reads PointsModel::ledgerDetailed() (activity, session and order names joined in) and is
  * shown by includes/points_ui.php: grouped by month with a subtotal, repeats folded into one row, and
  * awards still waiting for a second reviewer listed as Pending. Award notes are never shown to members.
  *
  * Points never expire. Any signed-in member can redeem, whatever their membership status, except a
- * member who is struck off (MemberStrikeModel). Change $canRedeem below if the rule is decided differently.
- * Redeeming asks for shipping details, which are kept only until the order is finished and are then
- * cleared by PointsModel::scrubShipping().
+ * member who is struck off (MemberStrikeModel). Redeeming asks for shipping details, which are kept only until the
+ * order is finished and are then cleared by PointsModel::scrubShipping().
  *
- * Stock is optional per goody (goodies.stock_json). Sold-out goodies and sizes are shown as out of stock and
- * cannot be ordered; PointsModel::redeem() re-checks stock inside the same transaction that spends the points.
+ * Orders: an order can hold several goodies. If one cannot be sent, a reviewer refunds just those units and the rest
+ * ships; My orders shows each line, what was refunded and why.
  *
- * Pictures are optional per goody (goodies.images_json, see GoodyImages). The first is the cover on the card;
- * the redeem dialog shows the cover large, with thumbnails to flip through when there are several. A goody
- * with no pictures keeps the coloured initial-letter placeholder.
+ * Stock is optional per goody (goodies.stock_json). Sold-out goodies and sizes cannot be ordered.
+ * Pictures are optional per goody (goodies.images_json, see GoodyImages). A goody with none keeps the coloured initial.
  *
  * Catalogue order: what the member can redeem now first, then the rest by cost, sold-out goodies last.
  */
@@ -56,8 +60,8 @@ function mgoodies_flash(string $kind, string $text): void
     $_SESSION['member_goodies_flash'] = [$kind, $text];
 }
 
-// ---- Redeem ---------------------------------------------------------------------------------------
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'redeem') {
+// ---- Checkout: one order for the whole cart -------------------------------------------------------
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'redeem_cart') {
     if (!CSRF::validate($_POST['csrf_token'] ?? '')) {
         die('Invalid CSRF token.');
     }
@@ -65,22 +69,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'redee
     $phone   = trim((string) ($_POST['ship_phone'] ?? ''));
     $address = trim((string) ($_POST['ship_address'] ?? ''));
     $digits  = preg_replace('/\D+/', '', $phone);
+    $cartRaw = (string) ($_POST['cart'] ?? '');
+    $cart    = strlen($cartRaw) <= 20000 ? json_decode($cartRaw, true) : null;
 
     if (!$canRedeem) {
         mgoodies_flash('error', 'Redeeming is not available right now.');
+    } elseif (!is_array($cart) || !$cart) {
+        mgoodies_flash('error', 'Your cart is empty.');
     } elseif ($name === '' || mb_strlen($name) > 120 || $address === '' || mb_strlen($address) > 400) {
         mgoodies_flash('error', 'Please enter your name and delivery address.');
     } elseif (strlen($digits) < 10 || strlen($digits) > 15) {
         mgoodies_flash('error', 'Please enter a phone number the courier can call.');
     } else {
         try {
-            $r = $model->redeem($memberId, (int) ($_POST['goody_id'] ?? 0), trim((string) ($_POST['variant'] ?? '')),
-                ['name' => $name, 'phone' => $phone, 'address' => $address]);
-            mgoodies_flash($r['ok'] ? 'ok' : 'error', $r['ok']
-                ? 'Order placed. Your tracking ID is ' . $r['tracking_id'] . '. You can follow its status under My orders.'
-                : $r['error']);
+            $r = $model->redeemCart($memberId, $cart, ['name' => $name, 'phone' => $phone, 'address' => $address]);
+            if ($r['ok']) {
+                if (session_status() !== PHP_SESSION_ACTIVE) @session_start();
+                $_SESSION['member_goodies_clear_cart'] = 1;   // the page empties the browser's cart once
+                mgoodies_flash('ok', 'Order placed. Your tracking ID is ' . $r['tracking_id'] . '. You can follow its status under My orders.');
+            } else {
+                mgoodies_flash('error', $r['error']);      // the cart stays, so nothing has to be picked again
+            }
         } catch (Throwable $e) {
-            app_log('Member goodies: redeem failed: ' . $e->getMessage());
+            app_log('Member goodies: checkout failed: ' . $e->getMessage());
             mgoodies_flash('error', 'We could not place your order just now. Please try again.');
         }
     }
@@ -132,6 +143,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && str_starts_with((string) ($_POST['a
 $flash = null;
 if (session_status() !== PHP_SESSION_ACTIVE) @session_start();
 if (!empty($_SESSION['member_goodies_flash'])) { $flash = $_SESSION['member_goodies_flash']; unset($_SESSION['member_goodies_flash']); }
+$clearCart = !empty($_SESSION['member_goodies_clear_cart']);
+unset($_SESSION['member_goodies_clear_cart']);
 
 $historyMode = ($_GET['view'] ?? '') === 'history';
 $claimMode   = ($_GET['view'] ?? '') === 'claim';
@@ -157,13 +170,14 @@ try {
 $pendingSum = (int) array_sum(array_column($pending, 'points'));
 
 // ---- Claims (null = the claim tables are not there yet: the claim buttons are left out) -------------
-$claims = null; $claimActivities = $claimOthers = $claimOne = null; $claimMessages = [];
+$claims = null; $claimActivities = $claimOthers = $claimOne = null; $claimMessages = []; $claimCooldowns = [];
 try {
     $claimModel = new PointClaimModel();
     $claims = $claimModel->forMember($memberId);
     if ($claimMode) {
         $claimActivities = $claimModel->claimableActivities();
         $claimOthers     = $claimModel->otherActivities();
+        $claimCooldowns  = $claimModel->cooldowns($memberId);   // [activity id => "date it can be claimed again"]
     }
     if ($claimRef !== '') {
         $claimOne = $claimModel->findForMember($claimRef, $memberId);
@@ -190,6 +204,21 @@ usort($sorted, function ($a, $b) use ($canRedeem, $balance) {
     return [$rank($a), (int) $a['points_cost'], (string) $a['name']] <=> [$rank($b), (int) $b['points_cost'], (string) $b['name']];
 });
 
+// What the cart and the viewer need to know about each goody (the server re-checks everything at checkout).
+$mgGoodies = [];
+foreach ($sorted as $g) {
+    $stock = [];
+    if ($g['variants']) { foreach ($g['variants'] as $v) $stock[$v] = PointsModel::stockFor($g, $v); }
+    else { $stock['_'] = PointsModel::stockFor($g); }      // null = not tracked
+    $mgGoodies[] = [
+        'id' => (int) $g['id'], 'name' => (string) $g['name'], 'desc' => (string) ($g['description'] ?? ''),
+        'cost' => (int) $g['points_cost'], 'variants' => array_values($g['variants']), 'stock' => (object) $stock,
+        'cap' => $g['max_per_order'] ?? null,
+        'images' => array_map(fn($im) => ['url' => GoodyImages::url($im['file']), 'alt' => GoodyImages::alt((string) $g['name'], $im)], $g['images'] ?? []),
+    ];
+}
+$mgPayload = ['member' => $memberId, 'balance' => $balance, 'canRedeem' => $canRedeem, 'clear' => $clearCart, 'goodies' => $mgGoodies];
+
 // A steady colour for each goody, from its name, so the catalogue is easy to tell apart at a glance.
 $mgHue = fn(string $s): int => abs(crc32($s)) % 360;
 $mgInitial = fn(string $s): string => mb_strtoupper(mb_substr(trim($s), 0, 1)) ?: '★';
@@ -206,11 +235,22 @@ $renderOrders = function (array $list) use ($steps, $when): void { ?>
             <div class="mg-order">
                 <div class="top">
                     <div>
-                        <h3><?= htmlspecialchars($o['goody_name']) ?><?= $o['variant'] ? ' (' . htmlspecialchars((string) $o['variant']) . ')' : '' ?></h3>
-                        <p class="meta"><?= number_format((int) $o['points_spent']) ?> points · <?= htmlspecialchars($when($o['created_at'])) ?> · <code><?= htmlspecialchars((string) $o['tracking_id']) ?></code><button type="button" class="copy" data-copy="<?= htmlspecialchars((string) $o['tracking_id']) ?>">Copy</button></p>
+                        <h3><?= htmlspecialchars((string) $o['goody_name']) ?></h3>
+                        <p class="meta"><?= number_format((int) $o['net_points']) ?> points<?= (int) $o['refunded_points'] > 0 && !$cx ? ' (' . number_format((int) $o['refunded_points']) . ' refunded)' : '' ?> · <?= htmlspecialchars($when($o['created_at'])) ?> · <code><?= htmlspecialchars((string) $o['tracking_id']) ?></code><button type="button" class="copy" data-copy="<?= htmlspecialchars((string) $o['tracking_id']) ?>">Copy</button></p>
                     </div>
                     <span class="st<?= $status === 'Delivered' ? ' done' : '' ?><?= $cx ? ' cx' : '' ?>"><?= htmlspecialchars($status) ?></span>
                 </div>
+                <?php if (!empty($o['items'])): ?>
+                    <ul class="mg-lines">
+                        <?php foreach ($o['items'] as $it): ?>
+                            <li><span><?= (int) $it['qty'] ?> × <?= htmlspecialchars(PointsModel::itemLabel((string) $it['name'], (string) ($it['variant'] ?? ''))) ?></span>
+                                <?php foreach ($it['refunds'] as $rf): $why = (string) $rf['reason']; ?>
+                                    <em class="rf">↩ <?= (int) $rf['qty'] ?> refunded (+<?= number_format((int) $rf['points']) ?> points)<?= $why !== '' && $why !== 'Order cancelled' ? ': ' . htmlspecialchars($why) : '' ?></em>
+                                <?php endforeach; ?>
+                            </li>
+                        <?php endforeach; ?>
+                    </ul>
+                <?php endif; ?>
                 <?php if (!empty($o['delivery_method']) && !$cx): ?>
                     <p class="meta" style="margin:8px 0 0">
                         <?php if ($o['delivery_method'] === 'hand'): ?>
@@ -224,6 +264,7 @@ $renderOrders = function (array $list) use ($steps, $when): void { ?>
                 <?php if ($cx): ?>
                     <p class="note">This order was cancelled and the points were refunded.</p>
                 <?php else: ?>
+                    <?php if ((int) $o['refunded_points'] > 0): ?><p class="meta" style="margin:8px 0 0">Refunded items are not part of the parcel.</p><?php endif; ?>
                     <ol class="mg-track" aria-label="Order progress">
                         <?php foreach ($steps as $i => $s): ?><li<?= $at !== false && $i <= $at ? ' class="on"' : '' ?>><?= $s ?></li><?php endforeach; ?>
                     </ol>
@@ -348,12 +389,13 @@ points_claim_css();
     .mg-card { display: flex; flex-direction: column; overflow: hidden; background: var(--card); border: 1px solid var(--border); border-radius: 18px; transition: transform .18s, box-shadow .18s; }
     .mg-card:hover { transform: translateY(-3px); box-shadow: 0 12px 28px rgba(15,23,42,.12); }
     .mg-card.locked { opacity: .92; }
-    .mg-art { position: relative; display: flex; align-items: center; justify-content: center; height: 116px; background: linear-gradient(135deg, hsl(var(--h) 70% 90%), hsl(calc(var(--h) + 35) 75% 82%)); }
-    .mg-art span { display: grid; place-items: center; width: 64px; height: 64px; border-radius: 50%; background: #fff; color: hsl(var(--h) 60% 32%); font-size: 30px; font-weight: 800; box-shadow: 0 6px 16px rgba(15,23,42,.14); }
-    /* A goody with a picture: the cover fills the top of the card. */
-    .mg-art.has-img { height: 180px; background: #f1f5f9; }
+    .mg-art { position: relative; display: flex; align-items: center; justify-content: center; width: 100%; height: 116px; padding: 0; border: 0; background: linear-gradient(135deg, hsl(var(--h) 70% 90%), hsl(calc(var(--h) + 35) 75% 82%)); }
+    .mg-art span.ini { display: grid; place-items: center; width: 64px; height: 64px; border-radius: 50%; background: #fff; color: hsl(var(--h) 60% 32%); font-size: 30px; font-weight: 800; box-shadow: 0 6px 16px rgba(15,23,42,.14); }
+    /* A goody with a picture: the cover fills the top of the card, and opens the picture viewer. */
+    .mg-art.has-img { height: 180px; background: #f1f5f9; cursor: zoom-in; }
     .mg-art.has-img img { display: block; width: 100%; height: 100%; object-fit: cover; }
     .mg-more { position: absolute; right: 10px; bottom: 10px; padding: 2px 10px; border-radius: 999px; background: rgba(15,23,42,.72); color: #fff; font-size: 12px; font-weight: 700; }
+    .mg-zoom { position: absolute; left: 10px; bottom: 10px; padding: 2px 10px; border-radius: 999px; background: rgba(15,23,42,.72); color: #fff; font-size: 12px; font-weight: 700; }
     .mg-body { display: flex; flex: 1; flex-direction: column; padding: 16px 18px 18px; }
     .mg-body h3 { margin: 0 0 4px; font-size: 17px; }
     .mg-body p { margin: 0 0 12px; color: var(--muted); font-size: 14px; line-height: 1.45; }
@@ -369,35 +411,76 @@ points_claim_css();
     .mg-btn { width: 100%; margin-top: 12px; padding: 10px 16px; font: inherit; font-weight: 700; border: 0; border-radius: 999px; background: var(--primary); color: #fff; cursor: pointer; }
     .mg-btn:hover { background: var(--primary-dark); }
     .mg-btn.ghost { background: #fff; color: var(--primary); border: 1px solid var(--border); }
-    .mg-btn:focus-visible, .mg-dlg input:focus-visible, .mg-dlg select:focus-visible, .mg-dlg textarea:focus-visible, .mg-thumbs button:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+    .mg-btn[disabled] { opacity: .5; cursor: not-allowed; }
+    .mg-btn:focus-visible, .mg-dlg input:focus-visible, .mg-dlg select:focus-visible, .mg-dlg textarea:focus-visible, .mg-thumbs button:focus-visible,
+    .mg-art:focus-visible, .mg-line button:focus-visible, .mg-lb button:focus-visible, .mg-gal-main:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 
-    /* Stock. The strikethrough is for a size chip only: the "Out of stock" tag keeps its text readable. */
+    /* Stock and limits. The strikethrough is for a size chip only: the "Out of stock" tag keeps its text readable. */
     .mg-opts span.out:not(.mg-tag) { text-decoration: line-through; opacity: .6; }
     .mg-tag { padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; }
     .mg-tag.out { background: #fbe4e5; color: #97161b; text-decoration: none; }
     .mg-tag.low { background: #fef3c7; color: #92400e; }
+    .mg-tag.cap { background: #e8f3f9; color: #0b4f73; }
     .mg-card.soldout .mg-art { filter: grayscale(1); opacity: .7; }
 
-    /* Redeem dialog */
-    .mg-dlg { width: min(460px, calc(100vw - 32px)); max-height: calc(100vh - 32px); padding: 0; border: 0; border-radius: 20px; box-shadow: 0 24px 60px rgba(15,23,42,.35); }
+    /* Dialogs: detail, cart */
+    .mg-dlg { width: min(480px, calc(100vw - 32px)); max-height: calc(100vh - 32px); padding: 0; border: 0; border-radius: 20px; box-shadow: 0 24px 60px rgba(15,23,42,.35); }
     .mg-dlg::backdrop { background: rgba(15,23,42,.5); }
-    .mg-dlg header { padding: 20px 22px 14px; background: linear-gradient(135deg, hsl(var(--h) 70% 92%), hsl(calc(var(--h) + 35) 75% 86%)); }
+    .mg-dlg header { padding: 20px 22px 14px; background: linear-gradient(135deg, hsl(var(--h, 205) 70% 92%), hsl(calc(var(--h, 205) + 35) 75% 86%)); }
     .mg-dlg header h3 { margin: 0 0 2px; font-size: 19px; }
     .mg-dlg header p { margin: 0; color: #475569; font-size: 13.5px; }
-    .mg-dlg form { padding: 8px 22px 22px; }
+    .mg-dlg form, .mg-dbody { padding: 8px 22px 22px; }
     .mg-dlg label { display: block; margin: 12px 0 0; font-size: 13px; font-weight: 600; }
-    .mg-dlg input[type=text], .mg-dlg input[type=tel], .mg-dlg select, .mg-dlg textarea { width: 100%; box-sizing: border-box; margin-top: 4px; padding: 10px 12px; font: inherit; border: 1px solid var(--border); border-radius: 10px; }
+    .mg-dlg input[type=text], .mg-dlg input[type=tel], .mg-dlg input[type=number], .mg-dlg select, .mg-dlg textarea { width: 100%; box-sizing: border-box; margin-top: 4px; padding: 10px 12px; font: inherit; border: 1px solid var(--border); border-radius: 10px; }
     .mg-dlg .fine { margin: 12px 0 0; color: var(--muted); font-size: 12.5px; }
     .mg-dlg .acts { display: flex; gap: 10px; margin-top: 16px; }
     .mg-dlg .acts .mg-btn { margin: 0; }
+    .mg-dbody p.desc { margin: 10px 0 0; color: #475569; font-size: 14px; line-height: 1.5; }
+    .mg-qty { display: inline-flex; align-items: center; gap: 8px; margin-top: 4px; }
+    .mg-qty button { width: 34px; height: 34px; border: 1px solid var(--border); border-radius: 50%; background: #fff; font: inherit; font-weight: 800; font-size: 17px; cursor: pointer; }
+    .mg-qty button[disabled] { opacity: .4; cursor: not-allowed; }
+    .mg-qty input[type=number] { width: 4.2em !important; margin: 0 !important; text-align: center; }
+    .mg-qty b { min-width: 1.6em; text-align: center; font-variant-numeric: tabular-nums; }
 
-    /* Pictures in the redeem dialog: a large one, and thumbnails when there are several */
-    .mg-gal { background: #f1f5f9; }
-    .mg-gal .main { display: block; width: 100%; height: 260px; object-fit: contain; background: #f8fafc; }
+    /* Pictures in the detail dialog: a large one that opens the viewer, and thumbnails when there are several */
+    .mg-gal { position: relative; background: #f1f5f9; }
+    .mg-gal-main { position: relative; display: block; width: 100%; padding: 0; border: 0; background: #f8fafc; cursor: zoom-in; }
+    .mg-gal-main img { display: block; width: 100%; height: 260px; object-fit: contain; }
     .mg-thumbs { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 22px; background: #fff; border-bottom: 1px solid var(--border); }
     .mg-thumbs button { width: 54px; height: 54px; padding: 0; border: 2px solid transparent; border-radius: 10px; overflow: hidden; background: #f1f5f9; cursor: pointer; }
     .mg-thumbs button[aria-current="true"] { border-color: var(--primary); }
     .mg-thumbs img { display: block; width: 100%; height: 100%; object-fit: cover; }
+
+    /* Cart bar and cart lines */
+    .mg-cartbar { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 50; display: flex; align-items: center; gap: 14px; max-width: calc(100vw - 24px); padding: 10px 12px 10px 20px; border-radius: 999px; background: var(--ink); color: #fff; box-shadow: 0 12px 30px rgba(15,23,42,.35); font-weight: 700; font-size: 14.5px; }
+    .mg-cartbar .mg-btn { width: auto; margin: 0; padding: 8px 18px; background: #ffd166; color: #1e293b; }
+    .mg-line { display: grid; grid-template-columns: 52px minmax(0, 1fr) auto; gap: 4px 12px; align-items: center; padding: 12px 0; border-top: 1px solid var(--border); }
+    .mg-line:first-child { border-top: 0; }
+    .mg-line .th { width: 52px; height: 52px; border-radius: 10px; overflow: hidden; background: #f1f5f9; display: grid; place-items: center; font-weight: 800; color: #475569; }
+    .mg-line .th img { width: 100%; height: 100%; object-fit: cover; }
+    .mg-line .nm { font-weight: 700; font-size: 14.5px; overflow-wrap: anywhere; }
+    .mg-line .nm small { display: block; color: var(--muted); font-weight: 500; font-size: 12.5px; }
+    .mg-line .pr { text-align: right; font-weight: 800; font-variant-numeric: tabular-nums; }
+    .mg-line .ctl { grid-column: 2 / -1; display: flex; align-items: center; gap: 10px; }
+    .mg-line .rm { border: 0; background: none; color: #97161b; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
+    .mg-sum { margin: 10px 0 4px; padding: 10px 14px; border-radius: 12px; background: #e8f3f9; color: #0b4f73; font-weight: 700; font-size: 14.5px; }
+    .mg-sum.bad { background: #fee2e2; color: #97161b; }
+    @media (max-width: 520px) { .mg-cartbar { bottom: 10px; padding-left: 16px; } }
+
+    /* Picture viewer: full picture, click or the Zoom button to zoom in, scroll to look around */
+    .mg-lb { width: 100vw; max-width: 100vw; height: 100vh; height: 100dvh; max-height: 100vh; max-height: 100dvh; margin: 0; padding: 0; border: 0; background: rgba(8,12,20,.96); color: #fff; }
+    .mg-lb[open] { display: flex; flex-direction: column; }
+    .mg-lb::backdrop { background: rgba(0,0,0,.8); }
+    .mg-lb-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 14px; font-weight: 700; }
+    .mg-lb button { padding: 8px 16px; border: 0; border-radius: 999px; background: rgba(255,255,255,.16); color: #fff; font: inherit; font-weight: 700; cursor: pointer; }
+    .mg-lb button:hover { background: rgba(255,255,255,.28); }
+    .mg-lb-wrap { position: relative; flex: 1; min-height: 0; display: flex; }
+    .mg-lb-stage { flex: 1; display: flex; overflow: auto; cursor: zoom-in; touch-action: pan-x pan-y pinch-zoom; }
+    .mg-lb-stage.zoomed { cursor: zoom-out; }
+    .mg-lb-stage img { display: block; margin: auto; max-width: 100%; max-height: 100%; object-fit: contain; }
+    .mg-lb-nav { position: absolute; top: 50%; transform: translateY(-50%); width: 44px; height: 44px; padding: 0 !important; font-size: 22px; }
+    .mg-lb-nav.prev { left: 12px; } .mg-lb-nav.next { right: 12px; }
+    .mg-lb-cap { margin: 0; padding: 8px 14px 14px; text-align: center; font-size: 14px; color: #cbd5e1; }
 
     .mg-empty { padding: 26px; text-align: center; color: var(--muted); background: var(--card); border: 1px dashed #c3d0dc; border-radius: 16px; }
 
@@ -420,6 +503,8 @@ points_claim_css();
     .mg-order .st { padding: 2px 11px; border-radius: 999px; background: var(--primary-tint); color: var(--primary-dark); font-size: 12.5px; font-weight: 700; }
     .mg-order .st.done { background: #d9f3ee; color: #0f766e; }
     .mg-order .st.cx { background: #fbe4e5; color: #97161b; }
+    .mg-lines { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 4px; font-size: 14px; }
+    .mg-lines em.rf { display: block; margin-top: 1px; color: #92400e; font-size: 12.5px; font-style: normal; font-weight: 600; }
     .mg-track { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin: 14px 0 0; padding: 0; list-style: none; }
     .mg-track li { position: relative; padding-top: 16px; text-align: center; color: #94a3b8; font-size: 12px; font-weight: 600; }
     .mg-track li::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 6px; border-radius: 999px; background: #e2e8f0; }
@@ -428,7 +513,7 @@ points_claim_css();
     .mg-order .note { margin: 10px 0 0; color: #97161b; font-size: 13px; }
 
     @media (prefers-reduced-motion: reduce) { .mg-card { transition: none; } .mg-card:hover { transform: none; } }
-    @media (max-width: 520px) { .mg-hero { padding: 22px 20px; border-radius: 18px; } .mg-gal .main { height: 220px; } }
+    @media (max-width: 520px) { .mg-hero { padding: 22px 20px; border-radius: 18px; } .mg-gal-main img { height: 220px; } }
 </style>
 
 <div class="dash">
@@ -439,6 +524,7 @@ points_claim_css();
     <?php if ($setupError): ?>
         <div class="alert error">Goodies are not available just now. Please check back soon.</div>
     <?php endif; ?>
+    <div class="alert error" id="mg-cart-note" hidden>Your cart was updated because stock or availability changed. Please check it before you order.</div>
 
 <?php if ($claimPage): ?>
 
@@ -450,7 +536,7 @@ points_claim_css();
             <div class="pc-empty">We could not find that claim in your account. <a href="/member/goodies?view=claim">See your claims</a>.</div>
         <?php else: points_claim_render_detail($claimOne, $claimMessages); endif; ?>
     <?php else: ?>
-        <?php points_claim_render_form($claimActivities ?? [], $claimOld); ?>
+        <?php points_claim_render_form($claimActivities ?? [], $claimOld, $claimCooldowns); ?>
         <section class="pc-card">
             <h2>My claims</h2>
             <p class="sub">Approved claims add points to your balance. Open one to follow it or to reply.</p>
@@ -551,7 +637,7 @@ points_claim_css();
     <section id="catalogue" aria-labelledby="mg-cat-h">
         <div class="mg-title">
             <h2 id="mg-cat-h">Goodies you can redeem</h2>
-            <p>Points have no cash value and cannot be transferred. The catalogue and point costs may change; points you have earned do not expire.</p>
+            <p>Add what you like to your cart and order it all at once. Points have no cash value and cannot be transferred. The catalogue and point costs may change; points you have earned do not expire.</p>
         </div>
         <?php if (!$goodies): ?>
             <div class="mg-empty" style="margin-bottom:34px">No goodies are available right now. Your points are safe; check back soon.</div>
@@ -561,27 +647,34 @@ points_claim_css();
                     $cost = (int) $g['points_cost'];
                     $soldOut = !PointsModel::inStock($g);
                     $can = $canRedeem && !$soldOut && $balance >= $cost;
-                    $h = $mgHue((string) $g['name']); $dlg = 'redeem-' . (int) $g['id'];
+                    $h = $mgHue((string) $g['name']);
                     $leftAll = !$g['variants'] ? PointsModel::stockFor($g) : null;   // null = not tracked or has sizes
                     $imgs = $g['images'] ?? [];
                     $cover = $imgs[0] ?? null;
+                    $cap = $g['max_per_order'] ?? null;
                 ?>
                     <article class="mg-card<?= $can ? '' : ' locked' ?><?= $soldOut ? ' soldout' : '' ?>" style="--h:<?= $h ?>">
                         <?php if ($cover): ?>
-                            <div class="mg-art has-img">
+                            <button type="button" class="mg-art has-img" data-zoom="<?= (int) $g['id'] ?>" aria-label="View pictures of <?= htmlspecialchars((string) $g['name']) ?>">
                                 <img src="<?= htmlspecialchars(GoodyImages::url($cover['file'])) ?>" alt="<?= htmlspecialchars(GoodyImages::alt((string) $g['name'], $cover)) ?>" loading="lazy">
-                                <?php if (count($imgs) > 1): ?><b class="mg-more" aria-label="<?= count($imgs) ?> pictures">1/<?= count($imgs) ?></b><?php endif; ?>
-                            </div>
+                                <span class="mg-zoom">🔍 View</span>
+                                <?php if (count($imgs) > 1): ?><b class="mg-more" aria-hidden="true">1/<?= count($imgs) ?></b><?php endif; ?>
+                            </button>
                         <?php else: ?>
-                            <div class="mg-art" aria-hidden="true"><span><?= htmlspecialchars($mgInitial((string) $g['name'])) ?></span></div>
+                            <div class="mg-art" aria-hidden="true"><span class="ini"><?= htmlspecialchars($mgInitial((string) $g['name'])) ?></span></div>
                         <?php endif; ?>
                         <div class="mg-body">
                             <h3><?= htmlspecialchars($g['name']) ?></h3>
                             <?php if ((string) $g['description'] !== ''): ?><p><?= htmlspecialchars((string) $g['description']) ?></p><?php endif; ?>
                             <?php /* When everything is sold out one tag says so; five struck-through sizes add nothing. */ ?>
                             <?php if ($g['variants'] && !$soldOut): ?><div class="mg-opts" aria-label="Options"><?php foreach ($g['variants'] as $v): $n = PointsModel::stockFor($g, $v); $out = $n !== null && $n < 1; ?><span<?= $out ? ' class="out" title="Out of stock"' : '' ?>><?= htmlspecialchars($v) ?><?= $out ? ' · out of stock' : '' ?></span><?php endforeach; ?></div><?php endif; ?>
-                            <?php if ($soldOut): ?><div class="mg-opts"><span class="mg-tag out">Out of stock</span></div>
-                            <?php elseif ($leftAll !== null && $leftAll <= 5): ?><div class="mg-opts"><span class="mg-tag low">Only <?= $leftAll ?> left</span></div><?php endif; ?>
+                            <?php if ($soldOut || ($leftAll !== null && $leftAll <= 5) || $cap !== null): ?>
+                                <div class="mg-opts">
+                                    <?php if ($soldOut): ?><span class="mg-tag out">Out of stock</span>
+                                    <?php elseif ($leftAll !== null && $leftAll <= 5): ?><span class="mg-tag low">Only <?= $leftAll ?> left</span><?php endif; ?>
+                                    <?php if ($cap !== null): ?><span class="mg-tag cap">Max <?= (int) $cap ?> per order</span><?php endif; ?>
+                                </div>
+                            <?php endif; ?>
                             <div class="mg-foot">
                                 <div class="mg-cost"><b><?= number_format($cost) ?></b><span>points</span></div>
                                 <?php if (!$canRedeem): ?>
@@ -591,59 +684,11 @@ points_claim_css();
                                 <?php elseif (!$can): $pct = max(0, min(100, (int) floor($balance / $cost * 100))); ?>
                                     <div class="mg-mini" aria-hidden="true"><i style="width:<?= $pct ?>%"></i></div>
                                     <p class="mg-need">You need <?= number_format(max(0, $cost - $balance)) ?> more points.</p>
-                                <?php else: ?>
-                                    <button type="button" class="mg-btn" data-open="<?= $dlg ?>">Redeem</button>
                                 <?php endif; ?>
+                                <button type="button" class="mg-btn<?= $can ? '' : ' ghost' ?>" data-detail="<?= (int) $g['id'] ?>"><?= $can ? 'Add to cart' : 'View details' ?></button>
                             </div>
                         </div>
                     </article>
-
-                    <?php if ($can): ?>
-                        <dialog class="mg-dlg" id="<?= $dlg ?>" style="--h:<?= $h ?>" aria-labelledby="<?= $dlg ?>-t">
-                            <header>
-                                <h3 id="<?= $dlg ?>-t"><?= htmlspecialchars($g['name']) ?></h3>
-                                <p><?= number_format($cost) ?> points · you will have <?= number_format($balance - $cost) ?> left</p>
-                            </header>
-                            <?php if ($cover): ?>
-                                <div class="mg-gal" data-gal>
-                                    <img class="main" src="<?= htmlspecialchars(GoodyImages::url($cover['file'])) ?>" alt="<?= htmlspecialchars(GoodyImages::alt((string) $g['name'], $cover)) ?>">
-                                </div>
-                                <?php if (count($imgs) > 1): ?>
-                                    <div class="mg-thumbs" role="group" aria-label="Pictures of <?= htmlspecialchars($g['name']) ?>">
-                                        <?php foreach ($imgs as $i => $im): $alt = GoodyImages::alt((string) $g['name'], $im); ?>
-                                            <button type="button" data-src="<?= htmlspecialchars(GoodyImages::url($im['file'])) ?>" data-alt="<?= htmlspecialchars($alt) ?>"
-                                                    aria-current="<?= $i === 0 ? 'true' : 'false' ?>" aria-label="Show picture <?= $i + 1 ?> of <?= count($imgs) ?>">
-                                                <img src="<?= htmlspecialchars(GoodyImages::url($im['file'])) ?>" alt="" loading="lazy">
-                                            </button>
-                                        <?php endforeach; ?>
-                                    </div>
-                                <?php endif; ?>
-                            <?php endif; ?>
-                            <form method="POST" action="/member/goodies">
-                                <?= CSRF::getInputField() ?>
-                                <input type="hidden" name="action" value="redeem">
-                                <input type="hidden" name="goody_id" value="<?= (int) $g['id'] ?>">
-                                <?php if ($g['variants']): ?>
-                                    <label>Size or option
-                                        <select name="variant" required>
-                                            <option value="">Choose…</option>
-                                            <?php foreach ($g['variants'] as $v): $n = PointsModel::stockFor($g, $v); $out = $n !== null && $n < 1; ?>
-                                                <option value="<?= htmlspecialchars($v) ?>"<?= $out ? ' disabled' : '' ?>><?= htmlspecialchars($v) ?><?= $out ? ' (out of stock)' : ($n !== null && $n <= 5 ? ' (only ' . $n . ' left)' : '') ?></option>
-                                            <?php endforeach; ?>
-                                        </select>
-                                    </label>
-                                <?php endif; ?>
-                                <label>Name for delivery<input type="text" name="ship_name" required maxlength="120" value="<?= htmlspecialchars((string) ($member['full_name'] ?? '')) ?>" autocomplete="name"></label>
-                                <label>Phone<input type="tel" name="ship_phone" required maxlength="20" autocomplete="tel"></label>
-                                <label>Delivery address<textarea name="ship_address" required maxlength="400" rows="3" autocomplete="street-address"></textarea></label>
-                                <p class="fine">Your address is used only to send this order and is cleared after delivery.</p>
-                                <div class="acts">
-                                    <button type="button" class="mg-btn ghost" data-close>Cancel</button>
-                                    <button type="submit" class="mg-btn">Spend <?= number_format($cost) ?> points</button>
-                                </div>
-                            </form>
-                        </dialog>
-                    <?php endif; ?>
                 <?php endforeach; ?>
             </div>
         <?php endif; ?>
@@ -676,28 +721,310 @@ points_claim_css();
         </section>
     </div>
 
+    <?php if ($goodies): ?>
+    <!-- Cart bar -->
+    <div class="mg-cartbar" id="mg-cartbar" hidden>
+        <span id="mg-cartbar-text"></span>
+        <button type="button" class="mg-btn" id="mg-cartbar-open">View cart</button>
+    </div>
+
+    <!-- Goody detail: pictures, size, quantity, add to cart (filled in by the script below) -->
+    <dialog class="mg-dlg" id="mg-detail" aria-labelledby="mg-d-title">
+        <header><h3 id="mg-d-title"></h3><p id="mg-d-sub"></p></header>
+        <div class="mg-gal" id="mg-d-gal" hidden>
+            <button type="button" class="mg-gal-main" id="mg-d-main" aria-label="Zoom this picture"><img src="" alt=""><span class="mg-zoom">🔍 Tap to zoom</span></button>
+        </div>
+        <div class="mg-thumbs" id="mg-d-thumbs" role="group" aria-label="Pictures" hidden></div>
+        <div class="mg-dbody">
+            <p class="desc" id="mg-d-desc"></p>
+            <label id="mg-d-varwrap">Size or option<select id="mg-d-var"></select></label>
+            <div id="mg-d-qtywrap"><label>Quantity</label>
+                <span class="mg-qty"><button type="button" id="mg-d-minus" aria-label="One fewer">−</button><input type="number" id="mg-d-qty" min="1" value="1" inputmode="numeric" aria-label="Quantity"><button type="button" id="mg-d-plus" aria-label="One more">+</button></span></div>
+            <p class="fine" id="mg-d-note" role="status"></p>
+            <div class="acts">
+                <button type="button" class="mg-btn ghost" data-close>Close</button>
+                <button type="button" class="mg-btn" id="mg-d-add">Add to cart</button>
+            </div>
+        </div>
+    </dialog>
+
+    <!-- Cart and checkout -->
+    <dialog class="mg-dlg" id="mg-cart" aria-labelledby="mg-c-title">
+        <header><h3 id="mg-c-title">Your cart</h3><p>One order, one tracking ID.</p></header>
+        <form method="POST" action="/member/goodies" id="mg-c-form">
+            <?= CSRF::getInputField() ?>
+            <input type="hidden" name="action" value="redeem_cart">
+            <input type="hidden" name="cart" id="mg-c-json" value="[]">
+            <div id="mg-c-lines"></div>
+            <div class="mg-sum" id="mg-c-sum" role="status"></div>
+            <label>Name for delivery<input type="text" name="ship_name" required maxlength="120" value="<?= htmlspecialchars((string) ($member['full_name'] ?? '')) ?>" autocomplete="name"></label>
+            <label>Phone<input type="tel" name="ship_phone" required maxlength="20" autocomplete="tel"></label>
+            <label>Delivery address<textarea name="ship_address" required maxlength="400" rows="3" autocomplete="street-address"></textarea></label>
+            <p class="fine">Your address is used only to send this order and is cleared after delivery. If something in your order cannot be sent, those items are refunded and the rest still ships.</p>
+            <div class="acts">
+                <button type="button" class="mg-btn ghost" data-close>Keep browsing</button>
+                <button type="submit" class="mg-btn" id="mg-c-go">Place order</button>
+            </div>
+        </form>
+    </dialog>
+
+    <!-- Picture viewer -->
+    <dialog class="mg-lb" id="mg-lb" aria-label="Picture viewer">
+        <div class="mg-lb-bar">
+            <span id="mg-lb-count"></span>
+            <span><button type="button" id="mg-lb-zoom">Zoom</button> <button type="button" id="mg-lb-close">Close</button></span>
+        </div>
+        <div class="mg-lb-wrap">
+            <div class="mg-lb-stage" id="mg-lb-stage"><img id="mg-lb-img" src="" alt=""></div>
+            <button type="button" class="mg-lb-nav prev" id="mg-lb-prev" aria-label="Previous picture">‹</button>
+            <button type="button" class="mg-lb-nav next" id="mg-lb-next" aria-label="Next picture">›</button>
+        </div>
+        <p class="mg-lb-cap" id="mg-lb-cap"></p>
+    </dialog>
+
+    <script type="application/json" id="mg-data"><?= json_encode($mgPayload, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?></script>
+    <?php endif; ?>
+
 <?php endif; ?>
 
 </div>
 
 <script>
-// Redeem dialogs: open from the card, close with Cancel, Escape or a click on the backdrop.
-document.querySelectorAll('[data-open]').forEach(function (b) {
-    b.addEventListener('click', function () { document.getElementById(b.dataset.open).showModal(); });
-});
-document.querySelectorAll('dialog.mg-dlg').forEach(function (d) {
-    d.addEventListener('click', function (e) { if (e.target === d) d.close(); });
-    var c = d.querySelector('[data-close]'); if (c) c.addEventListener('click', function () { d.close(); });
+(function () {
+    var dataEl = document.getElementById('mg-data');
+    if (!dataEl) return;
+    var D = JSON.parse(dataEl.textContent);
+    var byId = {};
+    D.goodies.forEach(function (g) { byId[g.id] = g; });
+    var KEY = 'mg_cart_' + D.member;
+    var MAXU = 50;                                   // sanity limit for goodies with no "max per order"
+    var $ = function (id) { return document.getElementById(id); };
+    var nf = function (n) { return Number(n).toLocaleString('en-IN'); };
 
-    // Pictures: a thumbnail swaps the large picture.
-    var main = d.querySelector('[data-gal] .main'), thumbs = [].slice.call(d.querySelectorAll('.mg-thumbs button'));
-    thumbs.forEach(function (t) {
-        t.addEventListener('click', function () {
-            main.src = t.dataset.src; main.alt = t.dataset.alt;
-            thumbs.forEach(function (x) { x.setAttribute('aria-current', x === t ? 'true' : 'false'); });
+    // ---- helpers ----
+    function el(tag, props, kids) {
+        var e = document.createElement(tag);
+        Object.keys(props || {}).forEach(function (k) {
+            if (k === 'text') e.textContent = props[k];
+            else if (k === 'class') e.className = props[k];
+            else if (k.slice(0, 2) === 'on') e.addEventListener(k.slice(2), props[k]);
+            else e.setAttribute(k, props[k]);
         });
+        (kids || []).forEach(function (c) { e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c); });
+        return e;
+    }
+    var store = {
+        get: function () { try { var v = JSON.parse(localStorage.getItem(KEY) || '[]'); return Array.isArray(v) ? v : []; } catch (e) { return []; } },
+        set: function (v) { try { localStorage.setItem(KEY, JSON.stringify(v)); } catch (e) {} },
+        clear: function () { try { localStorage.removeItem(KEY); } catch (e) {} }
+    };
+
+    // ---- the cart: [{id, v (size or ''), q}] ----
+    var cart = [];
+    function stockOf(g, v) { var k = g.variants.length ? v : '_'; var s = g.stock[k]; return (s === undefined || s === null) ? Infinity : s; }
+    function capOf(g) { return g.cap === null ? MAXU : g.cap; }
+    function inCart(id, v) { return cart.filter(function (l) { return l.id === id && (v === undefined || l.v === v); }).reduce(function (a, l) { return a + l.q; }, 0); }
+    function maxAdd(g, v) { return Math.max(0, Math.min(capOf(g) - inCart(g.id), stockOf(g, v) - inCart(g.id, v))); }
+    function total() { return cart.reduce(function (a, l) { return a + byId[l.id].cost * l.q; }, 0); }
+    function units() { return cart.reduce(function (a, l) { return a + l.q; }, 0); }
+
+    // Drops goodies that are gone, sizes that no longer exist, and trims quantities to the limit and the stock.
+    function clean() {
+        var out = [];
+        cart.forEach(function (l) {
+            var g = byId[l.id]; if (!g) return;
+            var v = String(l.v || '');
+            if (g.variants.length ? g.variants.indexOf(v) < 0 : v !== '') return;
+            var have = out.filter(function (x) { return x.id === g.id; }).reduce(function (a, x) { return a + x.q; }, 0);
+            var room = Math.min(stockOf(g, v), capOf(g) - have);
+            var q = Math.min(parseInt(l.q, 10) || 0, room);
+            if (q >= 1) out.push({ id: g.id, v: v, q: q });
+        });
+        return out;
+    }
+    function save() { cart = clean(); store.set(cart); drawBar(); }
+
+    function drawBar() {
+        var bar = $('mg-cartbar');
+        bar.hidden = !cart.length || !D.canRedeem;
+        if (!bar.hidden) $('mg-cartbar-text').textContent = '🛒 ' + units() + (units() === 1 ? ' item' : ' items') + ' · ' + nf(total()) + ' points';
+    }
+
+    // ---- detail dialog ----
+    var cur = null, curImg = 0;
+    function showMain() {
+        var im = cur.images[curImg], b = $('mg-d-main').querySelector('img');
+        b.src = im.url; b.alt = im.alt;
+        [].slice.call($('mg-d-thumbs').children).forEach(function (t, i) { t.setAttribute('aria-current', i === curImg ? 'true' : 'false'); });
+    }
+    function syncDetail() {
+        var g = cur; if (!g) return;
+        var v = g.variants.length ? $('mg-d-var').value : '';
+        var noVar = g.variants.length > 0 && v === '';
+        var soldOut = g.variants.length ? g.variants.every(function (x) { return stockOf(g, x) < 1; }) : stockOf(g, '') < 1;
+        var room = noVar ? 0 : maxAdd(g, v);
+        var msg = '';
+        if (!D.canRedeem) msg = 'Redeeming is not available on your account. Please contact DCW Support.';
+        else if (soldOut) msg = 'Currently out of stock. Check back soon; your points are safe.';
+        else if (g.cost > D.balance) msg = 'You need ' + nf(g.cost - D.balance) + ' more points.';
+        else if (noVar) msg = 'Choose a size or option.';
+        else if (room < 1) msg = 'Your cart already has the most you can order of this one.';
+        var q = $('mg-d-qty');
+        q.max = Math.max(1, room);
+        q.value = Math.min(Math.max(1, parseInt(q.value, 10) || 1), Math.max(1, room));
+        $('mg-d-qtywrap').hidden = g.cap === 1;
+        $('mg-d-minus').disabled = +q.value <= 1;
+        $('mg-d-plus').disabled = +q.value >= room;
+        var bits = [];
+        if (g.cap !== null) bits.push('Max ' + g.cap + ' per order.');
+        var st = stockOf(g, v);
+        if (isFinite(st) && st > 0 && st <= 5 && !noVar) bits.push('Only ' + st + ' left.');
+        if (inCart(g.id)) bits.push(inCart(g.id) + ' already in your cart.');
+        $('mg-d-note').textContent = [msg].concat(bits).filter(Boolean).join(' ');
+        $('mg-d-add').disabled = !!msg;
+    }
+    function openDetail(id) {
+        var g = byId[id]; if (!g) return;
+        cur = g; curImg = 0;
+        $('mg-d-title').textContent = g.name;
+        $('mg-d-sub').textContent = nf(g.cost) + ' points';
+        $('mg-d-desc').textContent = g.desc; $('mg-d-desc').hidden = !g.desc;
+        $('mg-detail').style.setProperty('--h', Math.abs(hashHue(g.name)) % 360);
+
+        var gal = $('mg-d-gal'), th = $('mg-d-thumbs'); th.textContent = '';
+        gal.hidden = !g.images.length; th.hidden = g.images.length < 2;
+        if (g.images.length) {
+            g.images.forEach(function (im, i) {
+                th.appendChild(el('button', { type: 'button', 'aria-label': 'Show picture ' + (i + 1) + ' of ' + g.images.length, onclick: function () { curImg = i; showMain(); } },
+                    [el('img', { src: im.url, alt: '', loading: 'lazy' })]));
+            });
+            showMain();
+        }
+        var sel = $('mg-d-var'); sel.textContent = '';
+        $('mg-d-varwrap').hidden = !g.variants.length;
+        if (g.variants.length) {
+            sel.appendChild(el('option', { value: '', text: 'Choose…' }));
+            g.variants.forEach(function (v) {
+                var n = stockOf(g, v);
+                var o = el('option', { value: v, text: v + (n < 1 ? ' (out of stock)' : (isFinite(n) && n <= 5 ? ' (only ' + n + ' left)' : '')) });
+                if (n < 1) o.disabled = true;
+                sel.appendChild(o);
+            });
+        }
+        $('mg-d-qty').value = 1;
+        syncDetail();
+        $('mg-detail').showModal();
+    }
+    function hashHue(s) { var h = 0; for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h; }
+
+    // ---- cart dialog ----
+    function renderCart() {
+        var box = $('mg-c-lines'); box.textContent = '';
+        if (!cart.length) box.appendChild(el('p', { class: 'fine', text: 'Your cart is empty. Add something you like from the catalogue.' }));
+        cart.forEach(function (l) {
+            var g = byId[l.id];
+            var room = Math.min(stockOf(g, l.v), capOf(g) - (inCart(g.id) - l.q));
+            var th = el('span', { class: 'th' }, g.images.length ? [el('img', { src: g.images[0].url, alt: '', loading: 'lazy' })] : [(g.name.charAt(0) || '★').toUpperCase()]);
+            var nm = el('span', { class: 'nm' }, [g.name, el('small', { text: (l.v ? l.v + ' · ' : '') + nf(g.cost) + ' points each' + (g.cap !== null ? ' · max ' + g.cap + ' per order' : '') })]);
+            var pr = el('span', { class: 'pr', text: nf(g.cost * l.q) });
+            var ctl = el('span', { class: 'ctl' }, [
+                g.cap === 1 ? el('span', { class: 'fine', text: 'Quantity 1' }) : el('span', { class: 'mg-qty' }, [
+                    el('button', Object.assign({ type: 'button', 'aria-label': 'One fewer', onclick: function () { setQty(l, l.q - 1); } }, l.q <= 1 ? { disabled: '' } : {}), ['−']),
+                    el('b', { text: String(l.q) }),
+                    el('button', Object.assign({ type: 'button', 'aria-label': 'One more', onclick: function () { setQty(l, l.q + 1); } }, l.q >= room ? { disabled: '' } : {}), ['+'])
+                ]),
+                el('button', { type: 'button', class: 'rm', onclick: function () { setQty(l, 0); } }, ['Remove'])
+            ]);
+            box.appendChild(el('div', { class: 'mg-line' }, [th, nm, pr, ctl]));
+        });
+        var t = total(), left = D.balance - t, over = left < 0, sum = $('mg-c-sum'), go = $('mg-c-go');
+        sum.className = 'mg-sum' + (over ? ' bad' : '');
+        sum.textContent = over ? 'You need ' + nf(-left) + ' more points for this cart.' : nf(t) + ' points · you will have ' + nf(left) + ' left';
+        go.disabled = over || !cart.length;
+        go.textContent = 'Spend ' + nf(t) + ' points';
+        $('mg-c-json').value = JSON.stringify(cart.map(function (l) { return { goody_id: l.id, variant: l.v, qty: l.q }; }));
+    }
+    function setQty(l, q) {
+        if (q < 1) cart = cart.filter(function (x) { return x !== l; }); else l.q = q;
+        save(); renderCart();
+    }
+
+    // ---- picture viewer ----
+    var lb = { list: [], i: 0, zoomed: false };
+    function lbReset() {
+        lb.zoomed = false;
+        var img = $('mg-lb-img'), st = $('mg-lb-stage');
+        img.style.width = ''; img.style.maxWidth = ''; img.style.maxHeight = '';
+        st.classList.remove('zoomed'); st.scrollLeft = 0; st.scrollTop = 0;
+        $('mg-lb-zoom').textContent = 'Zoom';
+    }
+    function lbShow() {
+        var im = lb.list[lb.i];
+        lbReset();
+        $('mg-lb-img').src = im.url; $('mg-lb-img').alt = im.alt;
+        $('mg-lb-cap').textContent = im.alt;
+        $('mg-lb-count').textContent = lb.list.length > 1 ? (lb.i + 1) + ' / ' + lb.list.length : '';
+        $('mg-lb-prev').hidden = $('mg-lb-next').hidden = lb.list.length < 2;
+    }
+    function lbZoom(cx, cy) {
+        var img = $('mg-lb-img'), st = $('mg-lb-stage');
+        if (lb.zoomed) { lbReset(); return; }
+        var r = img.getBoundingClientRect();
+        var fx = r.width ? (cx - r.left) / r.width : .5, fy = r.height ? (cy - r.top) / r.height : .5;
+        fx = Math.min(1, Math.max(0, fx)); fy = Math.min(1, Math.max(0, fy));
+        lb.zoomed = true; st.classList.add('zoomed');
+        img.style.maxWidth = 'none'; img.style.maxHeight = 'none'; img.style.width = Math.round(st.clientWidth * 2.5) + 'px';
+        st.scrollLeft = fx * img.offsetWidth - st.clientWidth / 2;
+        st.scrollTop = fy * img.offsetHeight - st.clientHeight / 2;
+        $('mg-lb-zoom').textContent = 'Zoom out';
+    }
+    function openLb(list, i) { if (!list.length) return; lb.list = list; lb.i = i || 0; lbShow(); $('mg-lb').showModal(); }
+    function lbStep(d) { lb.i = (lb.i + d + lb.list.length) % lb.list.length; lbShow(); }
+
+    // ---- wiring ----
+    document.querySelectorAll('[data-detail]').forEach(function (b) { b.addEventListener('click', function () { openDetail(+b.dataset.detail); }); });
+    document.querySelectorAll('[data-zoom]').forEach(function (b) { b.addEventListener('click', function () { var g = byId[+b.dataset.zoom]; if (g) openLb(g.images, 0); }); });
+    document.querySelectorAll('dialog.mg-dlg').forEach(function (d) {
+        d.addEventListener('click', function (e) { if (e.target === d) d.close(); });
+        [].slice.call(d.querySelectorAll('[data-close]')).forEach(function (c) { c.addEventListener('click', function () { d.close(); }); });
     });
-});
+    $('mg-d-main').addEventListener('click', function () { if (cur) openLb(cur.images, curImg); });
+    $('mg-d-var').addEventListener('change', syncDetail);
+    $('mg-d-qty').addEventListener('input', syncDetail);
+    $('mg-d-minus').addEventListener('click', function () { $('mg-d-qty').value = (+$('mg-d-qty').value || 1) - 1; syncDetail(); });
+    $('mg-d-plus').addEventListener('click', function () { $('mg-d-qty').value = (+$('mg-d-qty').value || 1) + 1; syncDetail(); });
+    $('mg-d-add').addEventListener('click', function () {
+        var g = cur, v = g.variants.length ? $('mg-d-var').value : '';
+        var q = Math.min(Math.max(1, parseInt($('mg-d-qty').value, 10) || 1), maxAdd(g, v));
+        if (q < 1) return;
+        var line = cart.filter(function (l) { return l.id === g.id && l.v === v; })[0];
+        if (line) line.q += q; else cart.push({ id: g.id, v: v, q: q });
+        save(); $('mg-detail').close();
+    });
+    $('mg-cartbar-open').addEventListener('click', function () { renderCart(); $('mg-cart').showModal(); });
+    $('mg-c-form').addEventListener('submit', function (e) {
+        if (!cart.length || total() > D.balance) { e.preventDefault(); return; }
+        setTimeout(function () { $('mg-c-go').disabled = true; }, 0);    // one click, one order
+    });
+    $('mg-lb-close').addEventListener('click', function () { $('mg-lb').close(); });
+    $('mg-lb-zoom').addEventListener('click', function () { var s = $('mg-lb-stage').getBoundingClientRect(); lbZoom(s.left + s.width / 2, s.top + s.height / 2); });
+    $('mg-lb-stage').addEventListener('click', function (e) { lbZoom(e.clientX, e.clientY); });
+    $('mg-lb-prev').addEventListener('click', function () { lbStep(-1); });
+    $('mg-lb-next').addEventListener('click', function () { lbStep(1); });
+    document.addEventListener('keydown', function (e) {
+        if (!$('mg-lb').open) return;
+        if (e.key === 'ArrowLeft' && lb.list.length > 1) lbStep(-1);
+        else if (e.key === 'ArrowRight' && lb.list.length > 1) lbStep(1);
+    });
+
+    // ---- start ----
+    if (D.clear) store.clear();
+    cart = store.get().map(function (l) { return { id: +l.id, v: String(l.v || ''), q: +l.q }; });
+    var before = JSON.stringify(cart);
+    cart = clean();
+    if (JSON.stringify(cart) !== before) { store.set(cart); if (before !== '[]') $('mg-cart-note').hidden = false; }
+    drawBar();
+})();
 </script>
 <?php cert_rows_js(); /* copy buttons */ ?>
 <?php engage_footer(); ?>

@@ -14,9 +14,11 @@
  *  - the event date is a real date, not in the future, and at most WINDOW_DAYS ago (India time)
  *  - an evidence link when the activity needs one; any link must be http(s)
  *  - a one-time activity the member already has (or has a live claim for) cannot be claimed again
- *  - the same evidence link cannot back two claims or awards for the same activity
+ *  - the same evidence link cannot back two claims or awards for the same activity (not for a repeating claim)
  *  - the same activity on the same event date cannot be claimed twice
  *  - at most MAX_OPEN claims waiting at once
+ *  - a repeating activity (cooldown_days, e.g. "100+ edits in the last 30 days"): the date is always today, and
+ *    it can be claimed again only after the cooldown. Only claims that are waiting or approved start the cooldown.
  *
  * Rules enforced when a reviewer decides:
  *  - nobody approves a claim made by their own Member ID, owner or not. (Awards an owner makes themselves
@@ -77,6 +79,35 @@ class PointClaimModel
         )->fetchAll(PDO::FETCH_ASSOC);
     }
 
+    /** [activity id => "12 Dec 2026"] for claimable activities this member must still wait for (cooldown_days). */
+    public function cooldowns(string $memberId): array
+    {
+        $memberId = strtoupper(trim($memberId));
+        $out = [];
+        foreach ($this->claimableActivities() as $t) {
+            if (($t['cooldown_days'] ?? null) === null) continue;
+            $until = $this->cooldownUntil($memberId, (int) $t['id'], (int) $t['cooldown_days']);
+            if ($until) $out[(int) $t['id']] = $until->format('j M Y');
+        }
+        return $out;
+    }
+
+    /**
+     * The India-time date a member may claim a cooldown activity again, or null when they may claim now.
+     * Only claims that are waiting or approved start the cooldown: a rejected or withdrawn claim does not.
+     */
+    private function cooldownUntil(string $memberId, int $typeId, int $days): ?DateTimeImmutable
+    {
+        $st = $this->pdo->prepare("SELECT MAX(created_at) FROM point_claims WHERE member_id = :m AND activity_type_id = :t AND status IN ('Submitted','Needs info','Approved')");
+        $st->execute([':m' => $memberId, ':t' => $typeId]);
+        $last = $st->fetchColumn();
+        if (!$last) return null;
+        $ist   = new DateTimeZone('Asia/Kolkata');
+        $from  = (new DateTimeImmutable((string) $last, new DateTimeZone('UTC')))->setTimezone($ist)->setTime(0, 0);
+        $until = $from->modify('+' . $days . ' days');
+        return $until > new DateTimeImmutable('today', $ist) ? $until : null;
+    }
+
     // ---- Member side ---------------------------------------------------------------------------
 
     /**
@@ -107,6 +138,16 @@ class PointClaimModel
 
             $ist   = new DateTimeZone('Asia/Kolkata');
             $today = new DateTimeImmutable('today', $ist);
+
+            // A repeating claim ("100+ edits in the last 30 days"): the date is always today, whatever the form sent,
+            // so it cannot be backdated; and it can be made again only after the cooldown.
+            $cool = ($type['cooldown_days'] ?? null) === null ? null : (int) $type['cooldown_days'];
+            if ($cool !== null) {
+                $eventDate = $today->format('Y-m-d');
+                $until = $this->cooldownUntil($memberId, $typeId, $cool);
+                if ($until) return ['ok' => false, 'error' => 'You can claim "' . $type['name'] . '" again on ' . $until->format('j M Y') . '.'];
+            }
+
             $date  = DateTimeImmutable::createFromFormat('!Y-m-d', $eventDate, $ist);
             if (!$date || $date->format('Y-m-d') !== $eventDate) return ['ok' => false, 'error' => 'Enter the date it happened.'];
             if ($date > $today) return ['ok' => false, 'error' => 'The date cannot be in the future.'];
@@ -144,8 +185,8 @@ class PointClaimModel
             $st->execute([':m' => $memberId, ':t' => $typeId, ':d' => $eventDate]);
             if ($st->fetchColumn()) return ['ok' => false, 'error' => 'You have already claimed this activity for that date.'];
 
-            // The same evidence link.
-            if ($evidence !== '') {
+            // The same evidence link. (Not for a repeating claim: its link, such as a contributions page, is the same each time.)
+            if ($evidence !== '' && $cool === null) {
                 $st = $this->pdo->prepare("SELECT 1 FROM point_claims WHERE activity_type_id = :t AND evidence_url = :e AND status IN ('Submitted','Needs info','Approved') LIMIT 1");
                 $st->execute([':t' => $typeId, ':e' => $evidence]);
                 $used = (bool) $st->fetchColumn();
@@ -272,7 +313,8 @@ class PointClaimModel
 
     /**
      * The queue. $status: 'open' (Submitted and Needs info, oldest first), one status, or '' for all (newest first).
-     * Each row carries the member's name, the activity, the award it created, and its messages.
+     * Each row carries the member's name, the activity, the award it created, the verified Wikimedia username,
+     * the member's previous claim for the same activity, and its messages.
      */
     public function queue(string $status = 'open'): array
     {
@@ -283,8 +325,12 @@ class PointClaimModel
 
         $st = $this->pdo->prepare(
             'SELECT c.*, t.name AS activity_name, t.category, t.code AS activity_code, t.points AS activity_points, t.needs_evidence,
+                    t.cooldown_days,
                     a.status AS award_status,
-                    (SELECT m.full_name FROM members m WHERE m.member_id = c.member_id ORDER BY m.id DESC LIMIT 1) AS member_name
+                    (SELECT m.full_name FROM members m WHERE m.member_id = c.member_id ORDER BY m.id DESC LIMIT 1) AS member_name,
+                    (SELECT p.wikimedia_username FROM member_profile p WHERE p.member_id = c.member_id AND p.username_verified_at IS NOT NULL) AS wm_username,
+                    (SELECT MAX(c2.created_at) FROM point_claims c2 WHERE c2.member_id = c.member_id AND c2.activity_type_id = c.activity_type_id
+                        AND c2.id < c.id AND c2.status IN (\'Submitted\',\'Needs info\',\'Approved\')) AS prev_claim_at
                FROM point_claims c
                JOIN activity_types t ON t.id = c.activity_type_id
                LEFT JOIN point_awards a ON a.id = c.award_id' . $where . ' ORDER BY ' . $order . ' LIMIT 200'
