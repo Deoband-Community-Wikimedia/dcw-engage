@@ -102,6 +102,7 @@ $galleryImages = [
     ['commons' => 'WikiConference India 2026 Snaps 02.jpg',           'alt' => 'WikiConference India 2026'],
     ['commons' => 'Aafi during his presentation, Wikiconference India 2026 DSC 5679.jpg', 'alt' => 'Aafi presenting at WikiConference India 2026'],
     ['commons' => 'Group photo from DCW 5th Anniversary.jpg',         'alt' => 'Group photo from the DCW 5th Anniversary'],
+    ['commons' => 'Sana Sabir at WikiWomen Summit x Wikimania 2026.jpg',         'alt' => 'Sana Sabir at WikiWomen Summit x Wikimania 2026.jpg'],
     [
         // Embassy of Ukraine in India site: its footer says all content is CC BY 4.0, which needs the
         // photographer's name and a link to the licence (the caption link below). This points at their
