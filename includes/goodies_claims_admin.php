@@ -6,8 +6,12 @@
 //
 // Rules the page relies on (all enforced in PointClaimModel, not here):
 //  - a reviewer never decides a claim from their own Member ID (owners included)
-//  - approving makes an ordinary award: 150+ points by a non-owner still wait for a second reviewer
+//  - approving makes an ordinary award: awards at PointsModel::SECOND_APPROVAL_AT or more by a non-owner still wait
+//    for a second reviewer
 //  - rejecting and asking for more information need words; the member reads them
+//  - members only claim activity from the last PointClaimModel::WINDOW_DAYS days; approving does not re-check it
+//  - members never see who the reviewer is: they see "DCW reviewer". Reviewer names and emails are shown on THIS
+//    page only. Reviewers should not sign their messages or put their name in a rejection reason.
 
 /**
  * Handle one claim action. Returns the tab to go back to.
@@ -20,7 +24,7 @@ function goodies_claims_post(string $do, PointClaimModel $claims, string $actor,
     if ($do === 'claim_approve') {
         $r = $claims->approve($id, $actor, $isOwner, $ownIds);
         goodies_flash($r['ok'] ? 'ok' : 'error', $r['ok']
-            ? ($r['awaiting_second'] ? 'Approved. The award is 150 points or more, so a different reviewer must confirm it under "Waiting for a second reviewer" before it counts.' : 'Approved. The points are now in the member’s balance.')
+            ? ($r['awaiting_second'] ? 'Approved. The award is ' . (int) PointsModel::SECOND_APPROVAL_AT . ' points or more, so a different reviewer must confirm it under "Waiting for a second reviewer" before it counts.' : 'Approved. The points are now in the member’s balance.')
             : $r['error']);
     } elseif ($do === 'claim_reject') {
         $r = $claims->reject($id, (string) ($_POST['reason'] ?? ''), $actor);
@@ -86,6 +90,7 @@ function goodies_claims_render(PointClaimModel $claims, string $status, array $o
         .cl-acts summary { cursor: pointer; font-size: 13.5px; font-weight: 700; color: var(--primary); }
         .cl-acts details form { margin-top: 8px; }
         .cl-acts details textarea { flex: 1 1 280px; min-height: 60px; padding: 8px 10px; font: inherit; font-size: 13.5px; border: 1.5px solid #BCCFDD; border-radius: 10px; box-sizing: border-box; }
+        .cl-acts .cl-hint { flex: 1 1 100%; margin: 0; color: var(--muted); font-size: 12.5px; }
         .cl-tick { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; font-weight: 600; color: var(--muted); margin: 0 0 8px; }
         .cl-tag { display: inline-block; margin-left: 6px; padding: 1px 9px; border-radius: 999px; background: #f1f5f9; color: #475569; font-size: 12px; font-weight: 700; }
         .cl-tag.warn { background: #fef3c7; color: #92400e; }
@@ -98,7 +103,7 @@ function goodies_claims_render(PointClaimModel $claims, string $status, array $o
         <?php endforeach; ?>
     </nav>
 
-    <p class="gd-note">Members claim points for activities you have switched on under <a href="/admin/goodies?tab=activities">Activities and points</a> (“Members can claim it”). Approving a claim awards the activity’s points. You cannot decide a claim from your own Member ID<?= $isOwner ? ', even as an owner' : '' ?>.</p>
+    <p class="gd-note">Members claim points for activities you have switched on under <a href="/admin/goodies?tab=activities">Activities and points</a> (“Members can claim it”). Approving a claim awards the activity’s points. Members can only claim activity from the last <?= (int) PointClaimModel::WINDOW_DAYS ?> days; for anything older, a reviewer can still award the points on the <a href="/admin/goodies?tab=award">Award tab</a>. You cannot decide a claim from your own Member ID<?= $isOwner ? ', even as an owner' : '' ?>. Members see you only as “DCW reviewer”: keep your name out of your messages and reasons.</p>
 
     <?php if ($failed): ?>
         <div class="gd-empty gd-card">Claims are not set up yet. Run migrations/2026_11_goodies_claims.sql first.</div>
@@ -140,7 +145,7 @@ function goodies_claims_render(PointClaimModel $claims, string $status, array $o
                     <?php if (!empty($c['prev_claim_at'])): ?><div><span>Previous claim for this</span><?= gd_h($when($c['prev_claim_at'])) ?><?= !empty($c['cooldown_days']) ? ' (can be claimed every ' . (int) $c['cooldown_days'] . ' days)' : '' ?></div><?php endif; ?>
                     <?php if (!empty($c['note'])): ?><div style="grid-column:1/-1"><span>Member’s note</span><?= nl2br(gd_h($c['note'])) ?></div><?php endif; ?>
                     <?php if ($c['status'] === 'Rejected' && !empty($c['decision_note'])): ?><div style="grid-column:1/-1"><span>Reason given</span><?= gd_h($c['decision_note']) ?></div><?php endif; ?>
-                    <?php if (!empty($c['decided_by'])): ?><div><span>Decided by</span><?= gd_h($c['decided_by']) ?> · <?= gd_h($when($c['decided_at'])) ?></div><?php endif; ?>
+                    <?php if (!empty($c['decided_by'])): ?><div><span>Decided by (reviewers only)</span><?= gd_h($c['decided_by']) ?> · <?= gd_h($when($c['decided_at'])) ?></div><?php endif; ?>
                     <?php if ($c['status'] === 'Approved' && ($c['award_status'] ?? '') === 'Needs Second Approval'): ?><div><span>Award</span>Waiting for a second reviewer</div><?php endif; ?>
                 </div>
 
@@ -160,15 +165,16 @@ function goodies_claims_render(PointClaimModel $claims, string $status, array $o
                         </form>
                         <form method="POST" action="/admin/goodies?tab=claims"><?= CSRF::getInputField() ?>
                             <input type="hidden" name="do" value="claim_reject"><input type="hidden" name="claim_id" value="<?= $id ?>">
-                            <input type="text" name="reason" required maxlength="<?= (int) PointClaimModel::MAX_NOTE ?>" placeholder="Reason (the member reads this)" aria-label="Reason for rejecting <?= gd_h($c['tracking_id']) ?>">
+                            <input type="text" name="reason" required maxlength="<?= (int) PointClaimModel::MAX_NOTE ?>" placeholder="Reason (the member reads this, no names)" aria-label="Reason for rejecting <?= gd_h($c['tracking_id']) ?>. The member reads it; do not include your name.">
                             <button type="submit" class="gd-btn red">Reject</button>
                         </form>
                         <details>
                             <summary><?= $waitMember ? 'Send another message' : 'Ask for more information' ?></summary>
                             <form method="POST" action="/admin/goodies?tab=claims"><?= CSRF::getInputField() ?>
                                 <input type="hidden" name="do" value="claim_info"><input type="hidden" name="claim_id" value="<?= $id ?>">
-                                <textarea name="message" required maxlength="<?= (int) PointClaimModel::MAX_NOTE ?>" placeholder="What do you need to know? The member reads this and replies." aria-label="Message about <?= gd_h($c['tracking_id']) ?>"></textarea>
+                                <textarea name="message" required maxlength="<?= (int) PointClaimModel::MAX_NOTE ?>" placeholder="What do you need to know? The member reads this and replies." aria-label="Message about <?= gd_h($c['tracking_id']) ?>. The member reads it; do not include your name."></textarea>
                                 <button type="submit" class="gd-btn line">Send</button>
+                                <p class="cl-hint">The member sees this as “DCW reviewer”. Do not sign it or include your name.</p>
                             </form>
                         </details>
                     </div>
