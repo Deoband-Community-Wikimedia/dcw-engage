@@ -11,7 +11,7 @@
  * Rules enforced when a member submits (submit()):
  *  - the activity is active, switched on for claiming (activity_types.member_claimable) and not built in
  *  - not struck off. Expired members CAN claim, like they can redeem.
- *  - the event date is a real date, not in the future, and at most WINDOW_DAYS ago (India time)
+ *  - the event date is a real date, not in the future, and at most WINDOW_DAYS ago (India time, inclusive)
  *  - an evidence link when the activity needs one; any link must be http(s)
  *  - a one-time activity the member already has (or has a live claim for) cannot be claimed again
  *  - the same evidence link cannot back two claims or awards for the same activity (not for a repeating claim)
@@ -25,6 +25,12 @@
  *    are allowed elsewhere; a claim is the member vouching for their own work, so someone else looks.)
  *  - a decision is one atomic status change, so two reviewers cannot decide the same claim twice
  *  - rejecting and asking for more information both need words, which the member sees
+ *  - the claim window is not re-checked here: it limits what a member can submit, not what a reviewer may approve
+ *    (reviewer discretion; late cases go to DCW Support and a reviewer can also award on the Award tab)
+ *
+ * Reviewer privacy: members never learn who the reviewer is. The member-side methods (forMember(),
+ * findForMember(), messages()) strip reviewer emails (decided_by, message author) before returning, so a member's
+ * page cannot show them. Reviewer-side methods (queue(), approve() ...) keep them, and the audit log records them.
  *
  * Statuses: Submitted (waiting for a reviewer) > Needs info (waiting for the member, who replies and it goes
  * back to Submitted) > Approved | Rejected. The member can Withdraw while it is open.
@@ -41,7 +47,7 @@ require_once __DIR__ . '/PointsModel.php';
 
 class PointClaimModel
 {
-    public const WINDOW_DAYS = 90;
+    public const WINDOW_DAYS = 30;
     public const MAX_OPEN    = 5;
     public const MAX_NOTE    = 1000;
     public const OPEN        = ['Submitted', 'Needs info'];
@@ -52,6 +58,13 @@ class PointClaimModel
     public function __construct(?PDO $pdo = null)
     {
         $this->pdo = $pdo ?? DB::getInstance()->getConnection();
+    }
+
+    /** The earliest event date a member may claim (India time, inclusive). */
+    public static function windowStart(?DateTimeImmutable $today = null): DateTimeImmutable
+    {
+        $today = $today ?? new DateTimeImmutable('today', new DateTimeZone('Asia/Kolkata'));
+        return $today->modify('-' . self::WINDOW_DAYS . ' days');
     }
 
     // ---- Activities ----------------------------------------------------------------------------
@@ -151,8 +164,12 @@ class PointClaimModel
             $date  = DateTimeImmutable::createFromFormat('!Y-m-d', $eventDate, $ist);
             if (!$date || $date->format('Y-m-d') !== $eventDate) return ['ok' => false, 'error' => 'Enter the date it happened.'];
             if ($date > $today) return ['ok' => false, 'error' => 'The date cannot be in the future.'];
-            if ($date < $today->modify('-' . self::WINDOW_DAYS . ' days')) {
-                return ['ok' => false, 'error' => 'Claims must be made within ' . self::WINDOW_DAYS . ' days of the activity. If you have a good reason, write to DCW Support.'];
+
+            $earliest = self::windowStart($today);
+            if ($date < $earliest) {
+                return ['ok' => false, 'error' => 'That date is too long ago. Claims must be made within ' . self::WINDOW_DAYS
+                    . ' days of the activity, so the earliest date you can claim today is ' . $earliest->format('j M Y')
+                    . '. If you have a good reason, write to DCW Support and a reviewer can look at it.'];
             }
 
             if ($evidence !== '' && !preg_match('#^https?://\S+$#i', $evidence)) return ['ok' => false, 'error' => 'The evidence must be a link starting with http:// or https://.'];
@@ -234,12 +251,19 @@ class PointClaimModel
                               JOIN activity_types t ON t.id = c.activity_type_id
                               LEFT JOIN point_awards a ON a.id = c.award_id';
 
-    /** The member's claims, newest first. */
+    /** A claim row as a member may see it: without who decided it. */
+    private static function forMemberView(array $row): array
+    {
+        unset($row['decided_by']);
+        return $row;
+    }
+
+    /** The member's claims, newest first. Never includes who decided them. */
     public function forMember(string $memberId): array
     {
         $st = $this->pdo->prepare(self::SELECT . ' WHERE c.member_id = :m ORDER BY c.id DESC LIMIT 100');
         $st->execute([':m' => strtoupper(trim($memberId))]);
-        return $st->fetchAll(PDO::FETCH_ASSOC);
+        return array_map([self::class, 'forMemberView'], $st->fetchAll(PDO::FETCH_ASSOC));
     }
 
     /** One claim by tracking ID, only if it is this member's. Null looks the same for "not yours" and "not there". */
@@ -247,12 +271,18 @@ class PointClaimModel
     {
         $st = $this->pdo->prepare(self::SELECT . ' WHERE c.tracking_id = :t AND c.member_id = :m');
         $st->execute([':t' => strtoupper(trim($tracking)), ':m' => strtoupper(trim($memberId))]);
-        return $st->fetch(PDO::FETCH_ASSOC) ?: null;
+        $row = $st->fetch(PDO::FETCH_ASSOC);
+        return $row ? self::forMemberView($row) : null;
     }
 
-    public function messages(int $claimId): array
+    /**
+     * The conversation on a claim. By default it is the member's view: sender, text and time, never who wrote it.
+     * Pass $withAuthor = true only from a reviewer page.
+     */
+    public function messages(int $claimId, bool $withAuthor = false): array
     {
-        $st = $this->pdo->prepare('SELECT sender, author, body, created_at FROM point_claim_messages WHERE claim_id = :c ORDER BY id');
+        $cols = $withAuthor ? 'sender, author, body, created_at' : 'sender, body, created_at';
+        $st = $this->pdo->prepare('SELECT ' . $cols . ' FROM point_claim_messages WHERE claim_id = :c ORDER BY id');
         $st->execute([':c' => $claimId]);
         return $st->fetchAll(PDO::FETCH_ASSOC);
     }
@@ -314,7 +344,7 @@ class PointClaimModel
     /**
      * The queue. $status: 'open' (Submitted and Needs info, oldest first), one status, or '' for all (newest first).
      * Each row carries the member's name, the activity, the award it created, the verified Wikimedia username,
-     * the member's previous claim for the same activity, and its messages.
+     * the member's previous claim for the same activity, and its messages (with their authors: reviewers only).
      */
     public function queue(string $status = 'open'): array
     {
@@ -359,7 +389,7 @@ class PointClaimModel
     }
 
     /**
-     * Approve a claim: it becomes an award (see the class note).
+     * Approve a claim: it becomes an award (see the class note). The claim window is not checked here.
      * $ownIds are the reviewer's own Member IDs; a claim from one of them is refused, owner or not.
      * $actorIsOwner is true only when the page has checked it: it lets the award skip the second-approval wait.
      * @return array{ok:bool, error?:string, awaiting_second?:bool}
@@ -426,7 +456,7 @@ class PointClaimModel
         return ['approved' => $approved, 'skipped' => $skipped];
     }
 
-    /** Reject with a reason the member will read. */
+    /** Reject with a reason the member will read. Write it without names: members must not learn who reviewed. */
     public function reject(int $claimId, string $reason, string $actorEmail): array
     {
         $reason = trim($reason);
@@ -479,7 +509,7 @@ class PointClaimModel
     }
 
     /**
-     * Email the member about a decision. Never contains the reviewer's words (they read those signed in).
+     * Email the member about a decision. Never contains the reviewer's words or name (they read the words signed in).
      * Needs Mailer::sendPointClaimUpdate(); until that exists, nothing is sent.
      */
     private function notify(string $memberId, string $tracking, string $kind): void
