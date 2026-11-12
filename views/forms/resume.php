@@ -64,7 +64,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked) {
 
     require_once __DIR__ . '/../../models/FormModel.php';
     $formModel = new FormModel();
-    $errors = $formModel->validateSubmission($schema, $_POST, $staysDraft);
+
+    // The validator accepts a required file field when either a new upload is in $_FILES or an
+    // existing path is present in the data it is given. Files already on record are not in $_POST
+    // (the edit form has no hidden field for them), so supply them here. Without this, a required
+    // file that was uploaded earlier is reported as missing on every edit.
+    // New uploads are not copied in: the validator checks $_FILES for those itself.
+    $validationInput = $_POST;
+    foreach ($schema['fields'] as $f) {
+        if (($f['type'] ?? '') === 'file' && !empty($formData[$f['name']])) {
+            $validationInput[$f['name']] = $formData[$f['name']];
+        }
+    }
+    $errors = $formModel->validateSubmission($schema, $validationInput, $staysDraft);
 
     if (empty($errors)) {
         // The address was verified when the application was started. It is never taken from the request,
