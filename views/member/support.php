@@ -27,6 +27,14 @@ require_once __DIR__ . '/../../models/CommunityRecordsModel.php';
  * Internet support also needs a Wikimedia username that a reviewer or coordinator has verified
  * (member_profile). The username on the request always comes from that profile, never from the form.
  *
+ * REIMBURSEMENT: when the form comes back with an error, the expense rows (category, description,
+ * amount) are put back from what was posted, and uploaded receipts are KEPT. A browser never lets a
+ * page refill a file input, so a receipt that already reached the server is held as a "pending
+ * receipt" in the member's session (token => file path) and the form carries only the random token.
+ * A path is never accepted from the form, so one member cannot point a row at another member's file.
+ * Pending files are deleted when they are replaced or removed, when the claim is saved (they then
+ * belong to the request), and when they have sat unused for RECEIPT_PENDING_TTL.
+ *
  * The old /support URL is kept as a redirect stub (support.php at the site root).
  */
 
@@ -35,6 +43,12 @@ require_once __DIR__ . '/../../models/CommunityRecordsModel.php';
  * false = any signed-in member can.
  */
 const SUPPORT_REQUIRES_ACTIVE_MEMBER = true;
+
+/** Session key holding receipts that were uploaded but not yet attached to a saved claim. */
+const RECEIPT_PENDING_KEY = 'reimbursement_pending_receipts';
+
+/** A pending receipt nobody came back for is deleted after this many seconds. */
+const RECEIPT_PENDING_TTL = 86400;
 
 $internetModel      = new InternetSupportModel();
 $reimbursementModel = new ReimbursementModel();
@@ -179,19 +193,50 @@ if ($action === 'submit_internet_request' && $type === 'internet') {
 }
 
 // ------------------------------------------------------------------
-// Submission: reimbursement
+// Pending receipts (reimbursement): uploaded files held between a failed submit and the retry
 // ------------------------------------------------------------------
-function cleanupUploadedPaths(array $paths) {
-    foreach ($paths as $p) {
-        if (is_string($p) && strpos($p, 'uploads/') === 0 && strpos($p, '..') === false) {
-            $full = __DIR__ . '/../../' . $p;
-            if (is_file($full)) {
-                @unlink($full);
-            }
+
+/** Delete one stored upload. Only ever touches files under uploads/, whatever the string says. */
+function reimbursementDeleteUpload($path) {
+    if (is_string($path) && strpos($path, 'uploads/') === 0 && strpos($path, '..') === false) {
+        $full = __DIR__ . '/../../' . $path;
+        if (is_file($full)) {
+            @unlink($full);
         }
     }
 }
 
+/** Pending receipts from the session, with the expired ones deleted. */
+function reimbursementPendingLoad() {
+    $all = $_SESSION[RECEIPT_PENDING_KEY] ?? [];
+    if (!is_array($all)) {
+        $all = [];
+    }
+    $now = time();
+    foreach ($all as $token => $entry) {
+        $valid = is_array($entry) && !empty($entry['path']);
+        if (!$valid || ($now - (int) ($entry['at'] ?? 0)) > RECEIPT_PENDING_TTL) {
+            if ($valid) {
+                reimbursementDeleteUpload($entry['path']);
+            }
+            unset($all[$token]);
+        }
+    }
+    $_SESSION[RECEIPT_PENDING_KEY] = $all;
+    return $all;
+}
+
+// Rows to put back into the form after an error (category, description, amount, kept receipt).
+// Payment details are deliberately not part of this: they are never echoed back.
+$formRows = [];
+
+if ($type === 'reimbursement' && $action !== 'submit_reimbursement') {
+    reimbursementPendingLoad();   // housekeeping: drop expired leftovers whenever the page is opened
+}
+
+// ------------------------------------------------------------------
+// Submission: reimbursement
+// ------------------------------------------------------------------
 if ($action === 'submit_reimbursement' && $type === 'reimbursement') {
     if (!CSRF::validate($_POST['csrf_token'] ?? '')) {
         die("Invalid CSRF token.");
@@ -203,59 +248,132 @@ if ($action === 'submit_reimbursement' && $type === 'reimbursement') {
 
     if ($verifiedEmail === '') {
         $errors['system'] = "Support requests are exclusively for members with an active membership.";
-    } elseif ($dcwEvent === '') {
-        $errors['system'] = "Please indicate whether this was a DCW-aligned, DCW-organised, or DCW-associated event.";
-    } elseif ($dcwEvent !== 'yes') {
-        $errors['system'] = "Reimbursements are only permissible for events that are DCW-aligned, DCW-organised, or DCW-associated.";
-    } elseif ($eventName === '') {
-        $errors['system'] = "Please enter the event name.";
-    } elseif ($reimbursementModel->hasOpenOrPaidRequest($verifiedEmail, $eventName)) {
-        $errors['system'] = "You already have a reimbursement request registered for \"" . $eventName . "\".";
     } else {
-        require_once __DIR__ . '/../../models/FileUploader.php';
-        $fileUploader = new FileUploader();
+        // Checks that do not depend on the expenses. They are only REPORTED after the expense rows and
+        // receipts have been handled, so a member who trips one still keeps what they entered.
+        $preError = null;
+        if ($dcwEvent === '') {
+            $preError = "Please indicate whether this was a DCW-aligned, DCW-organised, or DCW-associated event.";
+        } elseif ($dcwEvent !== 'yes') {
+            $preError = "Reimbursements are only permissible for events that are DCW-aligned, DCW-organised, or DCW-associated.";
+        } elseif ($eventName === '') {
+            $preError = "Please enter the event name.";
+        } elseif ($reimbursementModel->hasOpenOrPaidRequest($verifiedEmail, $eventName)) {
+            $preError = "You already have a reimbursement request registered for \"" . $eventName . "\".";
+        }
 
-        $categories   = $_POST['line_item_category'] ?? [];
-        $descriptions = $_POST['line_item_description'] ?? [];
-        $amounts      = $_POST['line_item_amount'] ?? [];
-        $uploadedPaths = [];
-        $lineItems = [];
+        require_once __DIR__ . '/../../models/FileUploader.php';
+
+        $memberId     = (string) $member['member_id'];
+        $categories   = is_array($_POST['line_item_category'] ?? null) ? $_POST['line_item_category'] : [];
+        $descriptions = is_array($_POST['line_item_description'] ?? null) ? $_POST['line_item_description'] : [];
+        $amounts      = is_array($_POST['line_item_amount'] ?? null) ? $_POST['line_item_amount'] : [];
+        $tokens       = is_array($_POST['line_item_receipt_token'] ?? null) ? $_POST['line_item_receipt_token'] : [];
+
+        $pending    = reimbursementPendingLoad();
+        $usedTokens = [];     // pending receipts that a row still points at
+        $lineItems  = [];
+        $rowError   = null;
 
         try {
+            $fileUploader = new FileUploader();
             $rowCount = count($categories);
-            for ($i = 0; $i < $rowCount; $i++) {
-                $category     = trim($categories[$i] ?? '');
-                $description  = trim($descriptions[$i] ?? '');
-                $amountRupees = trim($amounts[$i] ?? '');
 
-                // Skip a fully-empty trailing row.
-                if ($category === '' && $description === '' && $amountRupees === '') {
+            for ($i = 0; $i < $rowCount; $i++) {
+                $category     = trim((string) ($categories[$i] ?? ''));
+                $description  = trim((string) ($descriptions[$i] ?? ''));
+                $amountRupees = trim((string) ($amounts[$i] ?? ''));
+
+                // A receipt this row already holds from an earlier attempt. Only a token that is in
+                // THIS member's own pending list counts; anything else is ignored.
+                $token = is_string($tokens[$i] ?? null) ? $tokens[$i] : '';
+                if ($token === '' || !preg_match('/^[a-f0-9]{32}$/', $token)
+                    || !isset($pending[$token]) || ($pending[$token]['member_id'] ?? '') !== $memberId) {
+                    $token = '';
+                }
+
+                $fileKey = "line_item_receipt_$i";
+                $hasNewFile = !empty($_FILES[$fileKey]['name']);
+
+                // Skip a fully-empty trailing row (no fields, no receipt).
+                if ($category === '' && $description === '' && $amountRupees === '' && !$hasNewFile && $token === '') {
                     continue;
                 }
+
+                // Receipts are optional. A new file replaces the one kept from before.
+                // The Member ID goes in the filename, not the email: no personal data in the URL.
+                if ($hasNewFile) {
+                    try {
+                        $path = $fileUploader->handleUpload($_FILES[$fileKey], $fileKey, $memberId, 'reimbursement') ?: '';
+                        if ($path !== '') {
+                            if ($token !== '') {
+                                reimbursementDeleteUpload($pending[$token]['path']);
+                                unset($pending[$token]);
+                            }
+                            $token = bin2hex(random_bytes(16));
+                            $pending[$token] = [
+                                'member_id' => $memberId,
+                                'path'      => $path,
+                                'name'      => mb_substr(basename((string) $_FILES[$fileKey]['name']), 0, 120),
+                                'at'        => time(),
+                            ];
+                        }
+                    } catch (Exception $e) {
+                        // Bad type, too big, etc. The row keeps whatever receipt it had before.
+                        app_log("Reimbursement receipt upload failed for member $memberId (row " . ($i + 1) . '): ' . $e->getMessage());
+                        if ($rowError === null) {
+                            $rowError = "Row " . ($i + 1) . " receipt: " . $e->getMessage();
+                        }
+                    }
+                }
+
+                $receiptPath = '';
+                $receiptName = '';
+                if ($token !== '') {
+                    $usedTokens[$token] = true;
+                    $receiptPath = $pending[$token]['path'];
+                    $receiptName = (string) ($pending[$token]['name'] ?? '');
+                }
+
+                $formRows[] = [
+                    'category'      => $category,
+                    'description'   => $description,
+                    'amount'        => $amountRupees,
+                    'receipt_token' => $token,
+                    'receipt_name'  => $receiptName,
+                ];
 
                 // Same parser as the resubmit flow, so an amount can't pass here and fail there.
                 $paise = ReimbursementModel::rupeesToPaise($amountRupees);
                 if ($category === '' || $description === '' || $paise === null || $paise <= 0) {
-                    throw new \InvalidArgumentException("Row " . ($i + 1) . ": category, description, and a positive amount are mandatory fields.");
-                }
-
-                // Receipts are optional. '' means none was attached.
-                // The Member ID goes in the filename, not the email: no personal data in the URL.
-                $fileKey = "line_item_receipt_$i";
-                $path = '';
-                if (!empty($_FILES[$fileKey]['name'])) {
-                    $path = $fileUploader->handleUpload($_FILES[$fileKey], $fileKey, (string) $member['member_id'], 'reimbursement') ?: '';
-                    if ($path) {
-                        $uploadedPaths[] = $path;
+                    if ($rowError === null) {
+                        $rowError = "Row " . ($i + 1) . ": category, description, and a positive amount are mandatory fields.";
                     }
+                    continue;
                 }
 
                 $lineItems[] = [
                     'category'     => $category,
                     'description'  => $description,
                     'amount_paise' => $paise,
-                    'receipt_path' => $path,
+                    'receipt_path' => $receiptPath,
                 ];
+            }
+
+            // Pending receipts no row points at any more (replaced, removed, or row deleted) go now.
+            foreach ($pending as $t => $entry) {
+                if (($entry['member_id'] ?? '') === $memberId && !isset($usedTokens[$t])) {
+                    reimbursementDeleteUpload($entry['path']);
+                    unset($pending[$t]);
+                }
+            }
+            $_SESSION[RECEIPT_PENDING_KEY] = $pending;
+
+            if ($preError !== null) {
+                throw new \InvalidArgumentException($preError);
+            }
+            if ($rowError !== null) {
+                throw new \InvalidArgumentException($rowError);
             }
 
             $payment = [
@@ -273,16 +391,25 @@ if ($action === 'submit_reimbursement' && $type === 'reimbursement') {
                 $reimbursementSettings, $verifiedEmail, $applicantName, $eventName, $eventDate, $payment, $lineItems
             );
 
-            require_once __DIR__ . '/../../includes/mailer.php';
-            Mailer::sendReimbursementReceived($verifiedEmail, $applicantName, $result['tracking_id'], $eventName);
-
+            // Saved. The files now belong to the request, so they leave the pending list WITHOUT being deleted.
+            foreach (array_keys($usedTokens) as $t) {
+                unset($_SESSION[RECEIPT_PENDING_KEY][$t]);
+            }
+            $formRows = [];
             $success = $result;
             $successType = 'reimbursement';
+
+            // The claim exists at this point, so a mail problem must not turn into a "please try again".
+            try {
+                require_once __DIR__ . '/../../includes/mailer.php';
+                Mailer::sendReimbursementReceived($verifiedEmail, $applicantName, $result['tracking_id'], $eventName);
+            } catch (Throwable $e) {
+                app_log("Reimbursement confirmation email failed for {$result['tracking_id']}: " . $e->getMessage());
+            }
         } catch (\InvalidArgumentException $e) {
-            cleanupUploadedPaths($uploadedPaths);
+            // Rows and receipts stay: they are put back into the form below.
             $errors['system'] = $e->getMessage();
         } catch (Exception $e) {
-            cleanupUploadedPaths($uploadedPaths);
             app_log("Reimbursement submission failed for <$verifiedEmail> (event: $eventName): " . $e->getMessage());
             $errors['system'] = "An error occurred while submitting your request. Please try again.";
         }
@@ -302,8 +429,8 @@ $oldName = function () use ($memberName) {
 $checked = function ($key, $value) {
     return (($_POST[$key] ?? '') === $value) ? 'checked' : '';
 };
-// Reimbursement: keep the non-sensitive answers after a validation error. Bank/UPI details and
-// line items are deliberately not echoed back.
+// Reimbursement: keep the non-sensitive answers after a validation error. Bank/UPI details are
+// deliberately not echoed back; the expense rows and kept receipts are (see $formRows).
 $postedDcw    = (string) ($_POST['dcw_event'] ?? '');
 $postedMethod = (string) ($_POST['payment_method'] ?? 'upi');
 if (!in_array($postedMethod, ['upi', 'bank'], true)) $postedMethod = 'upi';
@@ -686,10 +813,17 @@ engage_header([
                     </div>
                     <div class="field">
                         <label>Description</label>
-                        <input type="text" name="line_item_description[]">
+                        <input type="text" name="line_item_description[]" class="li-description">
                     </div>
                     <div class="field">
                         <label>Receipt <span style="font-weight:400; color:var(--muted);">(optional, but highly recommended)</span></label>
+                        <!-- Set when a receipt from an earlier attempt is still held on the server for this row. -->
+                        <input type="hidden" name="line_item_receipt_token[]" class="li-token" value="">
+                        <div class="li-kept" style="display:none; margin:0 0 8px; font-size:13.5px;">
+                            &#10003; <strong class="li-kept-name"></strong> is attached.
+                            <button type="button" class="li-kept-remove btn-danger-ghost" style="margin-left:8px;">Remove</button>
+                            <span style="display:block; color:var(--muted);">Choose a file below only if you want to replace it.</span>
+                        </div>
                         <input type="file" name="__RECEIPT_NAME__" accept=".pdf,.jpg,.jpeg,.png">
                     </div>
                     <button type="button" class="remove-line-item btn-danger-ghost">Remove</button>
@@ -698,17 +832,40 @@ engage_header([
 
             <script>
                 const UPI_MAX_RUPEES = <?= json_encode($upiMaxRupees) ?>;
+                // Rows to restore after a validation error (empty on a fresh page). Receipt files themselves
+                // cannot be refilled by a browser, so a kept receipt is represented by a server-side token.
+                const INITIAL_ROWS = <?= json_encode($formRows, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
 
-                function addLineItem() {
+                function addLineItem(data) {
                     const template = document.getElementById('line-item-template');
                     const clone = template.content.cloneNode(true);
+                    const row = clone.querySelector('.line-item');
 
-                    clone.querySelector('.remove-line-item').addEventListener('click', function (e) {
+                    row.querySelector('.remove-line-item').addEventListener('click', function (e) {
                         e.target.closest('.line-item').remove();
                         renumberReceipts();
                         recomputeTotal();
                     });
-                    clone.querySelector('.li-amount').addEventListener('input', recomputeTotal);
+                    row.querySelector('.li-amount').addEventListener('input', recomputeTotal);
+                    row.querySelector('.li-kept-remove').addEventListener('click', function () {
+                        // Forget the kept receipt; the server deletes it on the next submit.
+                        row.querySelector('.li-token').value = '';
+                        row.querySelector('.li-kept').style.display = 'none';
+                    });
+
+                    if (data) {
+                        const select = row.querySelector('.li-category');
+                        if (Array.prototype.some.call(select.options, function (o) { return o.value === data.category; })) {
+                            select.value = data.category;
+                        }
+                        row.querySelector('.li-amount').value = data.amount || '';
+                        row.querySelector('.li-description').value = data.description || '';
+                        if (data.receipt_token) {
+                            row.querySelector('.li-token').value = data.receipt_token;
+                            row.querySelector('.li-kept-name').textContent = data.receipt_name || 'Receipt';
+                            row.querySelector('.li-kept').style.display = 'block';
+                        }
+                    }
 
                     document.getElementById('line-items').appendChild(clone);
                     renumberReceipts();
@@ -756,7 +913,7 @@ engage_header([
                     document.getElementById('submit-btn').disabled = (answer === 'no');
                 }
 
-                document.getElementById('add-line-item').addEventListener('click', addLineItem);
+                document.getElementById('add-line-item').addEventListener('click', function () { addLineItem(); });
                 document.querySelectorAll('input[name="payment_method"]').forEach(el => el.addEventListener('change', togglePaymentFields));
                 document.getElementById('dcw-event').addEventListener('change', toggleDcwNotice);
                 document.getElementById('reimbursement-form').addEventListener('submit', renumberReceipts);
@@ -781,8 +938,13 @@ engage_header([
                     }
                 });
 
-                // Start with one line item row.
-                addLineItem();
+                // Restore the rows from the failed attempt, or start with one empty row.
+                if (INITIAL_ROWS.length) {
+                    INITIAL_ROWS.forEach(function (r) { addLineItem(r); });
+                } else {
+                    addLineItem();
+                }
+                recomputeTotal();
                 togglePaymentFields();
                 toggleDcwNotice();
             </script>
