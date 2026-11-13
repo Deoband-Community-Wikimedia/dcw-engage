@@ -208,6 +208,8 @@ CREATE TABLE IF NOT EXISTS `applications` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uniq_form_email` (`form_id`,`email`),
   UNIQUE KEY `tracking_id` (`tracking_id`),
+  -- Review queues: per-program status counts and per-program paging.
+  KEY `idx_app_form_status_created` (`form_id`,`status`,`created_at`),
   CONSTRAINT `applications_ibfk_1` FOREIGN KEY (`form_id`) REFERENCES `forms` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
