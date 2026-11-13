@@ -139,7 +139,7 @@ if (!$id && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') ==
         }
 
         $_SESSION['membership_bulk'] = $result;
-        $keep = array_filter(['form' => $_GET['form'] ?? '', 'status' => $_GET['status'] ?? '', 'q' => $_GET['q'] ?? ''], 'strlen');
+        $keep = array_filter(['form' => $_GET['form'] ?? '', 'status' => $_GET['status'] ?? '', 'q' => $_GET['q'] ?? '', 'page' => $_GET['page'] ?? ''], 'strlen');
         header('Location: /admin/membership-review' . ($keep ? '?' . http_build_query($keep) : ''));
         exit;
     }
@@ -160,7 +160,7 @@ if (!$id && $_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?
     } catch (Throwable $e) {
         $_SESSION['membership_flash'] = ['error', engage_user_message($e, 'Membership action')];
     }
-    $keep = array_filter(['tab' => 'members', 'form' => $_GET['form'] ?? '', 'q' => $_GET['q'] ?? ''], 'strlen');
+    $keep = array_filter(['tab' => 'members', 'form' => $_GET['form'] ?? '', 'q' => $_GET['q'] ?? '', 'page' => $_GET['page'] ?? ''], 'strlen');
     header('Location: /admin/membership-review?' . http_build_query($keep));
     exit;
 }
@@ -334,6 +334,7 @@ if (!in_array($fStatus, ['todo', 'Under Review', 'Draft', 'Rejected'], true)) $f
 $tab = (string) ($_GET['tab'] ?? 'apps');
 if ($tab === 'struck' && !$canStrike) $tab = 'apps';        // coordinators never see this tab
 if (!in_array($tab, ['apps', 'members', 'struck'], true)) $tab = 'apps';
+$page = max(1, (int) ($_GET['page'] ?? 1));
 
 $h = fn($v) => htmlspecialchars((string) $v);
 $label = fn($s) => $s === 'Draft' ? 'Awaiting applicant' : $s;
@@ -350,11 +351,23 @@ $chapChip = function (?string $key, string $text) use ($h, $chapColor): string {
 // Whole days since a timestamp.
 $daysSince = fn($ts) => max(0, (int) floor((time() - (int) strtotime((string) $ts)) / 86400));
 
-// Queue URL that keeps the active filters, with some of them overridden.
+// Queue URL that keeps the active filters, with some of them overridden. Paging is NOT kept unless passed
+// ('page' => '3'), so changing a filter always goes back to page 1.
 $qUrl = function (array $over) use ($fSlug, $fStatus, $tab, $search): string {
     $q = array_filter(array_merge(
         ['form' => $fSlug, 'status' => $fStatus, 'tab' => $tab === 'apps' ? '' : $tab, 'q' => $search], $over), 'strlen');
     return '/admin/membership-review' . ($q ? '?' . http_build_query($q) : '');
+};
+
+// Previous / next links for a paged list ($res has 'page', 'pages', 'total').
+$pager = function (array $res) use ($qUrl, $h): string {
+    if ($res['pages'] <= 1) return '';
+    $p = $res['page'];
+    $prev = $p > 1 ? '<a class="btn-ghost sm" style="text-decoration:none" href="' . $h($qUrl(['page' => $p - 1 > 1 ? (string) ($p - 1) : ''])) . '">Previous</a>'
+                   : '<a class="btn-ghost sm off" aria-disabled="true" tabindex="-1">Previous</a>';
+    $next = $p < $res['pages'] ? '<a class="btn-ghost sm" style="text-decoration:none" href="' . $h($qUrl(['page' => (string) ($p + 1)])) . '">Next</a>'
+                               : '<a class="btn-ghost sm off" aria-disabled="true" tabindex="-1">Next</a>';
+    return '<nav class="rv-pager" aria-label="Pages">' . $prev . '<span>Page ' . (int) $p . ' of ' . (int) $res['pages'] . ' &middot; ' . (int) $res['total'] . ' in total</span>' . $next . '</nav>';
 };
 
 // Wikimedia links for a username: global account page and contributions.
@@ -373,8 +386,6 @@ $slugLabel = function (string $slug): string {
     $key = substr($slug, strlen('membership-'));
     return MemberModel::CHAPTER_NAMES[$key] ?? $slug;
 };
-// Existing memberships, so "joining another chapter" can be told apart from "renewal" and "new".
-$held = $model->heldPairs();
 
 // Member IDs a person already holds: member rows grouped by ID, e.g. ['D48213977' => ['DCW Generic Community', 'Wiki Club AMU']].
 $idGroups = function (array $mems): array {
@@ -421,6 +432,10 @@ engage_header([
     .action-banner ul { flex-basis: 100%; margin: 6px 0 0; padding-left: 18px; }
     .flash-link { display: block; flex-basis: 100%; margin-top: 8px; padding: 10px; background: rgba(0,0,0,.06); border-radius: 6px; font-size: 12px; word-break: break-all; }
     .muted { color: #94a3b8; }
+
+    /* ---- Paging ---- */
+    .rv-pager { display: flex; align-items: center; justify-content: center; gap: 14px; margin: 16px 0 0; font-size: 14px; color: var(--muted); }
+    .rv-pager a.off { opacity: .45; pointer-events: none; }
 
     /* ---- Sidebar extras (the sidebar itself is .vtabs in engage.css) ---- */
     .vsub.on { background: var(--primary-tint); color: var(--primary-dark); box-shadow: inset 3px 0 0 var(--primary); }
@@ -584,6 +599,9 @@ engage_header([
     $data = json_decode($app['form_data'] ?? '', true) ?: [];
     $open = in_array($app['status'], MemberModel::OPEN, true);
     $chapterKey = MemberModel::chapterOf($app);
+
+    // Existing memberships of this one email, so "joining another chapter" can be told apart from "renewal" and "new".
+    $held = $model->heldPairsFor([(string) $app['email']]);
 
     // Member IDs this person already has, for every reviewer and coordinator (not only those who can change IDs).
     $mine = $model->membershipsForEmail((string) $app['email']);
@@ -925,47 +943,9 @@ engage_header([
     <?php endif; ?>
 
 <?php else:
-    $all = $model->listApplications('', '', $scope);
-
-    // Counts for the sidebar (within the chosen membership, if one is chosen). Not affected by the search.
-    $scoped = $fSlug === '' ? $all : array_filter($all, fn($r) => (string) $r['form_type'] === $fSlug);
-    $cnt = ['New' => 0, 'Submitted' => 0, 'Under Review' => 0, 'Draft' => 0, 'Accepted' => 0, 'Rejected' => 0];
-    foreach ($scoped as $r) { if (isset($cnt[$r['status']])) $cnt[$r['status']]++; }
-
-    $infoMap = $model->memberInfoMap();
-    $byEmail = $model->membershipsByEmail();   // one query for the whole queue
-
-    // ONE ROW PER PERSON. People are counted by Member ID: one ID is one person, even if it covers
-    // several clubs, and their memberships are listed together on that row. A row with no ID on file
-    // yet falls back to its email, so nobody is dropped. The list is newest first, so the first
-    // row seen for a person is their latest. A club that was accepted more than once (renewals)
-    // is listed once, linking to its latest application.
-    $groupAccepted = function (array $accepted) use ($infoMap, $chapterLabel): array {
-        $groups = [];
-        foreach ($accepted as $r) {
-            $chap = MemberModel::chapterOf($r) ?? '';
-            $inf  = $infoMap[strtolower((string) $r['email']) . '|' . $chap] ?? null;
-            $mid  = trim((string) ($inf['member_id'] ?? ''));
-            $key  = $mid !== '' ? $mid : 'email:' . strtolower((string) $r['email']);
-            $dedupe = $chap !== '' ? $chap : (string) $r['form_type'];
-
-            if (!isset($groups[$key])) {
-                $groups[$key] = ['mid' => $mid, 'latest' => $r, 'memberships' => [], 'expires' => null];
-            }
-            $g =& $groups[$key];
-            if ($g['mid'] === '' && $mid !== '') $g['mid'] = $mid;
-            if (!isset($g['memberships'][$dedupe])) {
-                $exp = !empty($inf['expires_at']) ? (string) $inf['expires_at'] : null;
-                $g['memberships'][$dedupe] = ['id' => (int) $r['id'], 'key' => $chap !== '' ? $chap : null, 'label' => $chapterLabel($r), 'expires' => $exp];
-                if ($exp !== null && ($g['expires'] === null || $exp > $g['expires'])) $g['expires'] = $exp;
-            }
-            unset($g);
-        }
-        return $groups;
-    };
-    $acceptedAll = array_values(array_filter($scoped, fn($r) => $r['status'] === 'Accepted'));
-    usort($acceptedAll, fn($a, $b) => strcmp((string) ($b['approved_at'] ?? $b['created_at']), (string) ($a['approved_at'] ?? $a['created_at'])));
-    $peopleCount = count($groupAccepted($acceptedAll));
+    // Sidebar numbers come from SQL (grouped counts), never from loading the queue.
+    $cnt = $model->statusCounts($fSlug, $scope);
+    $peopleCount = $model->peopleCount($fSlug, $scope);
 
     // Strikes in force: [member_id => row] for the "Struck off" pills, and the full list for reviewers.
     $strikeMap = $strikes->activeMap();
@@ -1029,13 +1009,20 @@ engage_header([
     <?php endif; ?>
 
     <?php if ($tab === 'apps'):
-        $rows = $model->listApplications($fSlug, $fStatus, $scope, $search);
-        $queue = array_values(array_filter($rows, fn($r) => $r['status'] !== 'Accepted'));
+        // One page of the queue, filtered and counted in SQL. Accepted people live in the Members tab.
+        $res = $model->applicationsPage($fSlug, $fStatus, $scope, $search, $page, true);
+        $queue = $res['rows'];
+        $page = $res['page'];
+
+        // Lookups for the rows on this page only.
+        $rowEmails = array_column($queue, 'email');
+        $held = $model->heldPairsFor($rowEmails);
+        $byEmail = $model->membershipsForEmails($rowEmails);
         ?>
-    <?php if ($search !== ''): ?><p class="rv-result"><?= count($queue) ?> application<?= count($queue) === 1 ? '' : 's' ?> match &ldquo;<?= $h($search) ?>&rdquo;.</p><?php endif; ?>
+    <?php if ($search !== ''): ?><p class="rv-result"><?= (int) $res['total'] ?> application<?= $res['total'] === 1 ? '' : 's' ?> match &ldquo;<?= $h($search) ?>&rdquo;.</p><?php endif; ?>
 
     <section class="sect">
-        <?php /* Posts back to this same URL, so the active filters are kept. */ ?>
+        <?php /* Posts back to this same URL, so the active filters and the page are kept. */ ?>
         <form method="POST" id="bulkForm" class="bulkbar" style="display:none"><?= CSRF::getInputField() ?>
             <input type="hidden" name="action" value="bulk">
             <div id="bulkIdsContainer"></div>
@@ -1090,19 +1077,21 @@ engage_header([
         <?php endforeach; if (!$queue): ?><tr><td colspan="5"><?= $search !== '' || $fStatus !== '' ? 'Nothing matches these filters.' : 'Nothing to review here.' ?></td></tr><?php endif; ?>
         </tbody></table>
         </div>
+        <?= $pager($res) ?>
     </section>
 
     <?php elseif ($tab === 'members'):
-        $acceptedRows = $model->listApplications($fSlug, 'Accepted', $scope, $search);
-        usort($acceptedRows, fn($a, $b) => strcmp((string) ($b['approved_at'] ?? $b['created_at']), (string) ($a['approved_at'] ?? $a['created_at'])));
-        $acceptedGroups = $groupAccepted($acceptedRows);
+        // One page of people (one entry per Member ID), straight from the members table.
+        $res = $model->membersPage($fSlug, $scope, $search, $page);
+        $acceptedGroups = $res['groups'];
+        $page = $res['page'];
 
-        // Wikimedia usernames for everyone listed, in one query.
+        // Wikimedia usernames for the people on this page, in one query.
         $profMap = [];
         try { $profMap = $profiles->mapFor(array_column($acceptedGroups, 'mid')); } catch (Throwable $e) { app_log('Profile lookup failed: ' . $e->getMessage()); }
         ?>
-    <p class="rv-result"><?= count($acceptedGroups) ?> <?= count($acceptedGroups) === 1 ? 'person' : 'people' ?><?= $search !== '' ? ' match &ldquo;' . $h($search) . '&rdquo;' : '' ?>.
-        One row per person, counted by Member ID. Valid until is the latest expiry across their memberships.</p>
+    <p class="rv-result"><?= (int) $res['total'] ?> <?= $res['total'] === 1 ? 'person' : 'people' ?><?= $search !== '' ? ' match &ldquo;' . $h($search) . '&rdquo;' : '' ?>.
+        One row per person, counted by Member ID, newest member first. Valid until is the latest expiry across their memberships.</p>
     <section class="sect">
         <?php if (!$acceptedGroups): ?>
             <div class="empty-note"><?= $search !== '' || $fSlug !== '' ? 'Nobody matches these filters.' : 'No accepted memberships yet.' ?></div>
@@ -1111,8 +1100,7 @@ engage_header([
         <table class="tbl"><thead><tr>
             <th>Member</th><th>Chapters</th><th>Member ID</th><th>Valid until</th><th></th></tr></thead><tbody>
         <?php foreach ($acceptedGroups as $g):
-            $latest = $g['latest'];
-            $mships = array_values($g['memberships']);
+            $mships = $g['memberships'];
             $pr = $g['mid'] !== '' ? ($profMap[$g['mid']] ?? null) : null;
             $prName = (string) ($pr['wikimedia_username'] ?? '');
             $prOk = $prName !== '' && !empty($pr['username_verified_at']);
@@ -1123,12 +1111,13 @@ engage_header([
             $left = $g['expires'] ? (int) floor(((int) strtotime($g['expires']) - time()) / 86400) : null;
             $vuCls = $left === null ? '' : ($left < 0 ? ' gone' : ($left <= 30 ? ' soon' : '')); ?>
             <tr>
-                <td><a class="dl" href="?id=<?= (int) $latest['id'] ?>"><?= $h($latest['applicant_name'] ?: $latest['email']) ?></a>
-                    <span class="sub"><?= $h($latest['email']) ?></span>
+                <td><?php if ($g['open_id']): ?><a class="dl" href="?id=<?= (int) $g['open_id'] ?>"><?= $h($g['name'] ?: $g['email']) ?></a>
+                    <?php else: ?><strong><?= $h($g['name'] ?: $g['email']) ?></strong><?php endif; ?>
+                    <span class="sub"><?= $h($g['email']) ?></span>
                     <?php if ($prName !== ''): ?>
                         <span class="vbadge<?= $prOk ? '' : ' no' ?>" title="<?= $prOk ? 'Verified' : 'Not verified' ?>"><?= $prOk ? '&#10003;' : '&#9888;' ?> <?= $h($prName) ?></span>
                     <?php endif; ?></td>
-                <td><?php foreach ($mships as $m): ?><a href="?id=<?= (int) $m['id'] ?>" style="text-decoration:none"><?= $chapChip($m['key'], $m['label']) ?></a><?php endforeach; ?></td>
+                <td><?php foreach ($mships as $m): ?><?php if ($m['id']): ?><a href="?id=<?= (int) $m['id'] ?>" style="text-decoration:none"><?= $chapChip($m['key'], $m['label']) ?></a><?php else: ?><?= $chapChip($m['key'], $m['label']) ?><?php endif; ?><?php endforeach; ?></td>
                 <td><?= $g['mid'] !== '' ? '<code>' . $h($g['mid']) . '</code>' : '<span class="muted">&mdash;</span>' ?>
                     <?php if ($isStruck): ?><span class="pill st-bad">Struck off</span><?php endif; ?></td>
                 <td title="<?= $h(implode('; ', $expTitle)) ?>">
@@ -1139,21 +1128,22 @@ engage_header([
                         <?php if (count($mships) > 1): ?><span class="sub">latest of <?= count($mships) ?></span><?php endif; ?>
                     <?php else: ?><span class="muted">&mdash;</span><?php endif; ?></td>
                 <td class="act wm-cell">
-                    <a class="btn-ghost" href="?id=<?= (int) $latest['id'] ?>">Open</a>
+                    <?php if ($g['open_id']): ?><a class="btn-ghost" href="?id=<?= (int) $g['open_id'] ?>">Open</a><?php endif; ?>
                     <?php if ($g['mid'] !== '' && $prName !== '' && !$prOk && $mayEditProfile($g['mid'])): ?>
                     <form method="POST"><?= CSRF::getInputField() ?>
                         <input type="hidden" name="member_id" value="<?= $h($g['mid']) ?>">
                         <button name="action" value="profile_verify" class="btn-ok">Verify</button>
                     </form>
                     <?php endif; ?>
-                    <?php if ($canLinkIds && $g['mid'] !== '' && !$isStruck): ?>
-                        <a class="btn-ghost" href="/admin/membership-card?id=<?= (int) $latest['id'] ?>">Card PDF</a>
+                    <?php if ($canLinkIds && $g['mid'] !== '' && $g['open_id'] && !$isStruck): ?>
+                        <a class="btn-ghost" href="/admin/membership-card?id=<?= (int) $g['open_id'] ?>">Card PDF</a>
                     <?php endif; ?>
                 </td>
             </tr>
         <?php endforeach; ?>
         </tbody></table>
         </div>
+        <?= $pager($res) ?>
         <?php endif; ?>
     </section>
 
@@ -1216,7 +1206,7 @@ engage_header([
             all.disabled = rows.length === 0;
         }
 
-        // Select all only ticks rows that can actually be acted on.
+        // Select all only ticks rows that can actually be acted on (the rows on this page).
         all.addEventListener('change', function () {
             rows.forEach(function (r) { r.checked = all.checked; });
             sync();
