@@ -14,7 +14,13 @@
  * - A reviewer can record a decline that reached the committee some other way (email, phone):
  *   recordReviewerDecline(). It sends nothing and is shown exactly like a decline made on the confirmation page.
  *
- * Until the migration has been run, the "all..." readers return [] and the whole feature stays off.
+ * Readers for the review queue are scoped so they never load every answer blob:
+ *   responsesFor($appIds)   rows for the applications on the page (no answers)
+ *   oneByApplication($id)   one row with answers (single application page)
+ *   forForm($formId)        rows with answers for one program (CSV export)
+ *   countsByForm($settings) confirmed / declined / awaiting / overdue per program, from SQL
+ *
+ * Until the migration has been run, the readers return [] / null and the whole feature stays off.
  */
 require_once __DIR__ . '/FormModel.php';   // deadline helpers (UTC stored, IST shown)
 
@@ -184,7 +190,7 @@ TXT;
     // Settings (per program)
     // ------------------------------------------------------------------
 
-    /** Every program's settings, keyed by form id. [] if the table does not exist yet. */
+    /** Every program's settings, keyed by form id. [] if the table does not exist yet. (One row per program: small.) */
     public function allSettings(): array {
         try {
             $rows = $this->db->query("SELECT * FROM award_confirm_settings")->fetchAll();
@@ -257,7 +263,10 @@ TXT;
     // Awardees: link, response, state
     // ------------------------------------------------------------------
 
-    /** Every confirmation row, keyed by application id. [] if the table does not exist yet. */
+    /**
+     * Every confirmation row, keyed by application id (answers included). [] if the table does not exist yet.
+     * Kept for older callers. The review pages no longer use it: they read only what they show.
+     */
     public function allByApplication(): array {
         try {
             $rows = $this->db->query("SELECT id, application_id, response, responded_at, reminder_count, last_reminded_at, answers_enc FROM award_confirmations")->fetchAll();
@@ -266,6 +275,84 @@ TXT;
         }
         $out = [];
         foreach ($rows as $r) $out[(int) $r['application_id']] = $r;
+        return $out;
+    }
+
+    /** Confirmation rows (no answers) for these applications: [application id => row]. [] on any problem. */
+    public function responsesFor(array $appIds): array {
+        $ids = array_values(array_unique(array_filter(array_map('intval', $appIds))));
+        if (!$ids) return [];
+        try {
+            $in = implode(',', array_fill(0, count($ids), '?'));
+            $stmt = $this->db->prepare("SELECT id, application_id, response, responded_at, reminder_count, last_reminded_at
+                                        FROM award_confirmations WHERE application_id IN ($in)");
+            $stmt->execute($ids);
+            $rows = $stmt->fetchAll();
+        } catch (Throwable $e) {
+            return [];
+        }
+        $out = [];
+        foreach ($rows as $r) $out[(int) $r['application_id']] = $r;
+        return $out;
+    }
+
+    /** One application's confirmation row including the encrypted answers, or null. */
+    public function oneByApplication(int $applicationId): ?array {
+        try {
+            $stmt = $this->db->prepare("SELECT id, application_id, response, responded_at, reminder_count, last_reminded_at, answers_enc
+                                        FROM award_confirmations WHERE application_id = :a");
+            $stmt->execute(['a' => $applicationId]);
+            return $stmt->fetch() ?: null;
+        } catch (Throwable $e) {
+            return null;
+        }
+    }
+
+    /** Confirmation rows with answers for the Accepted applications of one program: [application id => row]. */
+    public function forForm(int $formId): array {
+        try {
+            $stmt = $this->db->prepare("SELECT c.id, c.application_id, c.response, c.responded_at, c.reminder_count, c.last_reminded_at, c.answers_enc
+                                        FROM award_confirmations c
+                                        JOIN applications a ON a.id = c.application_id
+                                        WHERE a.form_id = :f AND a.status = 'Accepted'");
+            $stmt->execute(['f' => $formId]);
+            $rows = $stmt->fetchAll();
+        } catch (Throwable $e) {
+            return [];
+        }
+        $out = [];
+        foreach ($rows as $r) $out[(int) $r['application_id']] = $r;
+        return $out;
+    }
+
+    /**
+     * Per program: [form id => ['confirmed' => n, 'declined' => n, 'awaiting' => n, 'overdue' => n]].
+     * Counts Accepted applications that have a confirmation row, using the same states as stateOf().
+     * $settings is allSettings() (passed in so it is read once).
+     */
+    public function countsByForm(array $settings): array {
+        try {
+            $rows = $this->db->query("SELECT a.form_id, c.response, COUNT(*) AS n
+                                      FROM award_confirmations c
+                                      JOIN applications a ON a.id = c.application_id
+                                      WHERE a.status = 'Accepted'
+                                      GROUP BY a.form_id, c.response")->fetchAll();
+        } catch (Throwable $e) {
+            return [];
+        }
+        $out = [];
+        foreach ($rows as $r) {
+            $fid = (int) $r['form_id'];
+            $resp = (string) $r['response'];
+            if ($resp === 'confirmed' || $resp === 'declined') {
+                $state = $resp;
+            } else {
+                $s = $settings[$fid] ?? null;
+                $ts = self::isOn($s) ? FormModel::utcToTs($s['deadline_at']) : null;
+                $state = ($ts !== null && $ts <= time()) ? 'overdue' : 'awaiting';
+            }
+            $out[$fid][$state] = ($out[$fid][$state] ?? 0) + (int) $r['n'];
+        }
         return $out;
     }
 

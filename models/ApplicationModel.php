@@ -16,6 +16,9 @@
  * A dispatch is either by courier (courier + consignment/AWB number, optional https tracking link) or
  * HAND-DELIVERED (courier is HAND_DELIVERY, no AWB, no tracking link). Anything that shows dispatch details
  * should use isHandDelivery() and say "Delivered by hand" instead of printing an empty AWB.
+ *
+ * Review queue (views/admin/application_review.php) reads through statusCountsByForm() and reviewRows():
+ * counts come from one GROUP BY query and rows are paged per program, without form_data.
  */
 
 require_once __DIR__ . '/MemberModel.php';
@@ -394,7 +397,8 @@ class ApplicationModel {
 
     /**
      * Get all applications with form details
-     * (includes Discarded rows; the review queue hides them unless asked for)
+     * (includes Discarded rows; loads form_data too, so do NOT use it for a queue:
+     * the review queue uses statusCountsByForm() + reviewRows() instead)
      */
     public function getAllApplications() {
         $stmt = $this->db->query("
@@ -403,6 +407,66 @@ class ApplicationModel {
             JOIN forms f ON a.form_id = f.id 
             ORDER BY a.created_at DESC
         ");
+        return $stmt->fetchAll();
+    }
+
+    // ---------------------------------------------------------------------
+    // Review queue (views/admin/application_review.php)
+    // ---------------------------------------------------------------------
+
+    /** Statuses a reviewer can still decide from. Same list as OPEN_STATUSES below. */
+    private const REVIEW_OPEN_SQL = "'New','Submitted','Under Review'";
+
+    /**
+     * Applications per program and status, in one GROUP BY query: [form_id => [status => count]].
+     * Served by the (form_id, status, created_at) index, so it never reads form_data.
+     */
+    public function statusCountsByForm(): array {
+        $out = [];
+        $q = $this->db->query("SELECT form_id, status, COUNT(*) AS n FROM applications GROUP BY form_id, status");
+        foreach ($q as $r) {
+            $out[(int) $r['form_id']][(string) $r['status']] = (int) $r['n'];
+        }
+        return $out;
+    }
+
+    /**
+     * One page of one program's applications for the review queue. No form_data.
+     * $status '' = everything except Discarded and Rejected (hidden by default); otherwise exactly that status.
+     * Open applications come first, then newest first.
+     */
+    public function reviewRows(int $formId, string $status, int $limit, int $offset): array {
+        $where = 'a.form_id = :f';
+        $args = ['f' => $formId];
+        if ($status === '') {
+            $where .= " AND a.status NOT IN ('Discarded','Rejected')";
+        } else {
+            $where .= ' AND a.status = :s';
+            $args['s'] = $status;
+        }
+        $limit = max(1, $limit);
+        $offset = max(0, $offset);
+        $stmt = $this->db->prepare("
+            SELECT a.id, a.form_id, a.email, a.applicant_name, a.tracking_id, a.status, a.created_at,
+                   a.letter_sent_at, a.letter_failed
+            FROM applications a
+            WHERE $where
+            ORDER BY (a.status IN (" . self::REVIEW_OPEN_SQL . ")) DESC, a.created_at DESC, a.id DESC
+            LIMIT $limit OFFSET $offset
+        ");
+        $stmt->execute($args);
+        return $stmt->fetchAll();
+    }
+
+    /** Accepted applications of one program (name order), for the award-confirmation CSV. No form_data. */
+    public function getAcceptedForForm(int $formId): array {
+        $stmt = $this->db->prepare("
+            SELECT a.id, a.form_id, a.email, a.applicant_name, a.tracking_id, a.status
+            FROM applications a
+            WHERE a.form_id = :f AND a.status = 'Accepted'
+            ORDER BY a.applicant_name ASC, a.id ASC
+        ");
+        $stmt->execute(['f' => $formId]);
         return $stmt->fetchAll();
     }
 
