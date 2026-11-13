@@ -172,25 +172,11 @@ foreach ($kindTabs as $k => $t) {
     $kindTabs[$k]['show'] = $t['see'] && ($t['always'] || !empty($formsByKind[$k]));
 }
 
-// Programs that are not shown in the review queue: closed forms, and test forms.
-// A form counts as a test form when "test"/"testing"/"dummy" is a whole word in its title or URL slug
-// (so "Test form" and "scholarship-test" match, "Contest 2026" does not). Add exact slugs to $extra to hide others.
-// KEEP IN SYNC with the same function in views/admin/dashboard.php and application_review.php.
-// Note: this looks at is_active only, NOT the deadline, on purpose. A form that closed by deadline is
-// exactly the one whose responses still need reviewing, so it stays in the review queue.
-if (!function_exists('review_hidden_form')) {
-    function review_hidden_form(array $form, array $extra = []): bool {
-        if (empty($form['is_active'])) return true;
-        if (in_array((string) $form['form_type'], $extra, true)) return true;
-        return (bool) preg_match('/(^|[^a-z])(test|testing|dummy)([^a-z]|$)/i',
-            (string) ($form['title'] ?? '') . ' ' . (string) $form['form_type']);
-    }
-}
-
 // Applications waiting for a first decision (New or Submitted), across the program, scholarship and swag forms this
-// person can open (closed, test, membership and feedback forms are left out, the same as in the review queue).
-// Shown as a count on the "Application review" row. Uses ApplicationModel::countAwaitingByForm();
-// if that method is not added yet, or the query fails, the count is simply left out.
+// person can open (membership and feedback forms are left out). Shown as a count on the "Application review" row.
+// Closed and test programs ARE counted: the review queue lists them as soon as they have an open application, so the
+// number here always matches what the queue shows. Uses ApplicationModel::countAwaitingByForm() (one GROUP BY
+// query); if the query fails, the count is simply left out.
 $appsWaiting = 0;
 if ($canReviewApplications) {
     try {
@@ -198,7 +184,6 @@ if ($canReviewApplications) {
         foreach ($forms as $f) {
             // Membership forms are reviewed in Membership review, feedback forms are read in the Feedback tab.
             if (!FormModel::reviewedInApplicationReview($f)) continue;
-            if (review_hidden_form($f)) continue;
             $reviewable[(int) $f['id']] = true;
         }
         foreach ((new ApplicationModel())->countAwaitingByForm() as $formId => $n) {
@@ -208,15 +193,13 @@ if ($canReviewApplications) {
 }
 
 // Membership applications waiting for a first decision (New or Submitted), limited to the chapters this person
-// may see (a coordinator sees only their own). Same idea as the count above; left out if the query fails.
+// may see (a coordinator sees only their own). One COUNT query; left out if the query fails.
 $membershipWaiting = 0;
 if ($canReviewMembership) {
     try {
         $memberModel = new MemberModel();
         $memberScope = $memberModel->scopeFor(Auth::roles(), (string) Auth::email());   // null = every chapter
-        foreach ($memberModel->listApplications('', '', $memberScope) as $r) {
-            if (in_array($r['status'], ['New', 'Submitted'], true)) $membershipWaiting++;
-        }
+        $membershipWaiting = $memberModel->countAwaiting($memberScope);
     } catch (Throwable $e) { $membershipWaiting = null; }
 }
 
@@ -295,7 +278,7 @@ function lrow(array $icons, string $tone, string $icon, string $title, string $d
  *
  * The kind comes from FormModel::kindOf(). Feedback forms differ in two ways: the response count comes from
  * $feedbackCounts (their responses are not in `applications`), and the tile opens the feedback page
- * (/admin/feedback-review), which is also where they are edited, closed and reopened. Every other kind
+ * (/admin/feedback-review), which is also where they are edited, closed and reopened . Every other kind
  * opens the form manager. The tile does not name the kind: each kind has its own tab.
  */
 function form_tile(array $icons, array $form, array $feedbackCounts = []): void
