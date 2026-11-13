@@ -19,6 +19,18 @@ require_once __DIR__ . '/../../includes/mail/ApplicationMail.php';   // Applicat
  * Feedback forms (schema "kind": "feedback") are left out too: their responses are not applications and
  * are read in the Feedback tab (/admin/feedback-review).
  *
+ * SCALE. The queue never loads every application. Counts per program come from ONE GROUP BY query
+ * (ApplicationModel::statusCountsByForm()); rows are read per program without form_data
+ * (ApplicationModel::reviewRows()). With "All programs" each program shows its first GROUP_PREVIEW rows and a
+ * "View all" link; with one program chosen (?form=) rows are paged, REVIEW_PER_PAGE per page.
+ * Award-confirmation rows are read only for the rows on screen.
+ *
+ * WHAT IS LISTED.
+ *   - Rejected and Discarded applications are hidden unless that status is chosen in the filter.
+ *   - A closed or "test" program is hidden only while it has nothing open (New, Submitted, Under Review).
+ *     As soon as it has an open application it is listed (with a "closed" / "test" tag), so nothing waiting is
+ *     ever out of sight. All hidden programs are still in the dropdown, and ?form= always shows its program.
+ *
  * Status rules (same ones ApplicationModel::saveApplication() enforces):
  *   open       New, Submitted, Under Review   -> can be decided here
  *   waiting    Draft                          -> the applicant is editing (or was sent back); nothing to decide
@@ -73,6 +85,8 @@ const APP_OPEN = ['New', 'Submitted', 'Under Review'];
 const APP_ACTIONS = ['review' => 'Under Review', 'approve' => 'Accepted', 'reject' => 'Rejected', 'info' => 'Draft',
                      'discard' => 'Discarded', 'restore' => 'New'];
 const BULK_MAX = 100;
+const REVIEW_PER_PAGE = 50;   // rows per page when one program is chosen
+const GROUP_PREVIEW = 10;     // rows per program in the "All programs" view
 
 $model = new ApplicationModel();
 $formModel = new FormModel();
@@ -82,10 +96,18 @@ $letterOn = fn($formId) => ScholarshipLetterModel::isActive($letters[(int) $form
 
 $confModel = new AwardConfirmationModel();
 $confSettings = $confModel->allSettings();        // form id => settings row; [] until the migration has been run
-$confByApp = $confModel->allByApplication();      // application id => response row
 $confOn = fn($formId) => AwardConfirmationModel::isOn($confSettings[(int) $formId] ?? null);
+// Confirmation rows are read only for the applications a page really shows: application id => row|null.
+$confCache = [];
+$confFor = function (int $appId) use ($confModel, &$confCache) {
+    if (!array_key_exists($appId, $confCache)) $confCache[$appId] = $confModel->oneByApplication($appId);
+    return $confCache[$appId];
+};
 // confirmed | declined | awaiting | overdue | none
-$confState = fn(array $r) => AwardConfirmationModel::stateOf($confByApp[(int) $r['id']] ?? null, $confSettings[(int) $r['form_id']] ?? null, (string) $r['status']);
+$confState = function (array $r) use ($confFor, $confSettings): string {
+    if ((string) $r['status'] !== 'Accepted') return 'none';
+    return AwardConfirmationModel::stateOf($confFor((int) $r['id']), $confSettings[(int) $r['form_id']] ?? null, (string) $r['status']);
+};
 
 // Forms this person may review: ordinary forms only (no membership, no feedback), and only ones FormModel
 // says they can open. getAllForms() returns schema_json, which FeedbackModel::isFeedbackRow() reads.
@@ -108,10 +130,10 @@ foreach ($allForms as $f) {
 }
 
 
-// Programs that are not shown in the review queue: closed forms, and test forms.
-// A form counts as a test form when "test"/"testing"/"dummy" is a whole word in its title or URL slug
-// (so "Test form" and "scholarship-test" match, "Contest 2026" does not). Add exact slugs to $extra to hide others.
-// KEEP IN SYNC with the same function in views/admin/dashboard.php and application_review.php.
+// Closed forms and test forms are "hidden" programs. A form counts as a test form when "test"/"testing"/"dummy"
+// is a whole word in its title or URL slug (so "Test form" and "scholarship-test" match, "Contest 2026" does not).
+// Add exact slugs to $extra to hide others.
+// A hidden program is only left out of the queue while it has no open application: see the queue below.
 if (!function_exists('review_hidden_form')) {
     function review_hidden_form(array $form, array $extra = []): bool {
         if (empty($form['is_active'])) return true;
@@ -440,7 +462,7 @@ if (!$id && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') ==
     $isResend = $bulkAct === 'resend_letter';
     $isRemind = $bulkAct === 'remind_confirm';   // email the awardee's confirmation link again (or for the first time)
     $isDecl = $bulkAct === 'mark_declined';      // record a decline that arrived by email or phone (nothing is sent)
-    $ids =array_values(array_unique(array_filter(array_map('intval', (array) ($_POST['ids'] ?? [])))));
+    $ids = array_values(array_unique(array_filter(array_map('intval', (array) ($_POST['ids'] ?? [])))));
     $note = trim((string) ($_POST['note'] ?? ''));
 
     if (!isset(APP_ACTIONS[$bulkAct]) && !$isResend && !$isRemind && !$isDecl) {
@@ -583,7 +605,7 @@ if (!$id && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') ==
         }
 
         $_SESSION['application_bulk'] = $result;
-        $keep = array_filter(['form' => $_GET['form'] ?? '', 'status' => $_GET['status'] ?? ''], 'strlen');
+        $keep = array_filter(['form' => $_GET['form'] ?? '', 'status' => $_GET['status'] ?? '', 'page' => $_GET['page'] ?? ''], 'strlen');
         header('Location: /admin/application-review' . ($keep ? '?' . http_build_query($keep) : ''));
         exit;
     }
@@ -689,6 +711,7 @@ if ($app && $_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     } catch (Throwable $e) { $error = engage_user_message($e, 'Application decision'); }
     $app = $model->getApplicationById($id);   // fresh state after an error
+    unset($confCache[$id]);                   // and a fresh confirmation row
 }
 
 $doneText = ['approve' => 'Accepted.', 'reject' => 'Rejected.', 'review' => 'Marked under review.',
@@ -722,9 +745,9 @@ if (!$id && isset($_GET['export_confirm'])) {
         $v = (string) $v;
         return ($v !== '' && strpos("=+-@\t\r", $v[0]) !== false) ? "'" . $v : $v;
     };
-    $awardees = array_values(array_filter($model->getAllApplications(),
-        fn($r) => (int) $r['form_id'] === $ef && $r['status'] === 'Accepted'));
-    usort($awardees, fn($a, $b) => strcasecmp((string) $a['applicant_name'], (string) $b['applicant_name']));
+    $awardees = $model->getAcceptedForForm($ef);            // already in name order, no form_data
+    $confRows = $confModel->forForm($ef);                   // this program's confirmation rows, answers included
+    foreach ($awardees as $r) $confCache[(int) $r['id']] = $confRows[(int) $r['id']] ?? null;
 
     // Columns: the fixed ones, then every question asked (current questions first, then any older ones answered).
     $labels = [];
@@ -733,7 +756,7 @@ if (!$id && isset($_GET['export_confirm'])) {
     } catch (Throwable $e) { app_log_ignored('application_review.php:644', $e);}
     $perApp = [];
     foreach ($awardees as $r) {
-        $blob = AwardConfirmationModel::decrypt($confByApp[(int) $r['id']]['answers_enc'] ?? '');
+        $blob = AwardConfirmationModel::decrypt($confRows[(int) $r['id']]['answers_enc'] ?? '');
         $map = [];
         foreach ($blob['answers'] as $a) {
             $map[(string) ($a['label'] ?? '')] = (string) ($a['value'] ?? '');
@@ -750,7 +773,7 @@ if (!$id && isset($_GET['export_confirm'])) {
     fwrite($out, "\xEF\xBB\xBF");   // so Excel reads the UTF-8 names correctly
     fputcsv($out, array_merge(['Name', 'Email', 'Tracking ID', 'Response', 'Responded (IST)', 'Reminders sent', 'Reason for declining'], array_map($safe, $labels)));
     foreach ($awardees as $r) {
-        $c = $confByApp[(int) $r['id']] ?? null;
+        $c = $confRows[(int) $r['id']] ?? null;
         $state = $confState($r);
         $row = [$safe($r['applicant_name']), $safe($r['email']), $safe($r['tracking_id']),
                 ['confirmed' => 'Confirmed', 'declined' => 'Declined', 'awaiting' => 'Awaiting', 'overdue' => 'Overdue', 'none' => 'Not asked yet'][$state],
@@ -779,7 +802,10 @@ $bulkVerb = ['approve' => 'accepted', 'reject' => 'rejected', 'review' => 'marke
 $confLabel = ['confirmed' => 'Confirmed', 'declined' => 'Declined', 'awaiting' => 'Awaiting confirmation', 'overdue' => 'Overdue'];
 $confTone  = ['confirmed' => 'st-ok', 'declined' => 'st-off', 'awaiting' => 'st-wait', 'overdue' => 'st-bad'];
 
-$fForm = (string) ($_GET['form'] ?? ''); $fStatus = (string) ($_GET['status'] ?? '');
+$statusChoices = ['New', 'Submitted', 'Under Review', 'Draft', 'Accepted', 'Rejected', 'Dispatched', 'Discarded'];
+$fForm = (string) ($_GET['form'] ?? '');
+$fStatus = (string) ($_GET['status'] ?? '');
+if (!in_array($fStatus, $statusChoices, true)) $fStatus = '';
 $h = fn($v) => htmlspecialchars((string) $v);
 $label = fn($s) => $s === 'Draft' ? 'Awaiting applicant' : $s;
 $tone = fn($s) => ['New' => 'st-new', 'Submitted' => 'st-new', 'Under Review' => 'st-review',
@@ -838,6 +864,12 @@ engage_header([
     .tbl td.pick input:disabled { cursor: not-allowed; }
     .dash { color: var(--muted); }
     .unsent { font-size: 12.5px; font-weight: 700; color: var(--accent); }
+
+    /* Paging and "view all" */
+    .rv-pager { display: flex; align-items: center; justify-content: center; gap: 14px; margin: 16px 0 0; font-size: 14px; color: var(--muted); }
+    .rv-pager a.off { opacity: .45; pointer-events: none; }
+    .rv-more { margin: 12px 0 0; font-size: 13.5px; color: var(--muted); }
+    .rv-more a { font-weight: 700; color: var(--primary-dark); }
 
     /* One collapsible block per program */
     details.prog-group { padding: 0; overflow: hidden; border-left: 6px solid var(--primary); }
@@ -1083,7 +1115,7 @@ engage_header([
         // Award confirmation: what the awardee answered, a button to email their link again, and a way to record
         // a decline that arrived by email or phone.
         $cState = $confState($app);
-        $cRow = $confByApp[(int) $app['id']] ?? null;
+        $cRow = $confFor((int) $app['id']);
         if ($app['status'] === 'Accepted' && ($cState !== 'none' || $confOn($app['form_id']))):
             $cBlob = AwardConfirmationModel::decrypt($cRow['answers_enc'] ?? ''); ?>
         <section class="sect">
@@ -1137,52 +1169,84 @@ engage_header([
     <?php endif; ?>
 
 <?php else:
-    // The queue lists open, non-test programs only. A program the person asked for by name (?form=...,
-    // e.g. from the form manager) is shown even if it is closed or a test form.
-    $listedForms = array_values(array_filter($allForms, fn($f) => $f['form_type'] === $fForm || !review_hidden_form($f)));
-    $listed = [];
-    foreach ($listedForms as $f) $listed[(int) $f['id']] = true;
+    // ---- The queue -------------------------------------------------------------------------------------------
+    // One query gives every program's count per status. Rows are then read per program, a few at a time.
+    $counts = $model->statusCountsByForm();                       // form id => [status => n]
+    $cnt = fn(int $fid, string $s): int => (int) ($counts[$fid][$s] ?? 0);
+    $openN = fn(int $fid): int => $cnt($fid, 'New') + $cnt($fid, 'Submitted') + $cnt($fid, 'Under Review');
+    // What the current filter shows for a program: one status, or everything except Rejected and Discarded.
+    $visibleN = function (int $fid) use ($counts, $fStatus): int {
+        $c = $counts[$fid] ?? [];
+        if ($fStatus !== '') return (int) ($c[$fStatus] ?? 0);
+        return (int) array_sum($c) - (int) ($c['Discarded'] ?? 0) - (int) ($c['Rejected'] ?? 0);
+    };
 
-    // Discarded applications are hidden unless the Discarded status filter is chosen.
-    $rows = array_values(array_filter($model->getAllApplications(), function ($r) use ($listed, $fForm, $fStatus) {
-        return isset($listed[(int) $r['form_id']])
-            && ($fForm === '' || $r['form_type'] === $fForm)
-            && ($fStatus === '' ? $r['status'] !== 'Discarded' : $r['status'] === $fStatus);
-    }));
+    // A closed or test program is listed once it has an open application; the program named in ?form= is always listed.
+    $listedForms = []; $hiddenForms = [];
+    foreach ($allForms as $f) {
+        $fid = (int) $f['id'];
+        if (!review_hidden_form($f) || $openN($fid) > 0 || $f['form_type'] === $fForm) $listedForms[] = $f; else $hiddenForms[] = $f;
+    }
 
-    // One group per program (form): programs with applications waiting come first, then the busiest.
+    $single = $fForm !== '';
+    $page = max(1, (int) ($_GET['page'] ?? 1));
     $groups = [];
     foreach ($listedForms as $f) {
-        $groups[(int) $f['id']] = ['form' => $f, 'rows' => [], 'waiting' => 0, 'counts' => []];
+        if ($single && $f['form_type'] !== $fForm) continue;
+        $fid = (int) $f['id'];
+        $n = $visibleN($fid);
+        if ($n === 0) continue;
+        $groups[$fid] = ['form' => $f, 'n' => $n, 'counts' => $counts[$fid] ?? [], 'rows' => [],
+                         'waiting' => $cnt($fid, 'New') + $cnt($fid, 'Submitted')];
     }
-    foreach ($rows as $r) {
-        $fid = (int) $r['form_id'];
-        if (!isset($groups[$fid])) continue;
-        $groups[$fid]['rows'][] = $r;
-        $groups[$fid]['counts'][$r['status']] = ($groups[$fid]['counts'][$r['status']] ?? 0) + 1;
-        if (in_array($r['status'], ['New', 'Submitted'], true)) $groups[$fid]['waiting']++;
-        $cs = $confState($r);
-        if ($cs !== 'none') $groups[$fid]['conf'][$cs] = ($groups[$fid]['conf'][$cs] ?? 0) + 1;
+    // Programs with applications waiting come first, then the busiest.
+    uasort($groups, fn($a, $b) => ($b['waiting'] <=> $a['waiting']) ?: ($b['n'] <=> $a['n']));
+
+    $pages = 1;
+    $allIds = [];
+    foreach ($groups as $fid => &$g) {
+        if ($single) {
+            $pages = max(1, (int) ceil($g['n'] / REVIEW_PER_PAGE));
+            $page = min($page, $pages);
+            $g['rows'] = $model->reviewRows($fid, $fStatus, REVIEW_PER_PAGE, ($page - 1) * REVIEW_PER_PAGE);
+        } else {
+            $g['rows'] = $model->reviewRows($fid, $fStatus, GROUP_PREVIEW, 0);
+        }
+        foreach ($g['rows'] as $r) $allIds[] = (int) $r['id'];
     }
-    $groups = array_filter($groups, fn($g) => $g['rows']);
-    uasort($groups, fn($a, $b) => ($b['waiting'] <=> $a['waiting']) ?: (count($b['rows']) <=> count($a['rows'])));
+    unset($g);
+
+    // Confirmation rows for the applications on screen only, and the per-program counts for the headers.
+    $resp = $confModel->responsesFor($allIds);
+    foreach ($allIds as $aid) $confCache[$aid] = $resp[$aid] ?? null;
+    $confCounts = $confModel->countsByForm($confSettings);
+
     $filtering = $fForm !== '' || $fStatus !== '';
-    $totalWaiting = array_sum(array_column($groups, 'waiting')); ?>
+    $totalRows = array_sum(array_column($groups, 'n'));
+    $totalWaiting = array_sum(array_column($groups, 'waiting'));
+    $pageUrl = function (int $p) use ($fForm, $fStatus): string {
+        $q = array_filter(['form' => $fForm, 'status' => $fStatus, 'page' => $p > 1 ? (string) $p : ''], 'strlen');
+        return '/admin/application-review' . ($q ? '?' . http_build_query($q) : '');
+    };
+    $optionFor = fn($f) => '<option value="' . $h($f['form_type']) . '"' . ($f['form_type'] === $fForm ? ' selected' : '') . '>' . $h($f['title'] ?: $f['form_type']) . '</option>'; ?>
     <section class="sect">
         <form method="GET" class="filters">
             <select name="form"><option value="">All programs</option>
-                <?php foreach ($listedForms as $f): ?>
-                    <option value="<?= $h($f['form_type']) ?>" <?= $f['form_type'] === $fForm ? 'selected' : '' ?>><?= $h($f['title'] ?: $f['form_type']) ?></option>
-                <?php endforeach; ?></select>
+                <?php foreach ($listedForms as $f) echo $optionFor($f); ?>
+                <?php if ($hiddenForms): ?>
+                    <optgroup label="Closed or test programs">
+                        <?php foreach ($hiddenForms as $f) echo $optionFor($f); ?>
+                    </optgroup>
+                <?php endif; ?></select>
             <select name="status"><option value="">All statuses</option>
-                <?php foreach (['New','Submitted','Under Review','Draft','Accepted','Rejected','Dispatched','Discarded'] as $s): ?>
+                <?php foreach ($statusChoices as $s): ?>
                     <option value="<?= $h($s) ?>" <?= $s === $fStatus ? 'selected' : '' ?>><?= $h($label($s)) ?></option>
                 <?php endforeach; ?></select>
             <button class="btn-ghost sm">Filter</button>
             <?php if ($filtering): ?><a href="/admin/application-review" class="btn-ghost sm" style="text-decoration:none">Clear</a><?php endif; ?>
             <span class="toolbar-right">
-                <span class="total"><?= count($rows) ?> application<?= count($rows) === 1 ? '' : 's' ?>
-                    in <?= count($groups) ?> program<?= count($groups) === 1 ? '' : 's' ?><?= $totalWaiting ? ' &middot; ' . $totalWaiting . ' waiting' : '' ?></span>
+                <span class="total"><?= (int) $totalRows ?> application<?= $totalRows === 1 ? '' : 's' ?>
+                    in <?= count($groups) ?> program<?= count($groups) === 1 ? '' : 's' ?><?= $totalWaiting ? ' &middot; ' . (int) $totalWaiting . ' waiting' : '' ?><?= $fStatus === '' ? ' &middot; Rejected and discarded are hidden' : '' ?></span>
                 <?php if (count($groups) > 1): ?>
                     <button type="button" class="btn-ghost sm" id="expandAll">Expand all</button>
                     <button type="button" class="btn-ghost sm" id="collapseAll">Collapse all</button>
@@ -1218,9 +1282,10 @@ engage_header([
     </section>
 
     <?php foreach ($groups as $g):
-        $f = $g['form']; $c = $g['counts']; $n = count($g['rows']);
+        $f = $g['form']; $c = $g['counts']; $n = (int) $g['n'];
         $isOpen = $filtering || $g['waiting'] > 0 || $keepLetters !== null || $keepConfirm !== null;
-        $cc = $g['conf'] ?? [];
+        $cc = $confCounts[(int) $f['id']] ?? [];
+        $hiddenWhy = review_hidden_form($f) ? (empty($f['is_active']) ? 'closed' : 'test') : '';
         $CS = $confSettings[(int) $f['id']] ?? null;
         $keepC = ($keepConfirm !== null && (int) ($keepConfirm['form_id'] ?? 0) === (int) $f['id']) ? $keepConfirm : null;
         // Confirmation panel values: what was just posted (if a save was refused), else what is stored, else a default.
@@ -1241,12 +1306,14 @@ engage_header([
             return $v !== '' ? $v : $default;
         };
         $lChecked = $keepL !== null ? !empty($keepL['enabled']) : !empty($L['enabled']);
-        $lActive = ScholarshipLetterModel::isActive($L); ?>
+        $lActive = ScholarshipLetterModel::isActive($L);
+        $shown = count($g['rows']); ?>
     <details class="sect prog-group"<?= $isOpen ? ' open' : '' ?>>
         <summary>
             <span class="pg-title"><?= $h($f['title'] ?: $f['form_type']) ?></span>
             <span class="pg-slug">/<?= $h($f['form_type']) ?></span>
             <span class="pg-stats">
+                <?php if ($hiddenWhy !== ''): ?><span class="pill st-off"><?= $h($hiddenWhy) ?></span><?php endif; ?>
                 <?php if ($lActive): ?><span class="pill st-ok">letters on</span><?php endif; ?>
                 <?php if (!empty($cc['overdue'])): ?><span class="pill badge-attn"><?= (int) $cc['overdue'] ?> overdue</span><?php endif; ?>
                 <?php if (!empty($cc['declined'])): ?><span class="pill st-off"><?= (int) $cc['declined'] ?> declined</span><?php endif; ?>
@@ -1255,7 +1322,7 @@ engage_header([
                 <?php if (!empty($c['Under Review'])): ?><span class="pill st-review"><?= (int) $c['Under Review'] ?> under review</span><?php endif; ?>
                 <?php if (!empty($c['Draft'])): ?><span class="pill st-wait"><?= (int) $c['Draft'] ?> awaiting applicant</span><?php endif; ?>
                 <?php if (!empty($c['Discarded'])): ?><span class="pill st-off"><?= (int) $c['Discarded'] ?> discarded</span><?php endif; ?>
-                <span><?= (int) ($c['Accepted'] ?? 0) ?> accepted &middot; <?= (int) ($c['Rejected'] ?? 0) ?> rejected &middot; <?= $n ?> total</span>
+                <span><?= (int) ($c['Accepted'] ?? 0) ?> accepted &middot; <?= (int) ($c['Rejected'] ?? 0) ?> rejected &middot; <?= (int) array_sum($c) ?> total</span>
             </span>
         </summary>
         <div class="pg-body">
@@ -1338,6 +1405,17 @@ engage_header([
         <?php endforeach; ?>
         </tbody></table>
         </div>
+
+        <?php if (!$single && $n > $shown): ?>
+            <p class="rv-more">Showing the first <?= (int) $shown ?> of <?= $n ?>. Open applications come first.
+                <a href="<?= $h('/admin/application-review?' . http_build_query(array_filter(['form' => $f['form_type'], 'status' => $fStatus], 'strlen'))) ?>">View all <?= $n ?> &rarr;</a></p>
+        <?php elseif ($single && $pages > 1): ?>
+            <nav class="rv-pager" aria-label="Pages">
+                <a class="btn-ghost sm<?= $page <= 1 ? ' off' : '' ?>" style="text-decoration:none" href="<?= $h($pageUrl($page - 1)) ?>"<?= $page <= 1 ? ' aria-disabled="true" tabindex="-1"' : '' ?>>Previous</a>
+                <span>Page <?= $page ?> of <?= $pages ?> &middot; <?= $n ?> applications</span>
+                <a class="btn-ghost sm<?= $page >= $pages ? ' off' : '' ?>" style="text-decoration:none" href="<?= $h($pageUrl($page + 1)) ?>"<?= $page >= $pages ? ' aria-disabled="true" tabindex="-1"' : '' ?>>Next</a>
+            </nav>
+        <?php endif; ?>
 
         <details class="letters"<?= $keepC !== null ? ' open' : '' ?>>
             <summary>Award confirmation <?= AwardConfirmationModel::isOn($CS) ? '<span class="pill st-ok">on</span>' : '<span class="pill st-off">off</span>' ?></summary>
