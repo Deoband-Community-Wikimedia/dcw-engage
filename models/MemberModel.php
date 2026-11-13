@@ -3,6 +3,13 @@
  * DCW Engage - Membership review + members.
  * Reads the existing applications/forms tables; only form_type 'membership-%'
  * rows are ever visible or changeable through this class.
+ *
+ * Review queue and Members tab are paged and filtered in SQL:
+ *   applicationsPage()  queue rows (scope, slug, status, search), 50 per page
+ *   membersPage()       one entry per Member ID, built from the members table, 50 per page
+ *   statusCounts() / peopleCount() / countAwaiting()   sidebar and dashboard numbers
+ * listApplications(), heldPairs(), membershipsByEmail() and memberInfoMap() load everything and are kept only for
+ * older callers; delete them once nothing uses them.
  */
 require_once __DIR__ . '/MemberStrikeModel.php';
 require_once __DIR__ . '/../includes/audit.php';
@@ -11,6 +18,12 @@ class MemberModel {
     const TERM = '+1 year';                       // membership length, confirm with organizers
     const OPEN = ['New', 'Submitted', 'Under Review'];
     const CHAPTERS = ['generic', 'amu', 'jamia', 'photographers'];
+
+    /** Rows per page in the review queue and the Members tab. */
+    const PER_PAGE = 50;
+
+    /** A search looks at most this many candidate applications (newest first) before checking answers in PHP. */
+    const SEARCH_CANDIDATES = 1500;
 
     /**
      * members.status values that must NOT get their Member ID emailed by the "Forgot your Member ID?"
@@ -263,13 +276,344 @@ class MemberModel {
             ->fetchAll(PDO::FETCH_COLUMN);
     }
 
+    // ---- SQL building blocks for the paged lists -----------------------------------------------
+
+    private ?array $membershipFormRows = null;
+
+    /** Membership forms (id, form_type), once per request. The forms table is small. */
+    private function membershipForms(): array {
+        if ($this->membershipFormRows === null) {
+            $this->membershipFormRows = $this->db->query("SELECT id, form_type FROM forms WHERE form_type LIKE 'membership-%'")->fetchAll();
+        }
+        return $this->membershipFormRows;
+    }
+
+    /** Adds a bound value to $p under a fresh name and returns its placeholder. Names are never reused. */
+    private function bind(array &$p, $value): string {
+        $k = 'q' . count($p);
+        $p[$k] = $value;
+        return ':' . $k;
+    }
+
+    /** Lower-cased text with "_" as a space, the way Wikimedia treats usernames. */
+    private function norm($s): string {
+        return str_replace('_', ' ', mb_strtolower(trim((string) $s)));
+    }
+
     /**
-     * Applications for the review queue and the members list.
+     * SQL for "the application belongs to one of these chapters" (aliases a = applications). Same rule as
+     * inScope()/chapterOf(): the chapter comes from the form slug, or, on the shared renewal form, from the
+     * chapter answer in form_data.
+     */
+    private function scopeWhere(?array $scope, array &$p): string {
+        if ($scope === null) return '1=1';
+        if (!$scope) return '0=1';
+
+        $own = []; $shared = [];
+        foreach ($this->membershipForms() as $f) {
+            $slug = (string) $f['form_type'];
+            $c = self::chapterOfSlug($slug);
+            if ($c !== null) {
+                if (in_array($c, $scope, true)) $own[] = (int) $f['id'];
+            } elseif (str_starts_with($slug, 'membership-renewal')) {
+                $shared[] = (int) $f['id'];
+            }
+        }
+
+        $parts = [];
+        if ($own) $parts[] = 'a.form_id IN (' . implode(',', $own) . ')';
+
+        $labels = [];
+        foreach (self::LABELS as $label => $c) {
+            if (in_array($c, $scope, true)) $labels[] = $label;
+        }
+        if ($shared && $labels) {
+            // First non-empty chapter answer, newest key first (same order as RENEWAL_CHAPTER_FIELDS).
+            $expr = null;
+            foreach (array_reverse(self::RENEWAL_CHAPTER_FIELDS) as $key) {
+                $one = "JSON_UNQUOTE(JSON_EXTRACT(a.form_data,'" . '$.' . $key . "'))";
+                $expr = $expr === null ? $one : "COALESCE(NULLIF(TRIM($one),''), $expr)";
+            }
+            $ph = [];
+            foreach ($labels as $l) $ph[] = $this->bind($p, $l);
+            $parts[] = '(a.form_id IN (' . implode(',', $shared) . ') AND TRIM(' . $expr . ') IN (' . implode(',', $ph) . '))';
+        }
+        return $parts ? '(' . implode(' OR ', $parts) . ')' : '0=1';
+    }
+
+    /**
+     * WHERE for the review queue (aliases a = applications, f = forms): membership forms only, no plain drafts
+     * (a draft shows only once staff sent it back), then chapter scope, form slug and status.
+     * $status: 'todo' = New or Submitted, '' = any, else exactly that status.
+     */
+    private function appsWhere(string $slug, string $status, ?array $scope, array &$p, bool $excludeAccepted): string {
+        $w = [
+            "f.form_type LIKE 'membership-%'",
+            "(a.status <> 'Draft' OR EXISTS (SELECT 1 FROM membership_decisions d WHERE d.application_id = a.id AND d.decision = 'info_requested'))",
+            $this->scopeWhere($scope, $p),
+        ];
+        if ($slug !== '') $w[] = 'f.form_type = ' . $this->bind($p, $slug);
+        if ($status === 'todo') {
+            $w[] = "a.status IN ('New','Submitted')";
+        } elseif ($status !== '') {
+            $w[] = 'a.status = ' . $this->bind($p, $status);
+        }
+        if ($excludeAccepted) $w[] = "a.status <> 'Accepted'";
+        return implode(' AND ', $w);
+    }
+
+    /** WHERE for the Members tab (alias m = members): chapter scope and club filter. */
+    private function membersWhere(string $slug, ?array $scope, array &$p): string {
+        $w = ['1=1'];
+        if ($scope !== null) {
+            if (!$scope) {
+                $w[] = '0=1';
+            } else {
+                $ph = [];
+                foreach ($scope as $c) $ph[] = $this->bind($p, $c);
+                $w[] = 'm.chapter IN (' . implode(',', $ph) . ')';
+            }
+        }
+        if ($slug !== '') {
+            $c = self::chapterOfSlug($slug);
+            if ($c !== null) {
+                $w[] = 'm.chapter = ' . $this->bind($p, $c);
+            } else {   // the shared renewal form names no chapter: use the applications it produced
+                $w[] = 'm.application_id IN (SELECT a2.id FROM applications a2 JOIN forms f2 ON f2.id = a2.form_id WHERE f2.form_type = ' . $this->bind($p, $slug) . ')';
+            }
+        }
+        return implode(' AND ', $w);
+    }
+
+    // ---- Paged lists ---------------------------------------------------------------------------
+
+    /**
+     * One page of the review queue.
+     *   $status         'todo', '' or a status (see appsWhere)
+     *   $excludeAccepted true for the queue (accepted people live in the Members tab)
+     *   $q              search: name, email, tracking ID, Member ID, Wikimedia username (profile), and the VALUES of
+     *                   the application's answers (field names never match)
+     * Returns ['rows' => [...], 'total' => n, 'page' => n, 'pages' => n]. Rows carry form_data and form_type
+     * (needed for the chapter of a shared renewal form) but only for the 50 shown.
      *
-     * The SQL only does the simple, safe filtering (form, status). Chapter scope and the search
-     * are done in PHP afterwards: chapter comes from the slug or from a renewal answer, and the
-     * search spans several tables, so keeping it out of SQL means a collation or column problem
-     * in another table can never break this page.
+     * Without a search everything is done in SQL. With a search, SQL narrows to candidates (name/email/ID/username
+     * matches exactly; the answers by a text match that can also hit field names), then PHP keeps only real value
+     * matches, so the counts stay right. At most SEARCH_CANDIDATES candidates are looked at, newest first.
+     */
+    public function applicationsPage(string $slug, string $status, ?array $scope, string $q, int $page, bool $excludeAccepted = true, int $per = self::PER_PAGE): array {
+        $per = max(1, $per);
+        $page = max(1, $page);
+        $q = trim($q);
+        $cols = 'a.id, a.applicant_name, a.email, a.status, a.tracking_id, a.created_at, a.form_data, f.form_type';
+        $order = 'ORDER BY a.created_at DESC, a.id DESC';
+
+        if ($q === '') {
+            $p = [];
+            $w = $this->appsWhere($slug, $status, $scope, $p, $excludeAccepted);
+            $st = $this->db->prepare("SELECT COUNT(*) FROM applications a JOIN forms f ON f.id = a.form_id WHERE $w");
+            $st->execute($p);
+            $total = (int) $st->fetchColumn();
+            $pages = max(1, (int) ceil($total / $per));
+            $page = min($page, $pages);
+            $off = ($page - 1) * $per;
+            $st = $this->db->prepare("SELECT $cols FROM applications a JOIN forms f ON f.id = a.form_id WHERE $w $order LIMIT $per OFFSET $off");
+            $st->execute($p);
+            return ['rows' => $st->fetchAll(), 'total' => $total, 'page' => $page, 'pages' => $pages];
+        }
+
+        $needle = $this->norm($q);
+        if ($needle === '') return ['rows' => [], 'total' => 0, 'page' => 1, 'pages' => 1];
+        $like = '%' . addcslashes($needle, '\\%_') . '%';
+
+        $p = [];
+        $w = $this->appsWhere($slug, $status, $scope, $p, $excludeAccepted);
+        // Exact SQL matches. Built twice (once for the flag, once for the WHERE) because names are never reused.
+        $hit = function () use (&$p, $like): string {
+            return '(' . implode(' OR ', [
+                "REPLACE(a.applicant_name,'_',' ') LIKE " . $this->bind($p, $like),
+                "REPLACE(a.email,'_',' ') LIKE " . $this->bind($p, $like),
+                "REPLACE(a.tracking_id,'_',' ') LIKE " . $this->bind($p, $like),
+                'EXISTS (SELECT 1 FROM members m WHERE m.email = a.email AND m.member_id LIKE ' . $this->bind($p, $like) . ')',
+                'EXISTS (SELECT 1 FROM members m2 JOIN member_profile pr ON pr.member_id = m2.member_id WHERE m2.email = a.email AND REPLACE(pr.wikimedia_username,\'_\',\' \') LIKE ' . $this->bind($p, $like) . ')',
+            ]) . ')';
+        };
+        $flag = $hit();
+        $cond = $hit();
+        $answers = "REPLACE(LOWER(CAST(a.form_data AS CHAR)),'_',' ') LIKE " . $this->bind($p, $like);
+        $limit = self::SEARCH_CANDIDATES;
+
+        $st = $this->db->prepare("SELECT $cols, $flag AS hit_exact FROM applications a JOIN forms f ON f.id = a.form_id
+                                  WHERE $w AND ($cond OR $answers) $order LIMIT $limit");
+        $st->execute($p);
+
+        $kept = [];
+        foreach ($st->fetchAll() as $r) {
+            if (!empty($r['hit_exact']) || $this->answersMatch($r['form_data'] ?? null, $needle)) {
+                unset($r['hit_exact']);
+                $kept[] = $r;
+            }
+        }
+        $total = count($kept);
+        $pages = max(1, (int) ceil($total / $per));
+        $page = min($page, $pages);
+        return ['rows' => array_slice($kept, ($page - 1) * $per, $per), 'total' => $total, 'page' => $page, 'pages' => $pages];
+    }
+
+    /** True when the text is found in one of the answers' VALUES (never the field names). */
+    private function answersMatch(?string $json, string $needle): bool {
+        $a = json_decode((string) $json, true);
+        if (!is_array($a)) return false;
+        foreach ($a as $v) {
+            if (is_array($v)) $v = implode(' ', array_filter($v, 'is_scalar'));
+            if (is_scalar($v) && (string) $v !== '' && mb_strpos($this->norm((string) $v), $needle) !== false) return true;
+        }
+        return false;
+    }
+
+    /**
+     * One page of the Members tab: one entry per Member ID (one ID is one person, however many clubs).
+     * Built from the members table, so chapter scope and club filter are plain SQL. Newest member first.
+     * Search: name, email, Member ID or Wikimedia username (profile). Answers are not searched here.
+     * Each group: ['mid', 'name', 'email', 'open_id' (application id to open, or null), 'expires' (latest expiry),
+     *   'memberships' => [['id' => application id|null, 'key' => chapter, 'label', 'expires'], ...]].
+     * Returns ['groups' => [...], 'total' => n, 'page' => n, 'pages' => n].
+     */
+    public function membersPage(string $slug, ?array $scope, string $q, int $page, int $per = self::PER_PAGE): array {
+        $per = max(1, $per);
+        $page = max(1, $page);
+        $p = [];
+        $w = $this->membersWhere($slug, $scope, $p);
+
+        $q = trim($q);
+        if ($q !== '') {
+            $like = '%' . addcslashes($this->norm($q), '\\%_') . '%';
+            $w .= ' AND (' . implode(' OR ', [
+                "REPLACE(m.full_name,'_',' ') LIKE " . $this->bind($p, $like),
+                "REPLACE(m.email,'_',' ') LIKE " . $this->bind($p, $like),
+                'm.member_id LIKE ' . $this->bind($p, $like),
+                "EXISTS (SELECT 1 FROM member_profile pr WHERE pr.member_id = m.member_id AND REPLACE(pr.wikimedia_username,'_',' ') LIKE " . $this->bind($p, $like) . ')',
+            ]) . ')';
+        }
+
+        $st = $this->db->prepare("SELECT COUNT(DISTINCT m.member_id) FROM members m WHERE $w");
+        $st->execute($p);
+        $total = (int) $st->fetchColumn();
+        $pages = max(1, (int) ceil($total / $per));
+        $page = min($page, $pages);
+        $off = ($page - 1) * $per;
+
+        $st = $this->db->prepare("SELECT m.member_id FROM members m WHERE $w
+                                  GROUP BY m.member_id ORDER BY MAX(m.joined_at) DESC, m.member_id ASC LIMIT $per OFFSET $off");
+        $st->execute($p);
+        $ids = $st->fetchAll(PDO::FETCH_COLUMN);
+        if (!$ids) return ['groups' => [], 'total' => $total, 'page' => $page, 'pages' => $pages];
+
+        // All of these people's memberships inside the viewer's scope (not only the ones that matched the search).
+        $p2 = [];
+        $ph = [];
+        foreach ($ids as $id) $ph[] = $this->bind($p2, $id);
+        $w2 = 'm.member_id IN (' . implode(',', $ph) . ') AND ' . $this->membersWhere('', $scope, $p2);
+        $st = $this->db->prepare("SELECT m.id, m.member_id, m.email, m.full_name, m.chapter, m.expires_at, m.application_id
+                                  FROM members m WHERE $w2 ORDER BY (m.chapter = 'generic') DESC, m.id ASC");
+        $st->execute($p2);
+
+        $by = [];
+        foreach ($st->fetchAll() as $r) {
+            $mid = (string) $r['member_id'];
+            if (!isset($by[$mid])) {
+                $by[$mid] = ['mid' => $mid, 'name' => '', 'email' => '', 'open_id' => null, 'expires' => null, 'memberships' => [], '_max' => 0];
+            }
+            $g =& $by[$mid];
+            $g['memberships'][] = [
+                'id' => $r['application_id'] !== null ? (int) $r['application_id'] : null,
+                'key' => (string) $r['chapter'],
+                'label' => self::CHAPTER_NAMES[$r['chapter']] ?? (string) $r['chapter'],
+                'expires' => (string) $r['expires_at'],
+            ];
+            if ($g['expires'] === null || (string) $r['expires_at'] > $g['expires']) $g['expires'] = (string) $r['expires_at'];
+            if ((int) $r['id'] > $g['_max']) {   // the newest membership row names the person and the application to open
+                $g['_max'] = (int) $r['id'];
+                $g['name'] = (string) $r['full_name'];
+                $g['email'] = (string) $r['email'];
+                if ($r['application_id'] !== null) $g['open_id'] = (int) $r['application_id'];
+            } elseif ($g['open_id'] === null && $r['application_id'] !== null) {
+                $g['open_id'] = (int) $r['application_id'];
+            }
+            unset($g);
+        }
+        $groups = [];
+        foreach ($ids as $id) {
+            if (!isset($by[(string) $id])) continue;
+            $g = $by[(string) $id];
+            unset($g['_max']);
+            $groups[] = $g;
+        }
+        return ['groups' => $groups, 'total' => $total, 'page' => $page, 'pages' => $pages];
+    }
+
+    /** Applications per status for the sidebar, within the chosen form and chapter scope. */
+    public function statusCounts(string $slug, ?array $scope): array {
+        $p = [];
+        $w = $this->appsWhere($slug, '', $scope, $p, false);
+        $st = $this->db->prepare("SELECT a.status, COUNT(*) AS n FROM applications a JOIN forms f ON f.id = a.form_id WHERE $w GROUP BY a.status");
+        $st->execute($p);
+        $out = ['New' => 0, 'Submitted' => 0, 'Under Review' => 0, 'Draft' => 0, 'Accepted' => 0, 'Rejected' => 0];
+        foreach ($st->fetchAll() as $r) {
+            if (isset($out[$r['status']])) $out[$r['status']] = (int) $r['n'];
+        }
+        return $out;
+    }
+
+    /** People (distinct Member IDs) for the Members tab badge. */
+    public function peopleCount(string $slug, ?array $scope): int {
+        $p = [];
+        $w = $this->membersWhere($slug, $scope, $p);
+        $st = $this->db->prepare("SELECT COUNT(DISTINCT m.member_id) FROM members m WHERE $w");
+        $st->execute($p);
+        return (int) $st->fetchColumn();
+    }
+
+    /** Applications waiting for a first decision (New or Submitted) in the viewer's scope. For the dashboard badge. */
+    public function countAwaiting(?array $scope): int {
+        $p = [];
+        $w = $this->appsWhere('', 'todo', $scope, $p, false);
+        $st = $this->db->prepare("SELECT COUNT(*) FROM applications a JOIN forms f ON f.id = a.form_id WHERE $w");
+        $st->execute($p);
+        return (int) $st->fetchColumn();
+    }
+
+    /** "email|chapter" => true for the memberships of these emails only (for the rows on one page). */
+    public function heldPairsFor(array $emails): array {
+        $emails = array_values(array_unique(array_filter(array_map(fn($e) => strtolower(trim((string) $e)), $emails))));
+        if (!$emails) return [];
+        $st = $this->db->prepare('SELECT email, chapter FROM members WHERE email IN (' . implode(',', array_fill(0, count($emails), '?')) . ')');
+        $st->execute($emails);
+        $out = [];
+        foreach ($st->fetchAll() as $r) $out[strtolower((string) $r['email']) . '|' . $r['chapter']] = true;
+        return $out;
+    }
+
+    /** lower-cased email => memberships (member_id, chapter, status, expires_at), for the emails on one page. */
+    public function membershipsForEmails(array $emails): array {
+        $emails = array_values(array_unique(array_filter(array_map(fn($e) => strtolower(trim((string) $e)), $emails))));
+        if (!$emails) return [];
+        $st = $this->db->prepare("SELECT email, member_id, chapter, status, expires_at FROM members
+            WHERE email IN (" . implode(',', array_fill(0, count($emails), '?')) . ")
+            ORDER BY (chapter = 'generic') DESC, id ASC");
+        $st->execute($emails);
+        $out = [];
+        foreach ($st->fetchAll() as $r) {
+            $out[strtolower((string) $r['email'])][] = [
+                'member_id' => (string) $r['member_id'], 'chapter' => $r['chapter'],
+                'status' => $r['status'], 'expires_at' => $r['expires_at'],
+            ];
+        }
+        return $out;
+    }
+
+    /**
+     * Applications for the review queue and the members list. LOADS EVERYTHING that matches, then filters in PHP,
+     * and stops at 500. Kept for older callers; the review pages use applicationsPage() / membersPage().
      */
     public function listApplications(string $slug, string $status, ?array $scope, string $q = ''): array {
         $sql = "SELECT a.id, a.applicant_name, a.email, a.status, a.tracking_id, a.created_at, a.form_data, f.form_type,
@@ -656,7 +1000,10 @@ class MemberModel {
         return $row;
     }
 
-    /** lower-cased email => memberships (member_id, chapter, status, expires_at), so a queue needs one query, not one per row. */
+    /**
+     * lower-cased email => memberships (member_id, chapter, status, expires_at) for EVERY member.
+     * Kept for older callers; the review pages use membershipsForEmails() for the rows on one page.
+     */
     public function membershipsByEmail(): array {
         $out = [];
         $q = $this->db->query("SELECT email, member_id, chapter, status, expires_at FROM members
@@ -693,7 +1040,7 @@ class MemberModel {
         }
     }
 
-    /** "email|chapter" => true for every membership, so a queue can be labelled without a query per row. */
+    /** "email|chapter" => true for EVERY membership. Kept for older callers; see heldPairsFor(). */
     public function heldPairs(): array {
         $out = [];
         foreach ($this->db->query('SELECT email, chapter FROM members') as $r) {
@@ -702,7 +1049,7 @@ class MemberModel {
         return $out;
     }
 
-    /** "email|chapter" => ['member_id' => ..., 'expires_at' => ...], for the accepted list. */
+    /** "email|chapter" => ['member_id' => ..., 'expires_at' => ...] for EVERY membership. Kept for older callers. */
     public function memberInfoMap(): array {
         $out = [];
         foreach ($this->db->query('SELECT email, chapter, member_id, expires_at FROM members') as $r) {
