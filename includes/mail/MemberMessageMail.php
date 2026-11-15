@@ -23,7 +23,6 @@ class MemberMessageMail {
     const MUTED   = '#64748b';
     const BORDER  = '#e2e8f0';
     const PANEL   = '#f1f5f9';
-    const PAGE_BG = '#f4f6f8';
 
     /** Choices for the admin dropdown: key => label. "other" lets the reviewer type a name. */
     public static function documentTypes(): array {
@@ -86,7 +85,7 @@ class MemberMessageMail {
 
         $supportPanel =
             "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' style='margin:8px 0 0 0;'><tr>"
-          . "<td style='background:" . self::PANEL . "; border-radius:10px; padding:24px; text-align:center;'>"
+          . "<td style='background:" . self::PANEL . "; border-radius:10px; padding:24px 24px 0 24px; text-align:center;'>"
           . "<p style='margin:0 0 6px 0; font-size:17px; font-weight:bold; color:" . self::TEXT . ";'>Need more help?</p>"
           . "<p style='margin:0 0 18px 0; font-size:15px; line-height:1.55; color:" . self::TEXT . ";'>"
           . 'Sign in to your DCW account and write to DCW Support.</p>'
@@ -95,7 +94,6 @@ class MemberMessageMail {
 
         $finePrint =
             "<p style='margin:24px 0 0 0; font-size:13px; line-height:1.6; color:" . self::MUTED . "; text-align:center;'>"
-          . 'This message was sent to you by the DCW team through DCW Engage.<br>'
           . "Button not working? Paste this link into your browser:<br>"
           . "<a href='" . CoreMail::e($supportUrl) . "' style='color:" . self::BRAND . "; word-break:break-all;'>"
           . CoreMail::e($supportUrl) . '</a></p>';
@@ -109,7 +107,7 @@ class MemberMessageMail {
           . $supportPanel
           . $finePrint;
 
-        $html = self::shell($body, $preheader);
+        $html = self::preheaderHtml($preheader) . $body;   // CoreMail::template() adds header, card and footer
 
         // ---- Plain text -------------------------------------------------------------------------------------
         $rule = str_repeat('-', 40);
@@ -125,6 +123,7 @@ class MemberMessageMail {
         $opts = [
             'to'         => $email,
             'to_name'    => (string) $name,
+            'header_sub' => 'A message from the DCW team',
             'subject'    => $subject,
             'html'       => $html,
             'alt'        => $alt,
@@ -141,21 +140,10 @@ class MemberMessageMail {
         return CoreMail::send($opts);
     }
 
-    // ---- Layout shell: brand band, grey page, 600px card. If CoreMail already wraps content in its own
-    // ---- layout, make this method return only $body (plus the hidden preheader).
-    private static function shell(string $body, string $preheader): string {
-        return
-            "<div style='display:none; max-height:0; overflow:hidden; opacity:0; font-size:1px; line-height:1px;'>"
-          . CoreMail::e($preheader) . '</div>'
-          . "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' "
-          . "style='background:" . self::PAGE_BG . "; padding:24px 12px;'><tr><td align='center'>"
-          . "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' "
-          . "style='max-width:600px; background:#ffffff; border-radius:12px; overflow:hidden; "
-          . "font-family:-apple-system,BlinkMacSystemFont,\"Segoe UI\",Roboto,Helvetica,Arial,sans-serif;'>"
-          . "<tr><td style='background:" . self::BRAND . "; padding:18px 32px; color:#ffffff; font-size:16px; "
-          . "font-weight:bold; letter-spacing:0.3px;'>DCW Engage</td></tr>"
-          . "<tr><td style='padding:32px;'>" . $body . '</td></tr>'
-          . '</table></td></tr></table>';
+    /** Hidden first line of the message, shown as the inbox preview. */
+    private static function preheaderHtml(string $preheader): string {
+        return "<div style='display:none; max-height:0; overflow:hidden; opacity:0; font-size:1px; line-height:1px;'>"
+             . CoreMail::e($preheader) . '</div>';
     }
 
     // ---- Helpers --------------------------------------------------------------------------------------------
@@ -182,7 +170,7 @@ class MemberMessageMail {
     private static function fileName(string $memberName, string $label): string {
         $label  = preg_replace('/\.pdf$/iu', '', self::cleanPart($label));
         $label  = $label !== '' ? $label : 'Document';
-        $member = self::cleanPart($memberName);
+        $member = self::cleanPart(CoreMail::cleanName($memberName));   // drops a typed age, as the greeting does
 
         $max = 80 - 4;   // room for ".pdf"
         if ($member === '') {
