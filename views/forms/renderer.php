@@ -175,6 +175,8 @@ if (empty($previewSchema)) {
 // When we have one, the form's own name field is removed (not shown, not required), and the value is
 // written into the answers again on save, so reviewers, exports and emails still see it.
 // The admin preview (no session, no name yet) hides it as well, so organizers see what applicants will see.
+// schemaWithoutField() removes it from $schema['fields'], $schema['sections'] and $schemaSections, so
+// validation (which reads the stored sections) does not require a field nobody can see.
 $carriedName = $memberAutoVerified
     ? trim((string) ($loggedMember['full_name'] ?? ''))
     : trim($verifiedName);
@@ -407,8 +409,9 @@ if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $isDraft = $intent === 'draft';
 
         // By definition, drafts are permitted to be incomplete; therefore, required
-        // fields are not enforced for them. (The form's own name field is no longer in $schema when a
-        // verified name is being carried forward, so it is not required here either.)
+        // fields are not enforced for them. (The form's own name field has been removed from both
+        // $schema['fields'] and $schema['sections'] when a verified name is being carried forward,
+        // so it is not required here either.)
         $errors = $formModel->validateSubmission($schema, $_POST, $isDraft);
 
         if (empty($email)) {
@@ -585,6 +588,12 @@ $showCode = empty($success) && empty($previewSchema) && $verifiedEmail === '' &&
 $showGate = empty($success) && empty($previewSchema) && $verifiedEmail === '' && !$showCode;
 $isDraftPost = ($_POST['intent'] ?? '') === 'draft';
 
+// Errors for fields that are not on the page cannot be printed next to a field, so they are listed in
+// the notice box instead. Without this a failed submit can reload the page with no message at all.
+// 'system', 'email' and 'verify' are already printed in the notice box; 'show_resend' is a flag.
+$hiddenErrors = hiddenFieldErrors($errors, $schemaSections, ['system', 'email', 'verify', 'show_resend']);
+$primaryError = (string) ($errors['system'] ?? $errors['email'] ?? $errors['verify'] ?? '');
+
 // Seconds until another code may be requested, for the Resend countdown (0 = available now).
 $otpWait = $showCode
     ? max(0, EmailVerificationModel::RESEND_COOLDOWN_SECONDS - (time() - (int) ($otpPending['sent_at'] ?? 0)))
@@ -729,9 +738,13 @@ engage_header([
         </div>
     <?php else: ?>
 
-        <?php if (!empty($errors['system']) || !empty($errors['email']) || !empty($errors['verify'])): ?>
+        <?php if ($primaryError !== '' || $hiddenErrors): ?>
             <div class="alert error">
-                <strong>Notice:</strong> <?= htmlspecialchars($errors['system'] ?? $errors['email'] ?? $errors['verify']) ?>
+                <strong>Notice:</strong>
+                <?php if ($primaryError !== ''): ?><?= htmlspecialchars($primaryError) ?><?php endif; ?>
+                <?php foreach ($hiddenErrors as $hiddenMsg): ?>
+                    <div><?= htmlspecialchars($hiddenMsg) ?></div>
+                <?php endforeach; ?>
                 <?php if (!empty($errors['show_resend'])): ?>
                     <form method="POST" style="margin:14px 0 0;">
                         <?= CSRF::getInputField() ?>

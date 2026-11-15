@@ -40,6 +40,8 @@ $wasDraft = $status === 'Draft';
 // The name was given when the email was verified, so it is not asked again here: the form's own
 // name field is taken out, and the stored name is written back into the answers on save.
 // Older drafts that were saved with the placeholder "Applicant" keep showing the field.
+// schemaWithoutField() removes it from $schema['fields'], $schema['sections'] and $schemaSections,
+// so validation (which reads the stored sections) no longer requires a field nobody can see.
 $nameFieldKey = null;
 $storedName = trim((string) ($application['applicant_name'] ?? ''));
 if ($storedName !== '' && $storedName !== 'Applicant') {
@@ -162,6 +164,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked) {
     }
 }
 
+// Errors for fields that are not on the page cannot be printed next to a field, so they are listed in
+// the notice box instead. Without this a failed save can reload the page with no message at all.
+$hiddenErrors = hiddenFieldErrors($errors, $schemaSections, ['system']);
+
 $e = fn($s) => htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8');
 $label_html = fn($s) => MiniWikiText::inline(htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8'));
 
@@ -211,8 +217,14 @@ engage_header([
         <div class="alert ok"><strong>Success:</strong> <?= $e($success) ?></div>
     <?php endif; ?>
 
-    <?php if (!empty($errors['system'])): ?>
-        <div class="alert error"><strong>Notice:</strong> <?= $e($errors['system']) ?></div>
+    <?php if (!empty($errors['system']) || $hiddenErrors): ?>
+        <div class="alert error">
+            <strong>Notice:</strong>
+            <?php if (!empty($errors['system'])): ?><?= $e($errors['system']) ?><?php endif; ?>
+            <?php foreach ($hiddenErrors as $hiddenMsg): ?>
+                <div><?= $e($hiddenMsg) ?></div>
+            <?php endforeach; ?>
+        </div>
     <?php endif; ?>
 
     <form method="POST" enctype="multipart/form-data">
