@@ -142,14 +142,60 @@ function applicantNameField(array $schema): ?string
     return $field['name'];
 }
 
-/** Returns [$schema, $sections] with one field removed from the flat field list and every section. */
+/**
+ * Returns [$schema, $sections] with one field removed everywhere it can be read from:
+ *   - $schema['fields']            (the flat list)
+ *   - $schema['sections'][*]['fields']  (the stored sections)
+ *   - the $sections array passed in (the normalised copy the page renders from)
+ *
+ * The stored sections matter: FormModel::schemaFields() (used by validateSubmission()) reads
+ * $schema['sections'] in preference to $schema['fields']. If the field were only removed from the
+ * flat list, validation would still require it, the applicant could not see it, and every final
+ * submission would fail with an error nobody can see.
+ */
 function schemaWithoutField(array $schema, array $sections, string $fieldName): array
 {
     $keep = fn($f) => (string) ($f['name'] ?? '') !== $fieldName;
     $schema['fields'] = array_values(array_filter($schema['fields'] ?? [], $keep));
+
+    if (isset($schema['sections']) && is_array($schema['sections'])) {
+        foreach ($schema['sections'] as $i => $s) {
+            if (is_array($s) && is_array($s['fields'] ?? null)) {
+                $schema['sections'][$i]['fields'] = array_values(array_filter($s['fields'], $keep));
+            }
+        }
+    }
+
     foreach ($sections as &$s) {
         $s['fields'] = array_values(array_filter($s['fields'] ?? [], $keep));
     }
     unset($s);
     return [$schema, $sections];
+}
+
+/**
+ * Validation errors that belong to no field the page shows, as a list of messages.
+ *
+ * Field errors are printed next to their field, so an error for a field that is not on the page is
+ * invisible: the form reloads, nothing is saved and nothing says why. Pages show these in their
+ * notice box so that can never happen silently again.
+ *
+ * $reserved lists error keys the page already prints elsewhere (e.g. 'system', 'email').
+ */
+function hiddenFieldErrors(array $errors, array $sections, array $reserved = ['system']): array
+{
+    $shown = [];
+    foreach ($sections as $s) {
+        foreach (($s['fields'] ?? []) as $f) {
+            $shown[(string) ($f['name'] ?? '')] = true;
+        }
+    }
+    $out = [];
+    foreach ($errors as $key => $msg) {
+        if (in_array($key, $reserved, true) || isset($shown[(string) $key]) || !is_string($msg) || $msg === '') {
+            continue;
+        }
+        $out[] = $msg;
+    }
+    return $out;
 }
