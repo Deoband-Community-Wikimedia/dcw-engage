@@ -125,7 +125,6 @@ class Auth {
             ->prepare("SELECT password_changed_at, role FROM admin_users WHERE id = :id");
         $stmt->execute(['id' => $_SESSION['admin_id']]);
         $row = $stmt->fetch();
-
         // Account deleted underneath the session.
         if (!$row) {
             self::logout();
