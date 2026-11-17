@@ -5,6 +5,7 @@
  * Load after includes/init.php.
  */
 require_once __DIR__ . '/../models/TechIssueModel.php';
+require_once __DIR__ . '/engage_page.php';
 
 function tech_flash(string $type, string $message): void {
     $_SESSION['tech_flash'] = ['type' => $type, 'message' => $message];
@@ -31,16 +32,7 @@ function tech_status_tone(string $status): string {
 /** Gate for the technical team pages. Same intent as requireRole(['technical_manager', 'owner']). */
 function tech_require_staff(): void {
     if (Auth::hasAnyRole(TechIssueModel::STAFF_ROLES)) return;
-    http_response_code(403);
-    header('Content-Type: text/html; charset=utf-8');
-    echo '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="robots" content="noindex, nofollow">'
-       . '<meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Not allowed - DCW Engage</title></head>'
-       . '<body style="font-family: Inter, -apple-system, sans-serif; background:#f8fafc; color:#1e293b; display:flex; '
-       . 'align-items:center; justify-content:center; min-height:100vh; margin:0; padding:20px;"><div style="max-width:420px; text-align:center;">'
-       . '<h1 style="color:#106b9a; font-size:20px; margin:0 0 8px;">Not allowed</h1>'
-       . '<p style="color:#64748b; font-size:14px; line-height:1.6; margin:0 0 20px;">This page is for the technical team. Ask an owner if you need access.</p>'
-       . '<a href="/admin/dashboard" style="color:#106b9a; font-size:14px;">Back to workspace</a></div></body></html>';
-    exit;
+    engage_forbidden('This page is for the technical team. Ask an owner if you need access.');
 }
 
 /** Small stylesheet shared by the issue pages. Everything else comes from engage.css. */
