@@ -10,11 +10,6 @@
 // and input, via FormModel::formatIst() / utcToIstInput() / istInputToTs().
 date_default_timezone_set('UTC');
 
-// 0a. Page frame switch (see the "one shared layout" issue).
-// false = the old page frame. true = the new frame (includes/engage_frame.php).
-// Flip to true in the follow-up PR, once the pages have been checked. Remove this block in Phase 5.
-define('ENGAGE_FRAME_V2', false);
-
 // 0b. Errors are logged, never shown (#183). Visitors see a short reference instead of file paths or SQL;
 // the same reference is in app_errors.log. Uncaught exceptions and fatal errors both end up here.
 require_once __DIR__ . '/app_log.php';   // app_log() / app_log_exception(), available on every page
