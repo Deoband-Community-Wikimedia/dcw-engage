@@ -2,7 +2,7 @@
 require_once __DIR__ . '/../../includes/init.php';
 require_once __DIR__ . '/../../includes/auth.php';
 require_once __DIR__ . '/../../includes/audit.php';
-require_once __DIR__ . '/../../includes/engage_page.php';   // engage_asset(): versioned CSS links
+require_once __DIR__ . '/../../includes/engage_page.php';
 require_once __DIR__ . '/../../models/InviteModel.php';
 
 /**
@@ -72,88 +72,48 @@ if ($done) {
     header('Location: /admin/dashboard');
     exit;
 }
+
+engage_header([
+    'title'    => 'Accept invitation',
+    'heading'  => $invite ? 'Set your password' : 'Invitation not valid',
+    'lead'     => $invite
+        ? 'You have been invited to the DCW Engage organizer workspace as ' . $invite['email'] . '. Choose a password to activate the account.'
+        : 'This link has expired, has already been used, or was withdrawn. Invitations are single use and time limited. Ask a workspace owner to send you a new invitation.',
+    'auth'     => true,
+    'noindex'  => true,
+    'referrer' => 'no-referrer',   // the URL carries the one-time token
+]);
 ?>
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <link rel="icon" type="image/png" href="https://dcwwiki.org/dcwwiki/images/5/56/DCW_logo.png">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#061A1E">
-    <meta name="robots" content="noindex, nofollow">
-    <title>Accept invitation - DCW Engage</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="<?= htmlspecialchars(engage_asset('/assets/css/engage.css'), ENT_QUOTES) ?>">
-    <link rel="stylesheet" href="<?= htmlspecialchars(engage_asset('/assets/css/staff.css'), ENT_QUOTES) ?>">
-</head>
-<body class="admin signin">
-    <main class="signin-shell">
-        <section class="signin-brand">
-            <span class="s-logo"><img src="https://dcwwiki.org/dcwwiki/images/5/56/DCW_logo.png" alt="Deoband Community Wikimedia"></span>
-            <p class="kicker">Organizer workspace</p>
-            <h1>Join <em>DCW Engage</em></h1>
-            <p class="lead">One step left: choose a password and your organizer account is ready.</p>
-            <div class="stripe" aria-hidden="true"></div>
-        </section>
+<div class="auth-card">
+<?php if ($error): ?>
+    <div class="alert error" role="alert"><?= htmlspecialchars($error) ?></div>
+<?php endif; ?>
+<?php if (!$invite): ?>
+    <p class="alt" style="margin-top:0;"><a href="/admin/login">Go to sign in</a></p>
+<?php else: ?>
+    <form method="POST" autocomplete="off">
+        <?= CSRF::getInputField() ?>
+        <input type="hidden" name="token" value="<?= htmlspecialchars($token, ENT_QUOTES) ?>">
 
-        <div class="auth-card">
-        <?php if (!$invite): ?>
-            <h2>Invitation not valid</h2>
-            <p class="sub">
-                This link has expired, has already been used, or was withdrawn.
-                Invitations are single use and time limited.
-            </p>
-            <?php if ($error): ?>
-                <div class="alert error" role="alert"><?= htmlspecialchars($error) ?></div>
-            <?php endif; ?>
-            <p class="sub" style="margin-bottom:0;">
-                Ask a workspace owner to send you a new invitation.
-            </p>
-        <?php else: ?>
-            <h2>Set your password</h2>
-            <p class="sub">
-                You have been invited to the DCW Engage organizer workspace as
-                <strong><?= htmlspecialchars($invite['email']) ?></strong>.
-                Choose a password to activate the account.
-            </p>
+        <label for="password">Password</label>
+        <input type="password" name="password" id="password" required autofocus
+               minlength="<?= InviteModel::MIN_PASSWORD_LENGTH ?>" autocomplete="new-password">
+        <p class="hint">
+            At least <?= InviteModel::MIN_PASSWORD_LENGTH ?> characters. This workspace holds
+            applicant information, so use a password you do not use anywhere else.
+        </p>
 
-            <?php if ($error): ?>
-                <div class="alert error" role="alert"><?= htmlspecialchars($error) ?></div>
-            <?php endif; ?>
+        <label for="password_confirm">Confirm password</label>
+        <input type="password" name="password_confirm" id="password_confirm" required
+               minlength="<?= InviteModel::MIN_PASSWORD_LENGTH ?>" autocomplete="new-password">
 
-            <form method="POST" autocomplete="off">
-                <?= CSRF::getInputField() ?>
-                <input type="hidden" name="token" value="<?= htmlspecialchars($token, ENT_QUOTES) ?>">
+        <button type="submit" class="btn-primary">Activate account</button>
+    </form>
 
-                <label for="password">Password</label>
-                <input type="password" name="password" id="password" required autofocus
-                       minlength="<?= InviteModel::MIN_PASSWORD_LENGTH ?>" autocomplete="new-password">
-                <p class="hint">
-                    At least <?= InviteModel::MIN_PASSWORD_LENGTH ?> characters. This workspace holds
-                    applicant information, so use a password you do not use anywhere else.
-                </p>
-
-                <label for="password_confirm">Confirm password</label>
-                <input type="password" name="password_confirm" id="password_confirm" required
-                       minlength="<?= InviteModel::MIN_PASSWORD_LENGTH ?>" autocomplete="new-password">
-
-                <button type="submit" class="btn-primary">Activate account</button>
-            </form>
-
-            <p class="alt">
-                Not expecting this? You can close this page &mdash; nothing is
-                created until you set a password.
-            </p>
-        <?php endif; ?>
-        </div>
-    </main>
-
-    <footer>
-        <div class="org">
-            <img src="https://dcwwiki.org/dcwwiki/images/5/56/DCW_logo.png" alt="">
-            <span>Deoband Community Wikimedia</span>
-        </div>
-        <div><a href="/admin/login">Go to sign in</a></div>
-    </footer>
-</body>
-</html>
+    <p class="alt">
+        Not expecting this? You can close this page &mdash; nothing is
+        created until you set a password.
+    </p>
+<?php endif; ?>
+</div>
+<?php engage_footer(); ?>
