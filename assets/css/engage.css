@@ -1,6 +1,6 @@
 /* DCW Engage: shared design system. Every page, including the public home page, uses this file.
    Staff pages (/admin, /finance) and the staff sign-in pages also load assets/css/staff.css after this one:
-   that file holds the whole staff scheme (tokens, header band, vertical tabs, list rows, queue forms).
+   that file holds the staff scheme (tokens, vertical tabs, list rows, queue forms).
  */
 :root {
     /* Brand, from the logo */
@@ -47,90 +47,12 @@ a:focus-visible, summary:focus-visible, button:focus-visible { outline: 3px soli
 /* Home page jump links (member menu: Programs, Events) */
 #programs, #events { scroll-margin-top: 24px; }
 
-/* ---------- Hero (compact: pages after the home page) ---------- */
-.hero {
-    position: relative; overflow: hidden; color: #fff; text-align: center;
-    padding: 34px 22px 96px;
-    border-bottom: 4px solid var(--accent);   /* crimson edge echoes the logo's arc */
-    background:
-        radial-gradient(circle at 10% 15%, rgba(255,255,255,.10) 0, rgba(255,255,255,0) 40%),
-        radial-gradient(circle at 92% 90%, rgba(141,26,16,.30) 0, rgba(141,26,16,0) 45%),
-        linear-gradient(140deg, var(--primary-dark) 0%, var(--primary) 62%, #5A95C6 100%);
-}
-.hero img.logo {
-    display: block; margin: 0 auto 16px; width: 72px; height: 72px; object-fit: contain; padding: 9px;
-    background: #fff; border-radius: 50%; box-shadow: 0 8px 22px rgba(0,0,0,.2);
-}
-.hero .kicker {
-    display: inline-block; margin: 0 0 12px; padding: 5px 14px; border-radius: 999px;
-    background: rgba(85,154,108,.28); border: 1px solid rgba(255,255,255,.35);
-    font-size: 12.5px; letter-spacing: .14em; text-transform: uppercase; font-weight: 700;
-}
-.hero h1 { margin: 0 0 10px; font-size: clamp(30px, 5vw, 46px); font-weight: 800; letter-spacing: -1px; line-height: 1.1; }
-.hero .lead { max-width: 600px; margin: 0 auto; color: rgba(255,255,255,.88); font-size: clamp(15px, 2vw, 18px); }
-
-/* Slim hero (the home page, and member pages that pass 'slim'): the same slim top bar for everyone (brand on the left,
-   sign-in or the member menu on the right), then a short left-aligned intro. No big logo, no kicker
-   pill. The hero lets its menus overflow, and the top bar sits above the cards that overlap the hero. */
-.hero.slim { padding: 20px 22px 92px; text-align: left; overflow: visible; }
-.hero.slim .topbar { position: relative; z-index: 30; max-width: 1016px; margin-bottom: 30px; }
-.hero.slim .topbar .brand { font-size: 18px; letter-spacing: -.01em; }
-.hero.slim .hero-copy { max-width: 1016px; margin: 0 auto; }
-.hero.slim h1 { margin: 0 0 8px; font-size: clamp(28px, 4.4vw, 40px); letter-spacing: -.8px; }
-.hero.slim .lead { max-width: 640px; margin: 0; font-size: clamp(15px, 1.9vw, 17px); }
-/* Breadcrumbs on a slim hero (member pages) sit left, in line with the heading */
-.hero.slim .crumbs { max-width: 1016px; margin: -4px auto 18px; justify-content: flex-start; }
-
-/* Home page hero: no crimson bottom edge, and the crimson glow sits in the top-right corner.
-   The red edge and the glow at the bottom-right used to run straight into the red Membership card,
-   so the card looked like it was leaking out of the header. */
-.hero.home {
-    border-bottom: 0;
-    background:
-        radial-gradient(circle at 10% 15%, rgba(255,255,255,.10) 0, rgba(255,255,255,0) 40%),
-        radial-gradient(circle at 94% 4%, rgba(141,26,16,.28) 0, rgba(141,26,16,0) 40%),
-        linear-gradient(140deg, var(--primary-dark) 0%, var(--primary) 62%, #5A95C6 100%);
-}
-
-/* Lead link under the headline: kept for any page that wants one ("Already applied? Track your application") */
-.hero .lead-link { margin: 12px 0 0; font-size: 14.5px; }
-.hero .lead-link a {
-    color: #fff; font-weight: 600; text-decoration: underline; text-underline-offset: 3px;
-    text-decoration-color: rgba(255,255,255,.5);
-}
-.hero .lead-link a:hover { text-decoration-color: #fff; }
-/* One-time notice under the headline (for example "You have been signed out.") */
-.hero .lead-notice {
-    display: inline-block; margin: 12px 0 0; padding: 4px 14px; border-radius: 999px;
-    font-size: 13.5px; font-weight: 600; color: #fff;
-    background: rgba(85,154,108,.32); border: 1px solid rgba(255,255,255,.35);
-}
-.hero .lead-notice + .lead-link { margin-top: 10px; }
-
-/* One quiet "back" link above the heading (member pages) */
-.hero-back { display: inline-block; margin: 0 0 10px; font-size: 13.5px; font-weight: 600; color: rgba(255,255,255,.85); text-decoration: none; }
-.hero-back:hover { color: #fff; text-decoration: underline; }
-
-/* Compact band (member pages) and bare band (dashboard: top bar only, a card overlaps its edge) */
-.hero.compact, .hero.bare { padding: 14px 22px 56px; }
-.hero.compact .topbar { margin-bottom: 18px; }
-.hero.bare .topbar { margin-bottom: 0; }
-.hero.compact h1 { margin-bottom: 4px; font-size: clamp(22px, 3.4vw, 30px); letter-spacing: -.5px; }
-.hero.compact .lead { font-size: 14.5px; }
-.hero.compact + .cards-wrap, .hero.bare + .cards-wrap { margin-top: -40px; }
-
-/* Flat band (the signed-in member's home page): the top bar only, and the page starts below it with no
-   overlap, so the greeting and every heading are ordinary dark/grey text on the light page. */
-.hero.flat { padding: 14px 22px 18px; }
-.hero.flat .topbar { margin-bottom: 0; }
-.hero.flat + .cards-wrap { margin-top: 0; padding-top: 26px; }
-
 /* Greeting at the top of the member's home page */
 .greet { margin: 0 0 6px; }
 .greet h1 { margin: 0; font-size: clamp(22px, 3.4vw, 28px); font-weight: 800; letter-spacing: -.02em; line-height: 1.25; color: var(--ink); overflow-wrap: anywhere; }
 .greet p { margin: 2px 0 0; font-size: 14.5px; color: var(--muted); }
 
-/* Top bar inside the hero */
+/* Top bar */
 .topbar {
     max-width: 1060px; margin: 0 auto 26px; display: flex; flex-wrap: wrap;
     align-items: center; justify-content: space-between; gap: 12px; text-align: left;
@@ -161,29 +83,8 @@ a:focus-visible, summary:focus-visible, button:focus-visible { outline: 3px soli
 .chip-btn.solid { background: #fff; color: var(--primary-dark); border-color: #fff; }
 .chip-btn.solid:hover { background: rgba(255,255,255,.86); }
 
-/* ---------- Top bar menus: the old "About DCW" dropdown (kept for older pages) and the menus ---------- */
-.topbar .about { position: relative; margin: 0 auto 0 14px; }
-.topbar .about summary { list-style: none; cursor: pointer; }
-.topbar .about summary::-webkit-details-marker { display: none; }
-.topbar .about .caret { font-size: 11px; opacity: .85; }
-.topbar .about .about-menu {
-    position: absolute; z-index: 30; top: calc(100% + 8px); left: 0;
-    width: max-content; min-width: 200px; max-width: calc(100vw - 36px); padding: 6px;
-    background: #fff; border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 16px 34px rgba(15,23,42,.18);
-}
-.topbar .about .about-menu a {
-    display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 8px 12px; border-radius: 8px;
-    color: var(--ink); font-size: 14px; font-weight: 500; text-decoration: none; white-space: nowrap;
-}
-.topbar .about .about-menu a:hover { background: var(--primary-tint); color: var(--primary-dark); }
-.topbar .about .about-menu a.ext span { color: var(--muted); }
-.topbar .about .about-sep { height: 1px; margin: 5px 6px; background: var(--border); }
-.hero.slim .topbar .about { margin-left: 6px; }
-.hero.slim .topbar .about summary { background: transparent; border-color: transparent; padding: 7px 12px; }
-.hero.slim .topbar .about summary:hover,
-.hero.slim .topbar .about[open] summary { background: rgba(255,255,255,.16); color: #fff; }
-
-/* Menus: the member menu is avatar + three lines; the guest menu is three lines. The lines turn into a cross while open. */
+/* ---------- Top bar menus ----------
+   The member menu is avatar + three lines; the guest menu is three lines. The lines turn into a cross while open. */
 .mnav { display: flex; justify-content: flex-end; }
 .mmenu { position: relative; }
 .mmenu > summary { list-style: none; cursor: pointer; }
@@ -209,7 +110,7 @@ a:focus-visible, summary:focus-visible, button:focus-visible { outline: 3px soli
 .burger[open] .bars i:nth-child(2) { opacity: 0; }
 .burger[open] .bars i:nth-child(3) { transform: translateY(-6px) rotate(-45deg); }
 .mpop {
-    position: absolute; right: 0; top: calc(100% + 10px); z-index: 40; text-align: left;   /* the hero is centred on some pages */
+    position: absolute; right: 0; top: calc(100% + 10px); z-index: 40; text-align: left;
     width: 270px; max-width: calc(100vw - 36px); padding: 8px;
     max-height: calc(100vh - 110px); overflow-y: auto;      /* a long menu scrolls on short phones */
     background: var(--card); color: var(--ink); border: 1.5px solid var(--border); border-radius: 16px;
@@ -230,8 +131,8 @@ a:focus-visible, summary:focus-visible, button:focus-visible { outline: 3px soli
 .mpop .mlabel { padding: 6px 12px 2px; font-size: 11.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
 .mpop a.xs-only { display: none; }                 /* "Join DCW", shown only on small phones (see the 480px block) */
 
-/* Content overlaps the hero's lower edge */
-.cards-wrap { margin-top: -62px; position: relative; }
+/* Content column */
+.cards-wrap { position: relative; }
 
 /* ---------- Cards ---------- */
 .grid { display: flex; flex-wrap: wrap; justify-content: center; gap: 22px; padding-bottom: 12px; }
@@ -327,8 +228,7 @@ a:focus-visible, summary:focus-visible, button:focus-visible { outline: 3px soli
     margin: 30px 0 16px; text-align: center; font-size: 13px; letter-spacing: .12em;
     text-transform: uppercase; color: var(--muted); font-weight: 700;
 }
-/* With nothing above it, the heading sits on the blue hero edge (guests only: members get a flat band) */
-.section-title.first { margin-top: 0; color: #fff; }
+.section-title.first { margin-top: 0; }
 
 /* ---------- Sign-in card ---------- */
 .auth-card {
@@ -604,20 +504,6 @@ fieldset.group legend { padding: 0 8px; font-weight: 700; font-size: 14px; color
 .tbl a.dl { color: var(--primary); font-weight: 700; text-decoration: none; white-space: nowrap; }
 .tbl a.dl:hover { text-decoration: underline; }
 
-/* ---------- Breadcrumb / back bar (inside the hero) ---------- */
-.crumbs {
-    max-width: 1060px; margin: -10px auto 20px; display: flex; flex-wrap: wrap; justify-content: center;
-    align-items: center; gap: 6px 8px; font-size: 13.5px; color: rgba(255,255,255,.8);
-}
-.crumbs a {
-    padding: 3px 11px; border-radius: 999px; color: #fff; text-decoration: none; font-weight: 600;
-    background: rgba(255,255,255,.14); border: 1px solid rgba(255,255,255,.25); transition: background .15s, color .15s;
-}
-.crumbs a:hover { background: #fff; color: var(--primary-dark); }
-.crumbs a.back { margin-right: 6px; border-color: rgba(255,255,255,.55); }
-.crumbs .sep { opacity: .55; }
-.crumbs .here { font-weight: 700; color: #fff; }
-
 /* ======================================================================
    Home page sections (stats line, photo strip, empty state).
    They live here so the home page needs no styles of its own.
@@ -867,14 +753,9 @@ a.help-item:hover { transform: translateY(-2px); box-shadow: 0 4px 0 var(--edge)
     .grid--solo .prog p  { margin: 0 0 18px; }
 }
 @media (max-width: 640px) {
-    .hero, .hero.slim { padding: 28px 18px 96px; }
     /* Every page has the same phone top bar: logo on the left, the menu (member, staff or guest) on the right. */
     .topbar { justify-content: space-between; text-align: left; flex-wrap: nowrap; gap: 8px; }
     .topbar .tools { justify-content: flex-end; margin-left: auto; flex-wrap: nowrap; }
-    /* Home page: keep the bar on one line (logo and name on the left, sign-in or menu on the right) */
-    .hero.slim { padding: 16px 18px 88px; }
-    .hero.slim .topbar { justify-content: space-between; text-align: left; flex-wrap: nowrap; gap: 8px; margin-bottom: 24px; }
-    .hero.slim .topbar .tools { justify-content: flex-end; margin-left: auto; flex-wrap: nowrap; }
     .prog, .prog.featured { max-width: none; flex-basis: 100%; }
 
     /* Membership banner on phones: shorter. Icon and label share a row, and the button spans the card. */
@@ -910,19 +791,9 @@ a.help-item:hover { transform: translateY(-2px); box-shadow: 0 4px 0 var(--edge)
     .evt-body h3 { font-size: 19px; }
     .chip-btn { padding: 9px 16px; }
     .mpop a { padding: 13px 12px; }
-
-    /* Bands: shorter and smaller (these come last in this block so they win over the rules above) */
-    .hero.slim { padding-bottom: 76px; }
-    .hero.slim h1 { font-size: 26px; }
-    .hero.slim .lead { font-size: 14.5px; }
-    .hero.compact, .hero.bare { padding: 12px 18px 52px; }
-    .hero.compact h1 { font-size: 22px; }
-    .hero.flat { padding: 12px 18px 14px; }
-    .hero.flat .topbar, .hero.bare .topbar { margin-bottom: 0; }
 }
 @media (max-width: 480px) {
     /* Small phones: the "Join" shortcut leaves the bar and appears at the top of the menu instead */
-    .hero.slim .chip-btn.solid { display: none; }
     .mpop a.xs-only { display: block; }
 }
 @media (max-width: 400px) {
@@ -944,20 +815,19 @@ a.help-item:hover { transform: translateY(-2px); box-shadow: 0 4px 0 var(--edge)
 }
 
 /* ======================================================================
-   Membership review (staff): fixes for content that landed on the blue band.
+   Membership review (staff).
 
-   Why it was broken: .cards-wrap overlaps the bottom 62px of the hero. Cards are white, so they look fine
-   there, but the review page started with bare text (the tabs, the "Back to the queue" link, the name),
-   which ended up on the gradient. The search row also had no border or font rules of its own, so the
-   browser's thick default border showed.
+   The queue page starts with the tabs, which now sit on the light page like everything else, so they become
+   one white card. The search row had no border or font rules of its own, so the browser's thick default
+   border showed.
 
    These selectors start with .cards-wrap, so they outrank the page's own <style> block (one class)
    without needing !important or any change to the PHP.
 
-   (The staff scheme itself, "Midnight Teal & Gold", lives in assets/css/staff.css.)
+   (The staff scheme itself, "Logo Blue, Green & Crimson", lives in assets/css/staff.css.)
    ====================================================================== */
 
-/* ---- Queue page: the tabs become one white card, like every other first item on the overlap ---- */
+/* ---- Queue page: the tabs become one white card ---- */
 .cards-wrap .rv-tabs {
     gap: 4px; margin: 0 0 18px; padding: 6px 14px 0;
     background: var(--card); border: 1.5px solid var(--border); border-radius: 16px;
@@ -983,11 +853,7 @@ a.help-item:hover { transform: translateY(-2px); box-shadow: 0 4px 0 var(--edge)
 .cards-wrap .rv-search input[type=search]:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 4px color-mix(in srgb, var(--primary) 20%, transparent); }
 .cards-wrap .rv-search .btn-solid { width: auto; padding: 11px 24px; }
 
-/* ---- Application page: it starts with plain text (back link, name, email), so it must not sit on the band.
-        The content starts below the hero instead of overlapping it, and the band is trimmed to match.
-        (Needs :has(), supported by all current browsers.) ---- */
-.cards-wrap:has(> .rv-back) { margin-top: 0; padding-top: 24px; }
-.hero:has(+ .cards-wrap > .rv-back) { padding-bottom: 40px; }
+/* ---- Application page ---- */
 .cards-wrap .rv-back { margin-bottom: 12px; }
 
 /* If the page is ever wrapped in a white card (<section class="sect rv-top">), this keeps it tidy */
@@ -1065,7 +931,7 @@ table.ms-table { width: 100%; border-collapse: collapse; min-width: 720px; }
 
 /* ======================================================================
    Member support: white card sections and the "waiting" label.
-   Used by member-support.php (the card wraps each section so nothing sits bare on the blue band).
+   Used by member-support.php (the card wraps each section so nothing sits bare on the page).
    ====================================================================== */
 .ms-card {
     margin: 0 0 18px; padding: 20px 22px;
@@ -1142,9 +1008,7 @@ table.ms-table { width: 100%; border-collapse: collapse; min-width: 720px; }
 /* Break long titles at spaces, not mid-word */
 .dash .tile h3 { overflow-wrap: break-word; word-break: normal; hyphens: auto; }
 
-/* ---------- Staff top bar: chips on wide screens, one hamburger on phones ---------- */
-.tools-wide { display: contents; }          /* keeps the chips as direct flex items of .tools on desktop */
-.tools-narrow { display: none; }
+/* ---------- Menu pieces used by the staff menu ---------- */
 .mpop .mwho em { overflow-wrap: anywhere; letter-spacing: 0; }
 .mpop form { margin: 0; }
 .mpop button.out {
@@ -1153,12 +1017,6 @@ table.ms-table { width: 100%; border-collapse: collapse; min-width: 720px; }
     transition: background .12s;
 }
 .mpop button.out:hover { background: var(--accent-tint); color: var(--accent-dark); }
-/* Owners have the most links; below this width the chips would wrap onto a second line, so the
-   hamburger takes over (the same menu members use on every screen size). */
-@media (max-width: 1100px) {
-    .tools-wide { display: none; }
-    .tools-narrow { display: flex; }
-}
 @media (max-width: 640px) {
     .mpop button.out { padding: 13px 12px; }
 }
@@ -1315,7 +1173,7 @@ table.ms-table { width: 100%; border-collapse: collapse; min-width: 720px; }
 /* ======================================================================
    FRAME V2 (Phase 1 of the "one shared layout" issue)
    Every rule starts with .f2 (a class on <body>, only printed by the new frame), so with
-   ENGAGE_FRAME_V2 off nothing here applies. Phase 2 deletes the old .hero* / .crumbs rules.
+   ENGAGE_FRAME_V2 off nothing here applies.
 
    Shape: a blue top bar (brand, page tools, one menu), then <main> on the light page:
    optional back link, one <h1>, optional lead, content. No overlap with the band.
@@ -1346,7 +1204,7 @@ table.ms-table { width: 100%; border-collapse: collapse; min-width: 720px; }
 
 /* ---- Content column ---- */
 .f2 main.wrap { padding-top: 26px; }
-.f2 .cards-wrap { margin-top: 0; }                          /* beats the old -62px overlap; the class stays until Phase 2 */
+.f2 .cards-wrap { margin-top: 0; }
 .f2.f2-narrow main.wrap { max-width: 804px; }
 
 .f2 .page-back {
@@ -1370,14 +1228,4 @@ table.ms-table { width: 100%; border-collapse: collapse; min-width: 720px; }
     display: inline-block; margin: 12px 0 0; padding: 4px 14px; border-radius: 999px;
     font-size: 13.5px; font-weight: 600; color: var(--leaf-dark); background: var(--leaf-tint); border: 1px solid #bfdfca;
 }
-.f2 .lead-link { margin: 12px 0 0; font-size: 14.5px; }
-.f2 .lead-link a { color: var(--primary); font-weight: 600; }
-
-/* ---- Small phones: "Join" moves into the menu (the menu shows it at the top) ---- */
-@media (max-width: 480px) {
-    .f2 .site-bar .chip-btn.solid { display: none; }
-}
-@media (max-width: 640px) {
-    .f2 .site-bar { padding: 12px 18px; }
-    .f2 main.wrap { padding-top: 20px; }
-}
+.f2 .lead-link {
