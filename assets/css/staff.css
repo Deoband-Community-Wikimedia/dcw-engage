@@ -3,14 +3,14 @@
    Loaded AFTER engage.css on every staff page (/admin, /finance) and on the staff sign-in pages
    (engage_header() links it automatically for staff paths; sign-in pages link it themselves).
 
-   This file holds EVERYTHING staff-specific: tokens, header band, vertical tabs, list rows,
-   queue cards, payment form, sign-in layout, the shared components (.sect, .tag, .fields ...),
-   and the page pieces that used to live in per-page <style> blocks and in admin.css
-   (form manager, internet review, team page, form builder).
+   This file holds the staff-specific tokens, vertical tabs, list rows, queue cards, payment form,
+   the shared components (.sect, .tag, .fields ...), and the page pieces that used to live in
+   per-page <style> blocks and in admin.css (form manager, internet review, team page, form builder).
+   The page frame (top bar, heading, sign-in column) is in engage.css.
 
    Palette (sampled from the DCW logo SVG)
      Blue     #0D6D9E (dark #08507A, light #2B8CC0)   main action colour, header band
-     Deep     #051A2B / #0A3552 / #0D5C8A             header band and sign-in background
+     Deep     #051A2B / #0A3552 / #0D5C8A             header band
      Green    #349A68 (dark #23744C)                  accepted, ok, "all clear"
      Crimson  #9B0202                                 needs attention, reject, remove
      Amber    #C96A12                                 warnings only (drafts, internal notes); not a brand colour
@@ -48,42 +48,9 @@ body.admin {
 }
 body.admin ::selection { background: var(--primary); color: #fff; }
 
-/* ---------- Header band: bright logo blue with a soft glow and a blue / green / crimson stripe ---------- */
-body.admin .hero, body.admin .hero.slim {
-    position: relative; text-align: left; padding: 14px 0 38px; border-bottom: 0; overflow: visible;
-    background:
-        radial-gradient(circle at 10% 15%, rgba(255,255,255,.12) 0, rgba(255,255,255,0) 40%),
-        radial-gradient(circle at 94% 100%, rgba(155,2,2,.22) 0, rgba(155,2,2,0) 42%),
-        linear-gradient(140deg, #0B5E8D 0%, var(--primary) 55%, #3F94C8 100%);
-}
-body.admin .hero::after {
-    content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 4px;
-    background: linear-gradient(90deg, var(--primary-light) 0 40%, var(--leaf) 40% 70%, var(--accent) 70% 100%);
-}
-body.admin .hero .topbar {
-    max-width: 1180px; margin: 0 auto 22px; padding: 0 22px 14px;
-    border-bottom: 1px solid rgba(255,255,255,.22);
-}
+/* ---------- Top bar: staff tweaks ---------- */
 /* White ring instead of the old gold one, so the seal's own colours carry the logo */
 body.admin .topbar .brand-logo { box-shadow: 0 0 0 2px rgba(255,255,255,.55); }
-body.admin .hero .hero-copy, body.admin .hero > h1, body.admin .hero > .lead {
-    max-width: 1180px; margin-left: auto; margin-right: auto; padding-left: 22px; padding-right: 22px;
-}
-body.admin .hero .kicker {
-    display: block; max-width: 1180px; margin: 0 auto 8px; padding: 0 22px;
-    background: none; border: 0; border-radius: 0;
-    font-size: 12px; font-weight: 800; letter-spacing: .18em; text-transform: uppercase; color: #CFF3E0;
-}
-body.admin .hero h1 { color: #fff; font-size: clamp(26px, 3.6vw, 34px); letter-spacing: -.02em; margin-bottom: 4px; }
-body.admin .hero .lead { color: rgba(255,255,255,.92); font-size: 15.5px; }
-/* Inside .hero-copy the lead fills the copy block; directly under the hero it stays in the 1180px column */
-body.admin .hero .hero-copy .lead { max-width: none; margin: 0; }
-body.admin .hero > .lead { max-width: 1180px; margin: 0 auto; }
-body.admin .hero .crumbs { max-width: 1180px; padding: 0 22px; justify-content: flex-start; }
-body.admin .hero .who { font-size: 13.5px; color: rgba(255,255,255,.88); }
-body.admin .crumbs a { background: rgba(255,255,255,.10); border-color: rgba(255,255,255,.22); }
-body.admin .crumbs a:hover { background: #fff; border-color: #fff; color: var(--deep); }
-body.admin .crumbs .here { color: #fff; }
 body.admin .chip-btn { background: rgba(255,255,255,.16); border-color: rgba(255,255,255,.45); }
 body.admin .chip-btn:hover { background: #fff; border-color: #fff; color: var(--deep); }
 body.admin .wrap.cards-wrap { margin-top: 0; padding-top: 30px; }
@@ -313,46 +280,9 @@ body.admin .cards-wrap .rv-tab.on { color: var(--primary-dark); border-bottom-co
 body.admin footer { background: transparent; border-top: 1.5px solid var(--border); }
 body.admin footer a { color: var(--primary-dark); }
 
-/* ======================================================================
-   Staff sign-in pages (login, forgot password, reset password, accept invitation)
-   <body class="admin signin">: a deep full-page background, the brand on the left, the card on the right.
-   ====================================================================== */
-body.admin.signin {
-    min-height: 100vh; display: flex; flex-direction: column; color: #fff;
-    background:
-        radial-gradient(55% 60% at 85% 8%, rgba(43,140,192,.50) 0, rgba(43,140,192,0) 65%),
-        radial-gradient(45% 55% at 5% 100%, rgba(155,2,2,.26) 0, rgba(155,2,2,0) 65%),
-        linear-gradient(145deg, #031321 0%, var(--deep-2) 55%, var(--deep-3) 100%);
-}
-.signin-shell {
-    flex: 1; display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 440px); gap: 64px; align-items: center;
-    width: 100%; max-width: 1060px; margin: 0 auto; padding: 56px 24px;
-}
-/* The logo is now the SVG: white disc behind it, white ring, no gold */
-.signin-brand .s-logo {
-    display: block; width: 72px; height: 72px; margin: 0 0 22px; border-radius: 50%; overflow: hidden; background: #fff;
-    box-shadow: 0 0 0 3px rgba(255,255,255,.6), 0 10px 26px rgba(0,0,0,.35);
-}
-.signin-brand .s-logo img { display: block; width: 100%; height: 100%; object-fit: contain; transform: scale(var(--logo-zoom, 1.08)); }
-.signin-brand .kicker { margin: 0 0 10px; font-size: 12.5px; font-weight: 800; letter-spacing: .2em; text-transform: uppercase; color: #7FD0A5; }
-.signin-brand h1 { margin: 0 0 14px; font-size: clamp(36px, 5.2vw, 56px); font-weight: 800; letter-spacing: -.035em; line-height: 1.04; }
-.signin-brand h1 em { font-style: normal; color: #7FD0A5; }
-.signin-brand .lead { max-width: 440px; margin: 0; font-size: 17px; line-height: 1.6; color: rgba(255,255,255,.76); }
-.signin-brand .stripe { width: 96px; height: 5px; margin-top: 28px; border-radius: 4px; background: linear-gradient(90deg, var(--primary-light) 0 40%, var(--leaf) 40% 70%, var(--accent) 70% 100%); }
-body.admin.signin .auth-card {
-    margin: 0; color: var(--ink); border: 0; border-top: 6px solid var(--primary-light); border-radius: 20px;
-    box-shadow: 0 6px 0 rgba(0,0,0,.25), 0 30px 60px rgba(0,0,0,.40);
-}
-body.admin.signin .auth-card h2 { color: var(--deep); }
-body.admin.signin .auth-card .sub strong { color: var(--ink); }
-.auth-card .hint { margin: -10px 0 18px; font-size: 12.5px; line-height: 1.5; color: var(--muted); }
+/* ---------- Sign-in card links (the sign-in page layout itself is in engage.css) ---------- */
 .auth-card .alt a, .auth-card .links a { color: var(--primary-dark); font-weight: 600; }
 .auth-card .alt a:hover { color: var(--accent); }
-.auth-card .notice { padding: 14px 16px; border-radius: 12px; font-size: 14px; line-height: 1.6; background: var(--leaf-tint); border: 1.5px solid #A9DCC1; border-left: 6px solid var(--leaf); color: #14583A; }
-body.admin.signin footer { margin: 0; padding: 22px 0 30px; border-top: 1px solid rgba(255,255,255,.12); background: transparent; color: rgba(255,255,255,.65); }
-body.admin.signin footer a { color: #fff; font-weight: 600; }
-body.admin.signin footer a:hover { color: #7FD0A5; }
-body.admin.signin footer .org { color: #fff; font-weight: 700; }
 
 /* ======================================================================
    Page pieces (formerly per-page <style> blocks and admin.css)
@@ -517,13 +447,8 @@ details.edit fieldset.group { background: #fff; margin-bottom: 0; }
     .vtab { width: auto; flex: none; white-space: nowrap; padding: 10px 14px; }
     .vtab .vcount { margin-left: 4px; }
     .vsub, .vsep { display: none; }
-    .signin-shell { grid-template-columns: 1fr; gap: 30px; padding: 36px 20px; }
-    .signin-brand .lead { font-size: 15.5px; }
-    .signin-brand .stripe { margin-top: 20px; }
 }
 @media (max-width: 640px) {
-    body.admin .hero, body.admin .hero.slim { padding: 12px 0 28px; }
-    body.admin .hero .topbar { justify-content: space-between; text-align: left; }
     .lrow { grid-template-columns: 42px minmax(0, 1fr); gap: 12px; padding: 14px; }
     .lrow .tick { width: 42px; height: 42px; }
     .lrow .lside { grid-column: 1 / -1; justify-content: space-between; }
@@ -534,4 +459,3 @@ details.edit fieldset.group { background: #fff; margin-bottom: 0; }
 @media (max-width: 560px) {
     .sect { padding: 18px 16px; }
 }
-
