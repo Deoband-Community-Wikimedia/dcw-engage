@@ -1,41 +1,37 @@
 <?php
 /**
- * DCW Engage - one page frame and one menu (Phase 1 of the "one shared layout" issue).
+ * DCW Engage - the one page frame and the one menu.
  *
- * Loaded by includes/engage_page.php. Holds:
- *   engage_header()        dispatcher: new frame when ENGAGE_FRAME_V2 is true, old frame otherwise
- *   engage_header_v2()     the new frame: top bar only on the blue band, then <main> with back link + <h1>
- *   engage_nav()           THE menu (one markup, one CSS) for guests, members and staff
- *   engage_nav_items()     the item lists, one per audience, in one shared format
+ *   engage_header()      top of every page: blue top bar (brand, page tools, one menu), then <main> on the light
+ *                        page with an optional back link, one <h1> and an optional lead.
+ *   engage_forbidden()   the 403 page, on the same frame
+ *   engage_nav()         THE menu (one markup, one CSS) for guests, members and staff
+ *   engage_nav_items()   the item lists, one per audience, in one shared format
  *   engage_member_menu(), engage_guest_menu(), engage_staff_menu()   thin wrappers kept for existing callers
  *
- * Turn the new frame on with  define('ENGAGE_FRAME_V2', true);  near the top of includes/init.php.
- * Remove that line to go back to the old frame at once. Delete the flag in Phase 5.
+ * Options for engage_header():
+ *   title        <title> text (" - DCW Engage" is added)                                     required
+ *   heading      the page <h1> (defaults to title)
+ *   lead         one plain-text sentence under the heading
+ *   lead_html    trusted, already-escaped HTML under the lead
+ *   back         [label, href]: one quiet "← label" link above the heading
+ *   crumbs       legacy: the nearest linked crumb becomes the back link (the trail is not printed). Pass [] for none.
+ *   member       MemberSession::current() row: chapter colours and logo, member menu
+ *   tools        raw, already-escaped HTML printed beside the menu (a menu already in it, marked data-nav, is not doubled)
+ *   wide         wide content column (tables, queues)
+ *   narrow       narrow content column
+ *   auth         sign-in style page: a narrow centred column for an .auth-card
+ *   bare, flat   no page head: the page prints its own <h1>
+ *   home, slim, compact   accepted and ignored (old options)
+ *   kicker       accepted and ignored, except a value containing a digit (an ID) is shown as a small line
+ *   referrer     'no-referrer' or 'same-origin': a <meta name="referrer"> for pages whose URL holds a token
+ *   noindex      keep the page out of search results (staff pages always are)
+ *   description, image, image_alt   social preview
+ *
+ * Audience (public / member / staff) is worked out from the URL path and the member row; it only changes
+ * colour tokens, menu items and footer, never the markup.
  */
-if (!defined('ENGAGE_FRAME_V2')) define('ENGAGE_FRAME_V2', false);
-
-/** Every page calls this. Options are documented in engage_header_legacy() until Phase 5 rewrites the docblock. */
 function engage_header(array $o) {
-    if (ENGAGE_FRAME_V2) {
-        engage_header_v2($o);
-    } else {
-        engage_header_legacy($o);
-    }
-}
-
-/**
- * New frame. Option mapping from the old one:
- *   home, slim, compact        no effect
- *   bare, flat                 no page head: the page prints its own <h1>
- *   kicker                     dropped (shown as a small line only when it carries an ID, i.e. contains a digit)
- *   crumbs                     the nearest linked crumb becomes the back link; the trail itself is not printed
- *   back                       the back link (wins over crumbs)
- *   heading, lead, lead_html   printed in .page-head on the light page
- *   member                     chapter colours and logo
- *   tools                      printed beside the menu; if it already holds a menu (data-nav) no second one is added
- *   wide / narrow              content width
- */
-function engage_header_v2(array $o) {
     $e        = fn($s) => htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8');
     $title    = $o['title'];
     $heading  = $o['heading'] ?? $title;
@@ -47,15 +43,17 @@ function engage_header_v2(array $o) {
     $noindex  = !empty($o['noindex']);
     $wide     = !empty($o['wide']);
     $narrow   = !empty($o['narrow']) && !$wide;
+    $auth     = !empty($o['auth']);
     $home     = !empty($o['home']);
     $compact  = !empty($o['compact']);
     $noHead   = !empty($o['bare']) || !empty($o['flat']);
+    $referrer = in_array(($o['referrer'] ?? ''), ['no-referrer', 'same-origin'], true) ? (string) $o['referrer'] : '';
 
     $isStaff   = engage_is_staff_path();
     $isPreview = engage_is_theme_preview();
 
     // Back link: explicit 'back' wins, else the nearest linked crumb.
-    $crumbs = $noHead ? [] : ($o['crumbs'] ?? (($home || $compact) ? [] : [['Home', '/'], [$heading]]));
+    $crumbs = $noHead ? [] : ($o['crumbs'] ?? (($home || $compact || $auth) ? [] : [['Home', '/'], [$heading]]));
     $back = (isset($o['back']) && is_array($o['back']) && !empty($o['back'][0]) && !empty($o['back'][1])) ? $o['back'] : null;
     if (!$back) {
         foreach ($crumbs as $c) { if (!empty($c[1])) $back = [$c[0], $c[1]]; }
@@ -72,14 +70,14 @@ function engage_header_v2(array $o) {
         else                        $nav = engage_nav(['aud' => 'staff']);
     }
 
-    // Chapter look (members only), same rules as the old frame.
+    // Chapter look (members only).
     $chapterKey = (!$isStaff && $member) ? engage_chapter_key($member) : '';
     $themeVars  = $chapterKey !== '' ? engage_chapter_theme_vars($member) : [];
     $themeCss   = engage_theme_vars_css($themeVars);
     $themeColor = $isStaff ? '#051A2B' : ($themeVars['--primary'] ?? '#2E6599');
     $logoUrl    = engage_logo_url($chapterKey);
     $brandHref  = $isStaff ? '/admin/dashboard' : '/';
-    $bodyClass  = 'f2 aud-' . $aud . ($isStaff ? ' admin' : '') . ($wide ? ' f2-wide' : '') . ($narrow ? ' f2-narrow' : '');
+    $bodyClass  = 'f2 aud-' . $aud . ($isStaff ? ' admin' : '') . ($wide ? ' f2-wide' : '') . ($narrow ? ' f2-narrow' : '') . ($auth ? ' f2-auth' : '');
     ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -88,6 +86,7 @@ function engage_header_v2(array $o) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="<?= $e($themeColor) ?>">
     <?php if ($isStaff || $isPreview || $noindex): ?><meta name="robots" content="noindex, nofollow"><?php endif; ?>
+    <?php if ($referrer !== ''): ?><meta name="referrer" content="<?= $e($referrer) ?>"><?php endif; ?>
     <title><?= $e($title) ?> - DCW Engage</title>
     <?php ob_start(); require __DIR__ . '/favicon.php'; echo engage_strip_social_images(ob_get_clean()); ?>
     <?php if (!$isStaff && !$isPreview && !$noindex) engage_social_meta([
@@ -117,7 +116,7 @@ function engage_header_v2(array $o) {
 <?php endif; ?>
 <?php if (!$noHead): ?>
     <header class="page-head">
-        <?php /* Temporary: a kicker that carries an ID (tracking ID, Member ID) is still useful. Removed in Phase 2 with the page edits. */ ?>
+        <?php /* Temporary: a kicker that carries an ID (tracking ID, Member ID) is still useful. Remove once request.php and profile.php put the ID in the lead. */ ?>
         <?php if ($kicker !== '' && preg_match('/\d/', $kicker)): ?><p class="page-eyebrow"><?= $e($kicker) ?></p><?php endif; ?>
         <h1><?= $e($heading) ?></h1>
         <?php if ($lead !== ''): ?><p class="lead"><?= $e($lead) ?></p><?php endif; ?>
@@ -125,6 +124,26 @@ function engage_header_v2(array $o) {
     </header>
 <?php endif; ?>
 <?php
+}
+
+/**
+ * The 403 page, on the same frame as everything else. Sends the status, prints the page and stops.
+ * Replaces the inline 403 pages in Auth::requireOwner(), tech_require_staff() and views/admin/goodies.php.
+ */
+function engage_forbidden(string $message, string $backHref = '/admin/dashboard', string $backLabel = 'Back to workspace'): void {
+    if (!headers_sent()) {
+        http_response_code(403);
+        header('Cache-Control: no-store');
+    }
+    engage_header([
+        'title'   => 'Not allowed',
+        'heading' => 'Not allowed',
+        'lead'    => $message,
+        'back'    => [$backLabel, $backHref],
+        'noindex' => true,
+    ]);
+    engage_footer();
+    exit;
 }
 
 // ======================================================================================================
@@ -275,12 +294,12 @@ function engage_member_menu(array $member, array $o = []): string {
     return engage_nav(['aud' => 'member', 'member' => $member] + $o);
 }
 
-/** Guest menu. $about is ignored (the list comes from engage_nav_items()); kept so the old call still works. */
+/** Guest menu. $about is ignored (the list comes from engage_nav_items()); kept so old calls still work. */
 function engage_guest_menu(array $about = [], bool $withJoin = false): string {
     return engage_nav(['aud' => 'guest', 'join' => $withJoin]);
 }
 
-/** Staff menu. Old frame: the old chips + burger. New frame: the same burger menu everyone else has. */
+/** Staff menu: the same burger menu everyone else has. */
 function engage_staff_menu(): string {
-    return ENGAGE_FRAME_V2 ? engage_nav(['aud' => 'staff']) : engage_staff_menu_legacy();
+    return engage_nav(['aud' => 'staff']);
 }
