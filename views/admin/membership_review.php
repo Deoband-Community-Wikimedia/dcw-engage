@@ -406,7 +406,7 @@ engage_header([
     'wide'    => true,
     'slim'    => true,
     'crumbs'  => [],
-    'back'    => $app ? ['Membership review', '/admin/membership-review'] : ['Workspace', '/admin/dashboard'],
+    'back'    => $app ? null : ['Workspace', '/admin/dashboard'],
 ]);
 ?>
 <style>
