@@ -1,6 +1,8 @@
 <?php
 require_once __DIR__ . '/social_meta.php';
 require_once __DIR__ . '/chapter_theme.php';
+// PHASE 1: the new frame, the one menu (engage_nav) and the member/guest/staff menu wrappers live here.
+require_once __DIR__ . '/engage_frame.php';
 
 /**
  * Absolute path of a file under the web root (e.g. '/assets/css/engage.css'), or null if it can't be found.
@@ -43,6 +45,9 @@ function engage_logo_url(string $chapter = ''): string {
 }
 
 /**
+ * OLD page frame. PHASE 1: this used to be engage_header(). engage_header() now lives in includes/engage_frame.php
+ * and calls this function while ENGAGE_FRAME_V2 is false. Deleted in Phase 5.
+ *
  * Compact DCW Engage page shell.
  * Usage: engage_header([...]); ...content...; engage_footer();
  *
@@ -96,7 +101,7 @@ function engage_logo_url(string $chapter = ''): string {
  * (engage_member_menu(), which also holds the About DCW links). Everyone else gets whatever 'tools'
  * holds plus a small menu button (engage_guest_menu()) with Track application, Members and About DCW.
  */
-function engage_header(array $o) {
+function engage_header_legacy(array $o) {
     $title    = $o['title'];
     $heading  = $o['heading'] ?? $title;
     $kicker   = $o['kicker'] ?? 'Deoband Community Wikimedia';
@@ -300,34 +305,10 @@ function engage_about_links(bool $withContact = false): array {
     return $out;
 }
 
-/**
- * The small menu for visitors who are not signed in: three lines on the right of the top bar, opening a
- * panel with Track application, Members and the About DCW links. Sign in and Join stay visible beside it.
- * On very small phones the "Join" button is hidden from the bar (see engage.css), so when the page
- * shows one ($withJoin) the same link appears at the top of this menu on those screens only.
- * Returns HTML (already escaped). The open/close behaviour comes from the script in engage_footer().
+/*
+ * PHASE 1: engage_guest_menu() and engage_member_menu() were removed from this file.
+ * They are now thin wrappers around engage_nav() in includes/engage_frame.php (same names, same arguments).
  */
-function engage_guest_menu(array $about, bool $withJoin = false): string {
-    $e = fn($s) => htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8');
-    ob_start(); ?>
-    <nav class="mnav" aria-label="Site menu">
-        <details class="mmenu burger plain">
-            <summary aria-label="Open menu"><span class="bars" aria-hidden="true"><i></i><i></i><i></i></span></summary>
-            <div class="mpop">
-                <?php if ($withJoin): ?><a class="xs-only" href="/membership">Join DCW</a><?php endif; ?>
-                <a href="/track">Track application</a>
-                <a href="/members">Members</a>
-                <div class="msep"></div>
-                <div class="mlabel">About DCW</div>
-                <?php foreach ($about as [$name, $href]): ?>
-                    <a href="<?= $e($href) ?>" rel="noopener"><?= $e($name) ?></a>
-                <?php endforeach; ?>
-            </div>
-        </details>
-    </nav>
-    <?php
-    return ob_get_clean();
-}
 
 /**
  * Kept for older pages that may still call it. The header no longer uses it: the About DCW links now
@@ -352,96 +333,16 @@ function engage_about_menu(array $about): void {
 }
 
 /**
- * The signed-in member's menu for the top bar: avatar plus three lines, opening a panel.
- * Pass the result as the 'tools' option of engage_header() on any member page, so every member page
- * has the same navigation. Returns HTML (already escaped). It also holds the About DCW links, so
- * members do not need a separate About button in the bar.
+ * OLD staff top-bar menu. PHASE 1: this used to be engage_staff_menu(). engage_staff_menu() now lives in
+ * includes/engage_frame.php: while ENGAGE_FRAME_V2 is false it calls this function, otherwise it returns the
+ * one shared menu. Deleted in Phase 5.
  *
- *   $member   MemberSession::current() row
- *   $o['home']      true on the home page: "Programs" and "Events" jump links replace the "Home" link
- *   $o['programs']  home only: show "Programs" (there are open programs)
- *   $o['events']    home only: show "Events" (there are upcoming events)
- *   $o['current']   the path of the page being shown (e.g. '/member/dashboard'); that item is highlighted
- *
- * Support, Talk to DCW Support and Report a problem are always listed for a signed-in member: those pages
- * explain any lock themselves (for example an expired membership), which is clearer than a missing link.
- * The menu's open/close behaviour comes from the script in engage_footer().
- */
-function engage_member_menu(array $member, array $o = []): string {
-    $e       = fn($s) => htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8');
-    $id      = (string) ($member['member_id'] ?? '');
-    $display = trim((string) ($member['full_name'] ?? '')) ?: $id;
-    $initial = mb_strtoupper(mb_substr($display, 0, 1));
-    $current = (string) ($o['current'] ?? '');
-    $home    = !empty($o['home']);
-
-    $link = function (string $label, string $href, string $class = '') use ($e, $current): string {
-        $isCur = $current !== '' && $href === $current;
-        $cls   = trim($class . ($isCur ? ' cur' : ''));
-        return '<a href="' . $e($href) . '"' . ($cls !== '' ? ' class="' . $e($cls) . '"' : '')
-             . ($isCur ? ' aria-current="page"' : '') . '>' . $e($label) . '</a>';
-    };
-
-    ob_start(); ?>
-    <nav class="mnav" aria-label="Member menu">
-        <details class="mmenu burger">
-            <summary aria-label="Open menu">
-                <span class="mav" aria-hidden="true"><?= $e($initial) ?></span>
-                <span class="bars" aria-hidden="true"><i></i><i></i><i></i></span>
-            </summary>
-            <div class="mpop">
-                <div class="mwho">
-                    <span class="mav lg" aria-hidden="true"><?= $e($initial) ?></span>
-                    <span>
-                        <strong><?= $e($display) ?></strong>
-                        <?php if ($id !== ''): ?><em><?= $e($id) ?></em><?php endif; ?>
-                    </span>
-                </div>
-
-                <?php if ($home): ?>
-                    <?php if (!empty($o['programs'])): ?><a href="#programs">Programs</a><?php endif; ?>
-                    <?php if (!empty($o['events'])):   ?><a href="#events">Events</a><?php endif; ?>
-                <?php else: ?>
-                    <?= $link('Home', '/') ?>
-                <?php endif; ?>
-                <?= $link('Track Application', '/track') ?>
-                <?= $link('Members', '/members') ?>
-
-                <div class="msep"></div>
-                <?= $link('My Dashboard', '/member/dashboard') ?>
-                <?= $link('My Applications', '/member/applications') ?>
-                <?= $link('My Profile', '/member/profile') ?>
-                <?= $link('My Certificates', '/member/certificates') ?>
-                <?= $link('Support', '/member/support') ?>
-                <?= $link('Talk to DCW Support', '/member/talk') ?>
-                <?= $link('Report a problem', '/member/report-problem') ?>
-
-                <?php $aboutLinks = engage_about_links(true); ?>
-                <?php if ($aboutLinks): ?>
-                    <div class="msep"></div>
-                    <div class="mlabel">About DCW</div>
-                    <?php foreach ($aboutLinks as [$name, $href]): ?>
-                        <a href="<?= $e($href) ?>" rel="noopener"><?= $e($name) ?></a>
-                    <?php endforeach; ?>
-                <?php endif; ?>
-
-                <div class="msep"></div>
-                <?= $link('Sign out', '/member/logout', 'out') ?>
-            </div>
-        </details>
-    </nav>
-    <?php
-    return ob_get_clean();
-}
-
-/**
- * The staff top-bar menu, used automatically by engage_header() on every /admin and /finance page
- * that does not pass its own 'tools'. Wide screens get chips; phones get one hamburger with the
- * same links (the switch is in engage.css: .tools-wide / .tools-narrow).
+ * Wide screens get chips; phones get one hamburger with the same links (the switch is in engage.css:
+ * .tools-wide / .tools-narrow).
  * Returns '' when nobody is signed in, so sign-in pages are unaffected.
  * Sign out posts to /admin/logout (POST only, CSRF checked there).
  */
-function engage_staff_menu(): string {
+function engage_staff_menu_legacy(): string {
     if (!class_exists('Auth')) return '';
     try {
         $email = trim((string) Auth::email());

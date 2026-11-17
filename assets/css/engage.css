@@ -1312,3 +1312,72 @@ table.ms-table { width: 100%; border-collapse: collapse; min-width: 720px; }
     .cm-card { padding: 18px 16px 16px; }
     .cm-foot { justify-content: center; text-align: center; }
 }
+/* ======================================================================
+   FRAME V2 (Phase 1 of the "one shared layout" issue)
+   Every rule starts with .f2 (a class on <body>, only printed by the new frame), so with
+   ENGAGE_FRAME_V2 off nothing here applies. Phase 2 deletes the old .hero* / .crumbs rules.
+
+   Shape: a blue top bar (brand, page tools, one menu), then <main> on the light page:
+   optional back link, one <h1>, optional lead, content. No overlap with the band.
+   ====================================================================== */
+
+/* ---- Top bar: the band is the bar and nothing else ---- */
+.f2 .site-bar {
+    position: relative; padding: 14px 22px; color: #fff;
+    border-bottom: 4px solid var(--accent);               /* crimson edge, from the logo's arc */
+    background:
+        radial-gradient(circle at 10% 15%, rgba(255,255,255,.10) 0, rgba(255,255,255,0) 40%),
+        radial-gradient(circle at 92% 90%, rgba(141,26,16,.30) 0, rgba(141,26,16,0) 45%),
+        linear-gradient(140deg, var(--primary-dark) 0%, var(--primary) 62%, var(--hero-end, #5A95C6) 100%);
+}
+/* The bar lines up with the content column (.wrap is 1060px / 1180px wide including its 22px padding). */
+.f2 .site-bar .topbar { position: relative; z-index: 30; max-width: 1016px; margin: 0 auto; }
+.f2.f2-wide .site-bar .topbar { max-width: 1136px; }
+.f2.f2-narrow .site-bar .topbar { max-width: 760px; }
+.f2 .site-bar .topbar .brand { font-size: 18px; letter-spacing: -.01em; }
+
+/* Staff: same bar, staff tokens, and the blue / green / crimson stripe the staff footer also uses. */
+.f2.aud-staff { --hero-end: #3F94C8; }
+.f2.aud-staff .site-bar { border-bottom: 0; }
+.f2.aud-staff .site-bar::after {
+    content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 4px;
+    background: linear-gradient(90deg, var(--primary-light) 0 40%, var(--leaf) 40% 70%, var(--accent) 70% 100%);
+}
+
+/* ---- Content column ---- */
+.f2 main.wrap { padding-top: 26px; }
+.f2 .cards-wrap { margin-top: 0; }                          /* beats the old -62px overlap; the class stays until Phase 2 */
+.f2.f2-narrow main.wrap { max-width: 804px; }
+
+.f2 .page-back {
+    display: inline-block; margin: 0 0 10px; font-size: 13.5px; font-weight: 600;
+    color: var(--primary); text-decoration: none;
+}
+.f2 .page-back:hover { color: var(--accent); text-decoration: underline; }
+.f2 .page-head { margin: 0 0 22px; }
+.f2 .page-head h1 {
+    margin: 0 0 6px; font-size: clamp(26px, 3.6vw, 34px); font-weight: 800; letter-spacing: -.02em; line-height: 1.15;
+    color: var(--ink); text-wrap: balance; overflow-wrap: anywhere;
+}
+.f2 .page-head .lead { margin: 0; max-width: 680px; color: var(--muted); font-size: 15.5px; }
+.f2 .page-eyebrow {
+    margin: 0 0 4px; font-size: 12.5px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: var(--muted);
+}
+
+/* Pieces that used to sit on the blue band and assumed white text */
+.f2 .section-title.first { color: var(--muted); }
+.f2 .lead-notice {
+    display: inline-block; margin: 12px 0 0; padding: 4px 14px; border-radius: 999px;
+    font-size: 13.5px; font-weight: 600; color: var(--leaf-dark); background: var(--leaf-tint); border: 1px solid #bfdfca;
+}
+.f2 .lead-link { margin: 12px 0 0; font-size: 14.5px; }
+.f2 .lead-link a { color: var(--primary); font-weight: 600; }
+
+/* ---- Small phones: "Join" moves into the menu (the menu shows it at the top) ---- */
+@media (max-width: 480px) {
+    .f2 .site-bar .chip-btn.solid { display: none; }
+}
+@media (max-width: 640px) {
+    .f2 .site-bar { padding: 12px 18px; }
+    .f2 main.wrap { padding-top: 20px; }
+}
