@@ -2,7 +2,7 @@
 require_once __DIR__ . '/../../includes/init.php';
 require_once __DIR__ . '/../../includes/auth.php';
 require_once __DIR__ . '/../../includes/mailer.php';
-require_once __DIR__ . '/../../includes/engage_page.php';   // engage_asset(): versioned CSS links
+require_once __DIR__ . '/../../includes/engage_page.php';
 require_once __DIR__ . '/../../models/PasswordResetModel.php';
 
 /**
@@ -53,90 +53,56 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $sent = true;
     }
 }
+
+engage_header([
+    'title'   => 'Reset password',
+    'heading' => $sent ? 'Check your email' : 'Reset your password',
+    'lead'    => $sent
+        ? 'If that address belongs to an organizer account, a reset link is on its way. It expires in an hour and can be used once.'
+        : 'Enter the email address on your organizer account and we will send you a link to choose a new password.',
+    'back'    => ['Back to sign in', '/admin/login'],
+    'auth'    => true,
+    'noindex' => true,
+]);
 ?>
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <link rel="icon" type="image/png" href="https://dcwwiki.org/dcwwiki/images/5/56/DCW_logo.png">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#061A1E">
-    <meta name="robots" content="noindex, nofollow">
-    <title>Reset password - DCW Engage</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="<?= htmlspecialchars(engage_asset('/assets/css/engage.css'), ENT_QUOTES) ?>">
-    <link rel="stylesheet" href="<?= htmlspecialchars(engage_asset('/assets/css/staff.css'), ENT_QUOTES) ?>">
-</head>
-<body class="admin signin">
-    <main class="signin-shell">
-        <section class="signin-brand">
-            <span class="s-logo"><img src="https://dcwwiki.org/dcwwiki/images/5/56/DCW_logo.png" alt="Deoband Community Wikimedia"></span>
-            <p class="kicker">Organizer workspace</p>
-            <h1>Locked <em>out?</em></h1>
-            <p class="lead">It happens. We will email a link that lets you choose a new password.</p>
-            <div class="stripe" aria-hidden="true"></div>
-        </section>
+<div class="auth-card">
+<?php if ($sent): ?>
+    <div class="notice">
+        Nothing arrived? Check spam, and make sure you used the address
+        your account was created with. Asking again sends a fresh link
+        and cancels the previous one.
+    </div>
+    <p class="alt"><a href="/admin/login">Back to sign in</a></p>
+<?php else: ?>
+    <?php if ($error): ?>
+        <div class="alert error" role="alert"><?= htmlspecialchars($error) ?></div>
+    <?php endif; ?>
 
-        <div class="auth-card">
-        <?php if ($sent): ?>
-            <h2>Check your email</h2>
-            <p class="sub">
-                If that address belongs to an organizer account, a reset link is
-                on its way. It expires in an hour and can be used once.
-            </p>
-            <div class="notice">
-                Nothing arrived? Check spam, and make sure you used the address
-                your account was created with. Asking again sends a fresh link
-                and cancels the previous one.
-            </div>
-            <p class="alt"><a href="/admin/login">Back to sign in</a></p>
-        <?php else: ?>
-            <h2>Reset your password</h2>
-            <p class="sub">
-                Enter the email address on your organizer account and we will
-                send you a link to choose a new password.
-            </p>
+    <form method="POST" autocomplete="off">
+        <?= CSRF::getInputField() ?>
+        <?= CSRF::getSubmitField() ?>
 
-            <?php if ($error): ?>
-                <div class="alert error" role="alert"><?= htmlspecialchars($error) ?></div>
-            <?php endif; ?>
+        <label for="email">Email</label>
+        <input type="email" name="email" id="email" required autofocus
+               autocomplete="email" placeholder="you@dcwwiki.org">
 
-            <form method="POST" autocomplete="off">
-                <?= CSRF::getInputField() ?>
-                <?= CSRF::getSubmitField() ?>
+        <button type="submit" class="btn-primary">Send reset link</button>
+    </form>
 
-                <label for="email">Email</label>
-                <input type="email" name="email" id="email" required autofocus
-                       autocomplete="email" placeholder="you@dcwwiki.org">
-
-                <button type="submit" class="btn-primary">Send reset link</button>
-            </form>
-
-            <p class="alt"><a href="/admin/login">Back to sign in</a></p>
-        <?php endif; ?>
-        </div>
-    </main>
-
-    <footer>
-        <div class="org">
-            <img src="https://dcwwiki.org/dcwwiki/images/5/56/DCW_logo.png" alt="">
-            <span>Deoband Community Wikimedia</span>
-        </div>
-        <div><a href="/">Back to DCW Engage</a></div>
-    </footer>
-
-    <script>
-        // Stops the obvious double click. The single-use submit token on the
-        // server is what actually guarantees one email.
-        document.querySelectorAll('form').forEach(function (form) {
-            form.addEventListener('submit', function () {
-                var button = form.querySelector('button[type=submit]');
-                if (!button || button.disabled) return;
-                button.style.minWidth = button.offsetWidth + 'px';
-                button.disabled = true;
-                button.textContent = 'Sending...';
-            });
+    <p class="alt"><a href="/admin/login">Back to sign in</a></p>
+<?php endif; ?>
+</div>
+<script>
+    // Stops the obvious double click. The single-use submit token on the
+    // server is what actually guarantees one email.
+    document.querySelectorAll('form').forEach(function (form) {
+        form.addEventListener('submit', function () {
+            var button = form.querySelector('button[type=submit]');
+            if (!button || button.disabled) return;
+            button.style.minWidth = button.offsetWidth + 'px';
+            button.disabled = true;
+            button.textContent = 'Sending...';
         });
-    </script>
-</body>
-</html>
+    });
+</script>
+<?php engage_footer(); ?>

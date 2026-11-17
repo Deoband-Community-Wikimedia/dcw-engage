@@ -389,11 +389,11 @@ cert_rows_css();   // icons, buttons and certificate rows shared with /member/ce
     .d-id::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 5px; background: linear-gradient(90deg, var(--primary) 0 40%, var(--accent) 40% 70%, var(--leaf) 70% 100%); }
     .d-id-top { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; padding: 0 2px 18px; }
     .d-id-link { display: flex; align-items: center; gap: 16px; min-width: 0; color: inherit; text-decoration: none; }
-    .d-id-link:hover h2 { color: var(--primary); }
+    .d-id-link:hover h1 { color: var(--primary); }
     .d-prof { margin-left: auto; padding: 7px 16px; font-size: 13.5px; }
     .d-avatar { width: 52px; height: 52px; flex: none; border-radius: 50%; display: grid; place-items: center; font-size: 18px; font-weight: 700; color: var(--primary-dark); background: var(--primary-tint); }
     .d-id-who { min-width: 0; }
-    .d-id-who h2 { margin: 0; font-size: 19px; font-weight: 700; letter-spacing: -.01em; line-height: 1.3; overflow-wrap: anywhere; }
+    .d-id-who h1 { margin: 0; font-size: 19px; font-weight: 700; letter-spacing: -.01em; line-height: 1.3; overflow-wrap: anywhere; }
     .d-id-who p { margin: 2px 0 0; color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; }
 
     /* Memberships: one slim row each, a dot and a tinted label instead of a pill-and-card */
@@ -479,7 +479,7 @@ cert_rows_css();   // icons, buttons and certificate rows shared with /member/ce
             <a class="d-id-link" href="/member/profile" aria-label="Open my profile">
                 <span class="d-avatar" aria-hidden="true"><?= htmlspecialchars($initials) ?></span>
                 <div class="d-id-who">
-                    <h2>Hello, <?= htmlspecialchars($firstName) ?></h2>
+                    <h1>Hello, <?= htmlspecialchars($firstName) ?></h1>
                     <p><?= htmlspecialchars($fullName !== '' ? $fullName . ' · ' : '') ?>Member ID <?= htmlspecialchars((string) $member['member_id']) ?></p>
                 </div>
             </a>

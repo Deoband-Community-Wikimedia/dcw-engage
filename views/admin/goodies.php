@@ -71,16 +71,7 @@ require_once __DIR__ . '/../../includes/goodies_orders_admin.php';
 Auth::requireLogin();
 // Signed in but not a support reviewer or owner: 403, the same way Auth::requireOwner() treats a non-owner.
 if (!Auth::hasAnyRole(['support_reviewer', 'owner'])) {
-    http_response_code(403);
-    header('Content-Type: text/html; charset=utf-8');
-    echo '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">'
-       . '<meta name="robots" content="noindex, nofollow"><title>Not allowed - DCW Engage</title></head><body '
-       . 'style="font-family: Inter, -apple-system, sans-serif; background:#f8fafc; color:#1e293b; display:flex; align-items:center; '
-       . 'justify-content:center; min-height:100vh; margin:0; padding:20px;"><div style="max-width:420px; text-align:center;">'
-       . '<h1 style="color:#106b9a; font-size:20px; margin:0 0 8px;">Not allowed</h1>'
-       . '<p style="color:#64748b; font-size:14px; line-height:1.6; margin:0 0 20px;">Goodies are managed by support reviewers. Ask an owner if you need access.</p>'
-       . '<a href="/admin/dashboard" style="color:#106b9a; font-size:14px;">Back to workspace</a></div></body></html>';
-    exit;
+    engage_forbidden('Goodies are managed by support reviewers. Ask an owner if you need access.');
 }
 
 $actor = strtolower((string) Auth::email());

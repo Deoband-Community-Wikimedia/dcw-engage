@@ -5,7 +5,7 @@
  *
  * Uses the project's own CSRF class (validate / getInputField / getSubmitField / consumeSubmitToken).
  *
- * Styles: the .ms-* rules now live in assets/css/engage.css (section "Member support"), written with the
+ * Styles: the .ms-* rules live in assets/css/engage.css (section "Member support"), written with the
  * shared colour tokens, so the same markup is blue on member pages and teal on staff pages.
  * ms_styles() is kept (and returns nothing) so pages that still call it keep working.
  */
@@ -62,7 +62,7 @@ function ms_flash_html(): string
 }
 
 // ---------------------------------------------------------------- styles
-/** The styles moved to engage.css. Kept so existing calls (echo ms_styles()) still work. */
+/** The styles live in engage.css. Kept so existing calls (echo ms_styles()) still work. */
 function ms_styles(): string
 {
     return '';
@@ -70,9 +70,9 @@ function ms_styles(): string
 
 // ---------------------------------------------------------------- member page chrome
 /**
- * Member support pages (/member/talk and its conversations) use the shared page shell, so they get the
- * same member menu (avatar + three lines) as the dashboard, the chapter colours and the shared footer.
- * $links is no longer shown: everything it held (dashboard, new conversation, sign out) is in the menu.
+ * Member support pages (/member/talk and its conversations) use the shared page frame: the member menu,
+ * the chapter colours and the shared footer. One back link: a conversation goes back to the list, the list
+ * goes back to the dashboard. $links and $kicker are accepted for old callers and ignored.
  * Opens <main>; ms_foot() closes it.
  */
 function ms_head(string $title, string $h1, string $lead, array $links = [], string $kicker = ''): void
@@ -80,25 +80,19 @@ function ms_head(string $title, string $h1, string $lead, array $links = [], str
     $member = class_exists('MemberSession') ? MemberSession::current() : null;
     $path   = (string) parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH);
 
-    // Home > My dashboard > Talk to DCW > (this conversation), like the other member pages.
-    $crumbs = [['Home', '/'], ['My dashboard', '/member/dashboard']];
-    if ($path !== '/member/talk') {
-        $crumbs[] = ['Talk to DCW', '/member/talk'];
-    }
-    $crumbs[] = [$h1];
+    $back = $path !== '/member/talk'
+        ? ['Talk to DCW', '/member/talk']
+        : ['My dashboard', '/member/dashboard'];
 
-    $o = [
+    engage_header([
         'title'   => $title,
         'heading' => $h1,
         'lead'    => $lead,
         'member'  => $member,
         'tools'   => $member ? engage_member_menu($member, ['current' => '/member/talk']) : null,
-        'crumbs'  => $crumbs,
+        'back'    => $back,
         'wide'    => true,
-    ];
-    if ($kicker !== '') $o['kicker'] = $kicker;
-
-    engage_header($o);
+    ]);
     echo ms_flash_html();
 }
 

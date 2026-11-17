@@ -1,7 +1,7 @@
 <?php
 require_once __DIR__ . '/../../includes/init.php';
 require_once __DIR__ . '/../../includes/auth.php';
-require_once __DIR__ . '/../../includes/engage_page.php';   // engage_asset(): versioned CSS links
+require_once __DIR__ . '/../../includes/engage_page.php';
 
 // Where to land after a successful sign in.
 $next = $_GET['next'] ?? $_POST['next'] ?? '';
@@ -33,66 +33,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 }
+
+engage_header([
+    'title'   => 'Organizer sign in',
+    'heading' => 'Organizer sign in',
+    'lead'    => 'Use the email and password for your organizer account.',
+    'auth'    => true,
+    'noindex' => true,
+]);
 ?>
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <?php require __DIR__ . '/../../includes/favicon.php'; ?>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#061A1E">
-    <meta name="robots" content="noindex, nofollow">
-    <title>Organizer sign in - DCW Engage</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="<?= htmlspecialchars(engage_asset('/assets/css/engage.css'), ENT_QUOTES) ?>">
-    <link rel="stylesheet" href="<?= htmlspecialchars(engage_asset('/assets/css/staff.css'), ENT_QUOTES) ?>">
-</head>
-<body class="admin signin">
-    <main class="signin-shell">
-        <section class="signin-brand">
-            <span class="s-logo"><img src="https://dcwwiki.org/dcwwiki/images/5/56/DCW_logo.png" alt="Deoband Community Wikimedia"></span>
-            <p class="kicker">Organizer workspace</p>
-            <h1>DCW <em>Engage</em></h1>
-            <p class="lead">Sign in to review applications, memberships and support requests.</p>
-            <div class="stripe" aria-hidden="true"></div>
-        </section>
+<div class="auth-card">
+    <?php if ($notice): ?>
+        <div class="alert ok" role="status"><?= htmlspecialchars($notice) ?></div>
+    <?php endif; ?>
 
-        <div class="auth-card">
-            <h2>Sign in</h2>
-            <p class="sub">Use the email and password for your organizer account.</p>
+    <?php if ($error): ?>
+        <div class="alert error" role="alert"><?= htmlspecialchars($error) ?></div>
+    <?php endif; ?>
 
-            <?php if ($notice): ?>
-                <div class="alert ok" role="status"><?= htmlspecialchars($notice) ?></div>
-            <?php endif; ?>
+    <form method="POST" autocomplete="off">
+        <?= CSRF::getInputField() ?>
+        <input type="hidden" name="next" value="<?= htmlspecialchars($next, ENT_QUOTES) ?>">
 
-            <?php if ($error): ?>
-                <div class="alert error" role="alert"><?= htmlspecialchars($error) ?></div>
-            <?php endif; ?>
+        <label for="email">Email</label>
+        <input type="email" name="email" id="email" required autofocus
+               value="<?= htmlspecialchars($_POST['email'] ?? '', ENT_QUOTES) ?>">
 
-            <form method="POST" autocomplete="off">
-                <?= CSRF::getInputField() ?>
-                <input type="hidden" name="next" value="<?= htmlspecialchars($next, ENT_QUOTES) ?>">
+        <label for="password">Password</label>
+        <input type="password" name="password" id="password" required>
 
-                <label for="email">Email</label>
-                <input type="email" name="email" id="email" required autofocus
-                       value="<?= htmlspecialchars($_POST['email'] ?? '', ENT_QUOTES) ?>">
+        <button type="submit" class="btn-primary">Sign in</button>
+    </form>
 
-                <label for="password">Password</label>
-                <input type="password" name="password" id="password" required>
-
-                <button type="submit" class="btn-primary">Sign in</button>
-            </form>
-
-            <p class="alt"><a href="/admin/forgot-password">Forgot your password?</a></p>
-        </div>
-    </main>
-
-    <footer>
-        <div class="org">
-            <img src="https://dcwwiki.org/dcwwiki/images/5/56/DCW_logo.png" alt="">
-            <span>Deoband Community Wikimedia</span>
-        </div>
-        <div><a href="/">Back to DCW Engage</a></div>
-    </footer>
-</body>
-</html>
+    <p class="alt"><a href="/admin/forgot-password">Forgot your password?</a></p>
+</div>
+<?php engage_footer(); ?>

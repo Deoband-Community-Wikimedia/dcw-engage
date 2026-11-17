@@ -340,7 +340,7 @@ engage_header([
 
 // Section headings sit on the blue band only for guests with nothing above them (white text).
 // For members the greeting comes first, so every heading is normal grey on the light page.
-$onBand = !$signedInMember;
+$onBand = false; // headings no longer sit on the blue band
 ?>
         <?php if ($signedInMember): ?>
             <section class="greet" aria-label="Welcome">

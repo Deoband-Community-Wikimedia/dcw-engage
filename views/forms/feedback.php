@@ -343,9 +343,6 @@ engage_header([
     /* Feedback form only. The shared look comes from /assets/css/engage.css; these few rules
        mirror the ones the application renderer defines inline. */
 
-    /* Long titles wrap evenly. The heading stays left-aligned (slim hero). */
-    .hero h1 { text-wrap: balance; }
-
     /* The form card uses the full content width, so its left edge lines up with the heading and the
        top bar, like the panels on the member dashboard. To keep a narrower form, use for example:
        .fcard { max-width: 860px; margin-left: 0; } */
