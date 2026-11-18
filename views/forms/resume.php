@@ -14,6 +14,7 @@ $application = $appModel->getApplicationByToken($resumeToken);
 if (!$application) {
     http_response_code(404);
     engage_header([
+        'page'    => 'form-resume',
         'title'   => 'Link expired',
         'heading' => 'Link expired or invalid',
         'crumbs'  => [['Home', '/'], ['Link expired']],
@@ -172,33 +173,13 @@ $e = fn($s) => htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8');
 $label_html = fn($s) => MiniWikiText::inline(htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8'));
 
 engage_header([
+    'page'    => 'form-resume',
     'title'   => 'Edit Application - ' . ($schema['title'] ?? 'Application'),
     'heading' => $schema['title'] ?? 'Application',
     'kicker'  => 'Edit your application',
     'crumbs'  => [['Home', '/'], ['Edit application']],
 ]);
 ?>
-<style>
-    /* Page-specific bits not in engage.css: file drop zone and field errors */
-    .fcard .field .error-text { display: block; margin-top: 5px; font-size: 13px; color: #b91c1c; }
-    .dropzone { position: relative; padding: 22px; text-align: center; background: #f8fafc; border: 2px dashed #cbd5e1; border-radius: 12px; transition: border-color .15s, background .15s; }
-    .dropzone-dragover { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 6%, #fff); }
-    .dropzone-has-error { border-color: #ef4444; }
-    .dropzone-input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
-    .dropzone-icon, .dropzone-file-icon { width: 40px; height: 40px; color: var(--primary); }
-    .dropzone-text { margin: 8px 0 2px; font-size: 14.5px; }
-    .dropzone-browse { color: var(--primary); font-weight: 700; text-decoration: underline; }
-    .dropzone-hint { margin: 0; font-size: 13px; color: var(--muted); }
-    .dropzone-preview { align-items: center; gap: 12px; text-align: left; }
-    .dropzone-file-info { flex: 1; min-width: 0; display: flex; flex-direction: column; font-size: 14px; }
-    .dropzone-filename { font-weight: 600; overflow-wrap: anywhere; }
-    .dropzone-filesize { color: var(--muted); font-size: 13px; }
-    .dropzone-remove { position: relative; z-index: 2; width: 32px; height: 32px; border: 1px solid var(--border); border-radius: 50%; background: #fff; font-size: 20px; line-height: 1; cursor: pointer; }
-    .btn-row { display: flex; flex-wrap: wrap; gap: 10px; }
-    .fcard .btn-row button[type=submit] { flex: 1 1 200px; width: auto; }
-    .fcard .btn-row button.draft[type=submit] { background: #fff; color: var(--primary); border: 1px solid var(--primary); box-shadow: none; }
-    .choices.stack input { margin: 0; }
-</style>
 
 <div class="fcard">
     <?php if (!empty($schema['banner_image'])): ?>
