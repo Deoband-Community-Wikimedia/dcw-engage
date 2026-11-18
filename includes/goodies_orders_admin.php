@@ -60,33 +60,12 @@ function goodies_orders_post(string $do, PointsModel $model, string $actor): voi
     goodies_flash($r['email'] === false && $to === 'Shipped' ? 'error' : 'ok', $msg);
 }
 
-/** Styles, the small scripts and the courier list, printed once per page. */
+/** The small scripts and the courier list, printed once per page. The styles live in assets/css/engage.css. */
 function goodies_orders_assets(): void
 {
     static $done = false;
     if ($done) return;
     $done = true; ?>
-    <style>
-        .od-ship > summary { display: inline-block; padding: 9px 18px; border: 1px solid var(--primary); border-radius: 999px; background: #fff; color: var(--primary); font-weight: 600; font-size: 14px; cursor: pointer; list-style: none; }
-        .od-ship > summary::-webkit-details-marker { display: none; }
-        .od-ship[open] > summary { background: var(--primary); color: #fff; }
-        .od-ship form { display: grid; gap: 10px; min-width: min(380px, 80vw); margin: 10px 0 0; padding: 14px; background: #F3F8FC; border: 1.5px solid var(--border); border-radius: 12px; text-align: left; }
-        .od-ship label { display: block; font-size: 13px; font-weight: 600; }
-        .od-ship input[type=text], .od-ship input[type=url], .od-ship input[type=number], .od-ship select { width: 100%; box-sizing: border-box; margin-top: 4px; padding: 8px 11px; font: inherit; font-weight: 400; border: 1.5px solid #BCCFDD; border-radius: 10px; background: #fff; }
-        .od-ship .od-how { display: flex; gap: 8px; }
-        .od-ship .od-how label { display: inline-flex; gap: 6px; align-items: center; padding: 8px 14px; border: 1.5px solid var(--border); border-radius: 999px; background: #fff; cursor: pointer; }
-        .od-ship .od-how label:has(input:checked) { background: #e8f3f9; border-color: var(--primary); color: #0b4f73; }
-        .od-ship small { display: block; margin-top: 3px; color: var(--muted); font-weight: 400; font-size: 12px; }
-        .od-items { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 8px; }
-        .od-items > li { padding: 10px 12px; background: #fff; border: 1px solid var(--border); border-radius: 12px; }
-        .od-items .od-l { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; }
-        .od-items .od-n { font-weight: 700; font-size: 14px; overflow-wrap: anywhere; }
-        .od-items .od-s { margin-top: 4px; color: var(--muted); font-size: 12.5px; }
-        .od-items .od-s b { color: #166534; }
-        .od-items .od-s .out { color: #92400e; font-weight: 700; }
-        .od-items .od-ship > summary { padding: 5px 14px; font-size: 13px; }
-        .od-items .od-ship form { margin-top: 8px; }
-    </style>
     <script>
     document.addEventListener('change', function (e) {
         var f = e.target.form;
