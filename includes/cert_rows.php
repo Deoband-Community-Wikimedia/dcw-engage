@@ -62,52 +62,9 @@ function cert_row(array $c, string $defaultBase): void
     <?php
 }
 
-/** Styles shared by both pages: icons, buttons, certificate rows. Scoped under .dash. */
+/** The styles live in assets/css/engage.css. Kept (and empty) so existing calls keep working. */
 function cert_rows_css(): void
 {
-    ?>
-    <style>
-        .dash svg.i { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-
-        /* Buttons: pills in the same family as .btn-primary / .btn-ghost */
-        .d-btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 9px 18px; border-radius: 999px; border: 1px solid transparent; font: inherit; font-size: 14px; font-weight: 700; line-height: 1.2; text-decoration: none; cursor: pointer; transition: background .15s, border-color .15s; }
-        .d-btn.fill { color: #fff; background: linear-gradient(135deg, var(--primary-dark), var(--primary)); box-shadow: 0 5px 14px rgba(46,101,153,.3); }
-        .d-btn.fill:hover { box-shadow: 0 9px 20px rgba(46,101,153,.38); }
-        .d-btn.line { color: var(--primary); background: #fff; border-color: var(--primary); }
-        .d-btn.line:hover { background: var(--primary-tint); }
-        .d-btn.soft { padding: 7px 14px; font-size: 13.5px; color: var(--primary-dark); background: var(--primary-tint); }
-        .d-btn.soft:hover { background: color-mix(in srgb, var(--primary) 16%, #fff); }
-        .d-btn.amber { color: #fff; background: #92400e; padding: 8px 16px; }
-        .d-btn.amber:hover { background: #78350f; }
-        .d-btn:focus-visible, .c-menu summary:focus-visible, .c-pop a:focus-visible, .c-pop button:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
-
-        /* Certificate list: one panel, hairline dividers, no card per item */
-        .c-list { background: var(--card); border: 1px solid var(--border); border-radius: 14px; }
-        .c-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 14px; padding: 13px 18px; }
-        .c-row + .c-row { border-top: 1px solid var(--border); }
-        .c-seal { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; color: var(--leaf-dark); background: var(--leaf-tint); }
-        .c-body h3 { margin: 0; font-size: 15.5px; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
-        .c-body p { margin: 2px 0 0; font-size: 13px; color: var(--muted); line-height: 1.5; overflow-wrap: anywhere; }
-        .c-body code { font-size: 12px; background: #f1f5f9; padding: 1px 6px; border-radius: 5px; color: var(--ink); }
-        .c-new { margin-left: 8px; padding: 1px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 700; vertical-align: 2px; color: var(--leaf-dark); background: var(--leaf-tint); }
-        .c-acts { display: flex; align-items: center; gap: 6px; }
-
-        /* "More" menu (native <details>, no script needed to open) */
-        .c-menu { position: relative; }
-        .c-menu summary { list-style: none; width: 34px; height: 34px; display: grid; place-items: center; border-radius: 50%; color: var(--muted); cursor: pointer; }
-        .c-menu summary::-webkit-details-marker { display: none; }
-        .c-menu summary:hover, .c-menu[open] summary { background: #eef3f8; color: var(--ink); }
-        .c-pop { position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; min-width: 170px; padding: 6px; background: #fff; border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 10px 24px rgba(15,23,42,.12); }
-        .c-pop a, .c-pop button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 12px; border: 0; border-radius: 8px; background: none; font: inherit; font-size: 14px; font-weight: 600; color: var(--ink); text-align: left; text-decoration: none; cursor: pointer; }
-        .c-pop a:hover, .c-pop button:hover { background: var(--primary-tint); }
-        .c-pop svg.i { width: 16px; height: 16px; color: var(--muted); }
-
-        @media (max-width: 560px) {
-            .c-row { grid-template-columns: auto minmax(0, 1fr); padding: 13px 14px; }
-            .c-acts { grid-column: 2; justify-content: space-between; }
-        }
-    </style>
-    <?php
 }
 
 /** Copy buttons ([data-copy]) and closing the "more" menus when clicking elsewhere or pressing Esc. */
