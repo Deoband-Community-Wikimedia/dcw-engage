@@ -1,8 +1,7 @@
 <?php
 require_once __DIR__ . '/social_meta.php';
 require_once __DIR__ . '/chapter_theme.php';
-// PHASE 1: the new frame, the one menu (engage_nav) and the member/guest/staff menu wrappers live here.
-require_once __DIR__ . '/engage_frame.php';
+require_once __DIR__ . '/engage_frame.php';   // engage_header(), engage_forbidden(), engage_nav() and the menu wrappers
 
 /**
  * Absolute path of a file under the web root (e.g. '/assets/css/engage.css'), or null if it can't be found.
@@ -44,181 +43,15 @@ function engage_logo_url(string $chapter = ''): string {
     return engage_asset('/assets/chapters/generic.svg');
 }
 
-/**
- * OLD page frame. PHASE 1: this used to be engage_header(). engage_header() now lives in includes/engage_frame.php
- * and calls this function while ENGAGE_FRAME_V2 is false. Deleted in Phase 5.
- *
- * Compact DCW Engage page shell.
- * Usage: engage_header([...]); ...content...; engage_footer();
- *
- * Staff pages (/admin, /finance) automatically get the staff scheme ("Logo Blue, Green & Crimson"): the <body> gets
- * class="admin", assets/css/staff.css is loaded after engage.css, the page is marked noindex, and the brand
- * link goes to the workspace. A staff page that passes no 'tools' also gets the shared staff menu
- * (engage_staff_menu()): chips on wide screens, one hamburger on phones.
- *
- * Member pages that pass 'member' get that member's chapter colors and chapter logo (see
- * includes/chapter_theme.php). Staff pages and pages with no member keep the default DCW look.
+/*
+ * The page shell is engage_header() (and engage_forbidden() for the 403 page) in includes/engage_frame.php, with its
+ * options documented there. Usage: engage_header([...]); ...content...; engage_footer();
  *
  * Owner preview: the owner-only page admin/chapter-themes.php sets $GLOBALS['ENGAGE_THEME_PREVIEW'] = true
  * before calling engage_header(). While that flag is set, a page under /admin is drawn with the MEMBER look
  * (no staff scheme, no staff footer), is marked noindex and has no social preview tags, so the owner sees
  * exactly what a member of the chosen chapter sees. Pass a made-up member (engage_preview_member()), never a real one.
- *
- * Options:
- *   title    <title> text (" - DCW Engage" is added)
- *   heading  big heading in the hero (defaults to title)
- *   kicker   small pill above the heading (not shown on slim pages)
- *   lead     optional sentence under the heading (plain text)
- *   lead_html optional trusted, already-escaped HTML shown under the lead (for example a link)
- *   member   MemberSession::current() row, or null
- *   tools    raw, already-escaped HTML for the top-bar buttons (overrides the member links and the staff menu)
- *   wide     true for wide layouts (finance queue and tables)
- *   home     true for the public home page: a slim hero with a left-aligned heading and lead, no big
- *            logo, no kicker pill, and no breadcrumbs unless 'crumbs' is given
- *   slim     true for any other page that should use the same slim top bar as the home page
- *            with a left-aligned heading and lead, no kicker pill, and the breadcrumb trail kept.
- *            'home' implies it.
- *   compact  true for a shorter band (member pages, and the home page for signed-in members). Implies
- *            'slim', and the breadcrumb trail is off unless 'crumbs' is given.
- *   bare     true for a band with only the top bar: no heading, no lead, no trail (the dashboard).
- *            Implies 'compact'.
- *   flat     true for a band with only the top bar (like 'bare'), but the page starts below the band
- *            with no overlap (the signed-in member's home page). Implies 'slim'.
- *   back     [label, href] a single quiet "← label" link above the heading (replaces the breadcrumb
- *            pills on member pages), e.g. ['Dashboard', '/member/dashboard'].
- *   crumbs   breadcrumb trail, e.g. [['Home','/'],['Support','/support'],['Reimbursement']].
- *            The last item is the current page (no link). A "Back" button pointing to the
- *            nearest linked crumb is added automatically. Defaults to Home > heading
- *            (or no trail at all when 'home', 'compact' or 'bare' is true). Pass [] to hide the trail.
- *   description  social preview text (optional; a default is used)
- *   image        social preview image: a Commons file name or link, any URL, or a path (optional;
- *                the default Commons photo in includes/social_meta.php is used)
- *   image_alt    alt text for the preview image (defaults to the heading)
- *   noindex      true for a private page opened from a secret link (for example /confirm/<token>): the page is marked
- *                noindex and gets no social preview tags, so the event name and link are never shared or indexed.
- *
- * Top bar: the brand sits alone on the left. On the right, a signed-in member gets the avatar menu
- * (engage_member_menu(), which also holds the About DCW links). Everyone else gets whatever 'tools'
- * holds plus a small menu button (engage_guest_menu()) with Track application, Members and About DCW.
  */
-function engage_header_legacy(array $o) {
-    $title    = $o['title'];
-    $heading  = $o['heading'] ?? $title;
-    $kicker   = $o['kicker'] ?? 'Deoband Community Wikimedia';
-    $lead     = $o['lead'] ?? '';
-    $leadHtml = (string) ($o['lead_html'] ?? '');
-    $member   = $o['member'] ?? null;
-    $tools    = $o['tools'] ?? null;
-    $noindex  = !empty($o['noindex']);   // private page: not indexed, no social preview
-
-    // Staff pages with no top-bar tools of their own get the shared staff menu.
-    if (engage_is_staff_path() && ($tools === null || trim((string) $tools) === '')) {
-        $staffMenu = engage_staff_menu();
-        if ($staffMenu !== '') $tools = $staffMenu;
-    }
-
-    $wide     = !empty($o['wide']);
-    $home     = !empty($o['home']);
-    $bare     = !empty($o['bare']);
-    $flat     = !empty($o['flat']);   // top bar only: no heading, no lead, no trail; the page starts below the band
-    $compact  = $bare || !empty($o['compact']);
-    $slim     = $home || $compact || $flat || !empty($o['slim']);
-    $back     = (isset($o['back']) && is_array($o['back']) && !empty($o['back'][0]) && !empty($o['back'][1])) ? $o['back'] : null;
-    $crumbs   = ($bare || $flat) ? [] : ($o['crumbs'] ?? (($home || $compact) ? [] : [['Home', '/'], [$heading]]));
-    $backHref = null; $backLabel = null;
-    foreach ($crumbs as $c) { if (!empty($c[1])) { $backHref = $c[1]; $backLabel = $c[0]; } }
-    $e = fn($s) => htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8');
-
-    $isPreview = engage_is_theme_preview();
-
-    // Public pages get the About DCW links (inside the menu); staff pages (/admin, /finance) do not need them.
-    $about = engage_is_staff_path() ? [] : engage_about_links(true);
-    // A page that already passes the member menu has the About links inside it. Everyone else gets the small menu.
-    $hasMemberMenu = $tools !== null && strpos((string) $tools, 'mmenu') !== false;
-    $showGuestMenu = !$hasMemberMenu && !empty($about);
-    $joinInMenu    = $tools !== null && strpos((string) $tools, '/membership') !== false;
-
-    $heroClass = 'hero' . ($slim ? ' slim' : '') . ($home ? ' home' : '') . ($compact ? ' compact' : '') . ($bare ? ' bare' : '') . ($flat ? ' flat' : '');
-    $isStaff   = engage_is_staff_path();
-    // The brand goes to the workspace on staff pages, to the public home page everywhere else.
-    $brandHref = $isStaff ? '/admin/dashboard' : '/';
-
-    // Chapter look: a signed-in member sees their chapter's colors and logo. Staff pages and pages with no
-    // member keep the default DCW look ($themeCss is '' and the logo is the DCW seal).
-    // The theme is worked out once, here, and printed from the same array.
-    $chapterKey = (!$isStaff && $member) ? engage_chapter_key($member) : '';
-    $themeVars  = $chapterKey !== '' ? engage_chapter_theme_vars($member) : [];
-    $themeCss   = engage_theme_vars_css($themeVars);
-    $themeColor = $isStaff ? '#051A2B' : ($themeVars['--primary'] ?? '#2E6599');   // fallback = --primary in engage.css
-    $logoUrl    = engage_logo_url($chapterKey);
-    ?>
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="<?= $e($themeColor) ?>">
-    <?php if ($isStaff || $isPreview || $noindex): ?><meta name="robots" content="noindex, nofollow"><?php endif; ?>
-    <title><?= $e($title) ?> - DCW Engage</title>
-    <?php ob_start(); require __DIR__ . '/favicon.php'; echo engage_strip_social_images(ob_get_clean()); ?>
-    <?php if (!$isStaff && !$isPreview && !$noindex) engage_social_meta([
-        'title'       => $title . ' - DCW Engage',
-        'description' => $o['description'] ?? null,
-        'image'       => $o['image'] ?? null,
-        'image_alt'   => $o['image_alt'] ?? $heading,
-    ]); ?>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <?php /* Versioned by file modification time: edits to the CSS show up at once, never stuck in a cache. */ ?>
-    <link rel="stylesheet" href="<?= $e(engage_asset('/assets/css/engage.css')) ?>">
-    <?php /* The member's chapter colors. Must come AFTER engage.css so these variables override the defaults. */ ?>
-    <?php if ($themeCss !== ''): ?><style><?= $themeCss ?></style><?php endif; ?>
-    <?php /* Staff pages (/admin, /finance) add the staff scheme on top of the shared design system. */ ?>
-    <?php if ($isStaff): ?><link rel="stylesheet" href="<?= $e(engage_asset('/assets/css/staff.css')) ?>"><?php endif; ?>
-</head>
-<body<?= $isStaff ? ' class="admin"' : '' ?>>
-<header class="<?= $e($heroClass) ?>">
-    <div class="topbar">
-        <?php /* The logo sits inside .brand-logo: a small circle that crops the image (see engage.css). It is the member's chapter logo (assets/chapters/<chapter>.svg) or the DCW seal (generic.svg). */ ?>
-        <a class="brand" href="<?= $e($brandHref) ?>"><span class="brand-logo"><img src="<?= $e($logoUrl) ?>" alt=""></span><span class="bname">DCW Engage</span></a>
-        <div class="tools">
-            <?php if ($tools !== null): ?>
-                <?= $tools ?>
-            <?php elseif ($member): ?>
-                <span class="who"><?= $e($member['full_name'] ?: $member['member_id']) ?> (<?= $e($member['member_id']) ?>)</span>
-                <a class="chip-btn" href="/member/dashboard">My dashboard</a>
-                <a class="chip-btn" href="/member/logout">Sign out</a>
-            <?php else: ?>
-                <a class="chip-btn" href="/">All programs</a>
-            <?php endif; ?>
-            <?php if ($showGuestMenu) echo engage_guest_menu($about, $joinInMenu); ?>
-        </div>
-    </div>
-    <?php if ($crumbs): ?>
-    <nav class="crumbs" aria-label="Breadcrumb">
-        <?php if ($backHref): ?><a class="back" href="<?= $e($backHref) ?>">&larr; Back</a><?php endif; ?>
-        <?php foreach ($crumbs as $i => $c): ?>
-            <?php if ($i > 0): ?><span class="sep" aria-hidden="true">/</span><?php endif; ?>
-            <?php if (!empty($c[1])): ?>
-                <a href="<?= $e($c[1]) ?>"><?= $e($c[0]) ?></a>
-            <?php else: ?>
-                <span class="here" aria-current="page"><?= $e($c[0]) ?></span>
-            <?php endif; ?>
-        <?php endforeach; ?>
-    </nav>
-    <?php endif; ?>
-    <?php if (!$bare && !$flat): ?>
-        <?php if ($slim): ?><div class="hero-copy"><?php endif; ?>
-        <?php if ($back): ?><a class="hero-back" href="<?= $e($back[1]) ?>">&larr; <?= $e($back[0]) ?></a><?php endif; ?>
-        <?php if (!$slim): ?><p class="kicker"><?= $e($kicker) ?></p><?php endif; ?>
-        <h1><?= $e($heading) ?></h1>
-        <?php if ($lead): ?><p class="lead"><?= $e($lead) ?></p><?php endif; ?>
-        <?php if ($leadHtml !== ''): ?><?= $leadHtml ?><?php endif; ?>
-        <?php if ($slim): ?></div><?php endif; ?>
-    <?php endif; ?>
-</header>
-<main class="wrap cards-wrap<?= $wide ? ' wide' : '' ?>">
-<?php
-}
 
 /**
  * Footer and "About DCW" settings: the ONE place to edit. Anything left empty is simply not shown.
@@ -305,104 +138,9 @@ function engage_about_links(bool $withContact = false): array {
     return $out;
 }
 
-/*
- * PHASE 1: engage_guest_menu() and engage_member_menu() were removed from this file.
- * They are now thin wrappers around engage_nav() in includes/engage_frame.php (same names, same arguments).
- */
-
 /**
- * Kept for older pages that may still call it. The header no longer uses it: the About DCW links now
- * live inside the top-bar menus (engage_guest_menu() and engage_member_menu()).
+ * The page footer, and the end of the page. Closes <main>. Styles: assets/css/engage.css, section "Site footer".
  */
-function engage_about_menu(array $about): void {
-    if (!$about) return;
-    $e = fn($s) => htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8');
-    $site = rtrim(engage_safe_url(engage_footer_config()['site'] ?? ''), '/');
-    ?>
-    <details class="about" id="about-menu">
-        <summary class="chip-btn">About DCW <span class="caret" aria-hidden="true">&#9662;</span></summary>
-        <div class="about-menu">
-            <?php foreach ($about as [$name, $href]): ?>
-                <?php $isSite = $site !== '' && rtrim($href, '/') === $site; ?>
-                <?php if ($isSite): ?><div class="about-sep"></div><?php endif; ?>
-                <a href="<?= $e($href) ?>" rel="noopener"<?= $isSite ? ' class="ext"' : '' ?>><?= $e($name) ?><?php if ($isSite): ?> <span aria-hidden="true">&#8599;</span><?php endif; ?></a>
-            <?php endforeach; ?>
-        </div>
-    </details>
-    <?php
-}
-
-/**
- * OLD staff top-bar menu. PHASE 1: this used to be engage_staff_menu(). engage_staff_menu() now lives in
- * includes/engage_frame.php: while ENGAGE_FRAME_V2 is false it calls this function, otherwise it returns the
- * one shared menu. Deleted in Phase 5.
- *
- * Wide screens get chips; phones get one hamburger with the same links (the switch is in engage.css:
- * .tools-wide / .tools-narrow).
- * Returns '' when nobody is signed in, so sign-in pages are unaffected.
- * Sign out posts to /admin/logout (POST only, CSRF checked there).
- */
-function engage_staff_menu_legacy(): string {
-    if (!class_exists('Auth')) return '';
-    try {
-        $email = trim((string) Auth::email());
-    } catch (Throwable $ex) {
-        return '';
-    }
-    if ($email === '') return '';
-
-    $e       = fn($s) => htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8');
-    $path    = (string) parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
-    $initial = mb_strtoupper(mb_substr($email, 0, 1)) ?: 'A';
-    $csrf    = class_exists('CSRF') ? CSRF::getInputField() : '';
-
-    // [label, href, roles that see it (null = everyone signed in)]. Each mirrors the gate on the page it opens.
-    $links = [
-        ['Workspace',        '/admin/dashboard',      null],
-        ['Finance',          '/finance',              ['finance', 'owner']],
-        ['Team',             '/admin/team',           ['owner']],
-        ['Audit log',        '/admin/audit',          ['owner']],
-        ['Chapter themes',   '/admin/chapter-themes', ['owner']],
-        ['Report a problem', '/admin/report-problem', null],
-    ];
-    $links = array_values(array_filter($links, function ($l) {
-        if ($l[2] === null) return true;
-        try { return Auth::hasAnyRole($l[2]); } catch (Throwable $ex) { return false; }
-    }));
-
-    ob_start(); ?>
-    <div class="tools-wide">
-        <span class="who"><?= $e($email) ?></span>
-        <?php foreach ($links as [$label, $href]): ?>
-            <?php if ($label === 'Report a problem' || $href === $path) continue; /* in the footer / already here */ ?>
-            <a class="chip-btn" href="<?= $e($href) ?>"><?= $e($label) ?></a>
-        <?php endforeach; ?>
-        <form method="POST" action="/admin/logout"><?= $csrf ?><button type="submit" class="chip-btn">Sign out</button></form>
-    </div>
-
-    <nav class="mnav tools-narrow" aria-label="Account menu">
-        <details class="mmenu burger">
-            <summary aria-label="Open menu">
-                <span class="mav" aria-hidden="true"><?= $e($initial) ?></span>
-                <span class="bars" aria-hidden="true"><i></i><i></i><i></i></span>
-            </summary>
-            <div class="mpop">
-                <div class="mwho">
-                    <span class="mav lg" aria-hidden="true"><?= $e($initial) ?></span>
-                    <span><strong>Signed in</strong><em><?= $e($email) ?></em></span>
-                </div>
-                <?php foreach ($links as [$label, $href]): $cur = $href === $path; ?>
-                    <a href="<?= $e($href) ?>"<?= $cur ? ' class="cur" aria-current="page"' : '' ?>><?= $e($label) ?></a>
-                <?php endforeach; ?>
-                <div class="msep"></div>
-                <form method="POST" action="/admin/logout"><?= $csrf ?><button type="submit" class="out">Sign out</button></form>
-            </div>
-        </details>
-    </nav>
-    <?php
-    return ob_get_clean();
-}
-
 function engage_footer() {
     $c   = engage_footer_config();
     $e   = fn($s) => htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8');
@@ -445,44 +183,6 @@ function engage_footer() {
     }
     ?>
 </main>
-<style>
-    /* Site footer. Self-contained so it works on every page; colors come from the tokens in engage.css
-       (and staff.css on staff pages).
-       The top edge is a three-color stripe taken from the DCW logo: blue, crimson, green. */
-    footer.site-footer {
-        display: block; text-align: left; margin: 48px 0 0; padding: 0;
-        background: var(--bg); color: var(--ink);
-        border-top: 4px solid transparent;
-        border-image: linear-gradient(90deg, var(--primary) 0 40%, var(--accent) 40% 70%, var(--leaf) 70% 100%) 1;
-    }
-    /* Staff pages: the same three logo colours (blue, green, crimson), to match the header band. */
-    body.admin footer.site-footer {
-        border-image: linear-gradient(90deg, var(--primary-light) 0 40%, var(--leaf) 40% 70%, var(--accent) 70% 100%) 1;
-    }
-    .site-footer .sf-inner { max-width: 1100px; margin: 0 auto; padding: 40px 24px 20px; }
-    .site-footer .sf-inner.sf-staff { padding-top: 22px; }
-    .site-footer .sf-grid { display: grid; grid-template-columns: 1.4fr repeat(3, 1fr); gap: 32px 28px; }
-    .site-footer .sf-org { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 16px; letter-spacing: -.01em; }
-    .site-footer .sf-org img { width: 34px; height: 34px; object-fit: contain; }
-    .site-footer .sf-about { margin: 12px 0 0; font-size: 14px; line-height: 1.65; color: var(--muted); max-width: 40ch; }
-    .site-footer .sf-about strong { color: var(--ink); }
-    .site-footer h2 { margin: 0 0 12px; font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--primary); }
-    .site-footer ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 9px; }
-    .site-footer a { color: var(--ink); text-decoration: none; font-size: 14.5px; }
-    .site-footer a:hover { color: var(--accent); text-decoration: underline; }
-    .site-footer .sf-cta { display: inline-block; margin-top: 4px; padding: 8px 16px; border-radius: 999px; background: var(--accent); color: #fff; font-weight: 600; font-size: 14px; box-shadow: 0 3px 0 var(--accent-dark); }
-    .site-footer .sf-cta:hover { background: var(--accent-dark); color: #fff; text-decoration: none; }
-    .site-footer .sf-social { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
-    .site-footer .sf-social a { padding: 5px 12px; border: 1.5px solid var(--border); border-radius: 999px; background: #fff; font-size: 13px; font-weight: 600; }
-    .site-footer .sf-social a:hover { border-color: var(--primary); background: var(--primary-tint); color: var(--primary); text-decoration: none; }
-    .site-footer .sf-bottom { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px 20px; margin-top: 32px; padding-top: 18px; border-top: 1px solid var(--border); font-size: 13px; color: var(--muted); }
-    .site-footer .sf-staff .sf-bottom { margin-top: 0; padding-top: 0; border-top: 0; }
-    .site-footer .sf-bottom a { font-size: 13px; color: var(--muted); }
-    .site-footer .sf-bottom a:hover { color: var(--accent); }
-    .site-footer .sf-bottom nav { display: flex; flex-wrap: wrap; gap: 6px 18px; }
-    @media (max-width: 860px) { .site-footer .sf-grid { grid-template-columns: 1fr 1fr; } .site-footer .sf-brand { grid-column: 1 / -1; } }
-    @media (max-width: 520px) { .site-footer .sf-grid { grid-template-columns: 1fr; } }
-</style>
 <?php if ($isStaff): ?>
 <footer class="site-footer">
     <div class="sf-inner sf-staff">
