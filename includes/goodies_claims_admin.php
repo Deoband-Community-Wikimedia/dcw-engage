@@ -66,36 +66,6 @@ function goodies_claims_render(PointClaimModel $claims, string $status, array $o
     $open = ($counts['Submitted'] ?? 0) + ($counts['Needs info'] ?? 0);
     $bulkable = array_filter($rows, fn($r) => in_array($r['status'], PointClaimModel::OPEN, true) && !isset($own[strtoupper((string) $r['member_id'])]));
     ?>
-    <style>
-        .cl-nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 16px; }
-        .cl-nav a { padding: 7px 16px; border-radius: 999px; border: 1px solid var(--border); background: var(--card); color: var(--ink); font-size: 14px; font-weight: 600; text-decoration: none; }
-        .cl-nav a.on { background: var(--ink); border-color: var(--ink); color: #fff; }
-        .cl-nav small { margin-left: 4px; opacity: .75; }
-        .cl-card { --h: 205; margin: 0 0 14px; padding: 16px 18px; background: var(--card); border: 1px solid var(--border); border-left: 6px solid hsl(var(--h) 60% 50%); border-radius: 14px; }
-        .cl-card.info { background: #fffbeb; border-color: #fcd34d; border-left-color: #d97706; }
-        .cl-top { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 6px 16px; }
-        .cl-top h4 { margin: 0; font-size: 16px; }
-        .cl-top .who { margin: 2px 0 0; color: var(--muted); font-size: 13.5px; }
-        .cl-pts { padding: 5px 14px; border-radius: 12px; font-weight: 800; font-size: 20px; color: hsl(var(--h) 65% 24%); background: hsl(var(--h) 85% 93%); font-variant-numeric: tabular-nums; }
-        .cl-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 8px 18px; margin: 12px 0; padding: 10px 12px; background: #F3F8FC; border-radius: 10px; font-size: 13.5px; }
-        .cl-facts span { display: block; font-size: 11.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
-        .cl-facts div { min-width: 0; overflow-wrap: anywhere; }
-        .cl-thread .m { margin: 0 0 6px; padding: 8px 12px; background: #fff; border: 1px solid var(--border); border-radius: 10px; font-size: 13.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
-        .cl-thread .m.member { background: var(--primary-tint); }
-        .cl-thread .m small { display: block; margin-bottom: 2px; color: var(--muted); font-size: 12px; font-weight: 600; }
-        .cl-acts { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: flex-start; margin: 12px 0 0; }
-        .cl-acts form { margin: 0; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-        .cl-acts input[type=text] { width: 15em; max-width: 100%; padding: 7px 10px; font: inherit; font-size: 13.5px; border: 1.5px solid #BCCFDD; border-radius: 10px; }
-        .cl-acts details { flex: 1 1 100%; }
-        .cl-acts summary { cursor: pointer; font-size: 13.5px; font-weight: 700; color: var(--primary); }
-        .cl-acts details form { margin-top: 8px; }
-        .cl-acts details textarea { flex: 1 1 280px; min-height: 60px; padding: 8px 10px; font: inherit; font-size: 13.5px; border: 1.5px solid #BCCFDD; border-radius: 10px; box-sizing: border-box; }
-        .cl-acts .cl-hint { flex: 1 1 100%; margin: 0; color: var(--muted); font-size: 12.5px; }
-        .cl-tick { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; font-weight: 600; color: var(--muted); margin: 0 0 8px; }
-        .cl-tag { display: inline-block; margin-left: 6px; padding: 1px 9px; border-radius: 999px; background: #f1f5f9; color: #475569; font-size: 12px; font-weight: 700; }
-        .cl-tag.warn { background: #fef3c7; color: #92400e; }
-    </style>
-
     <nav class="cl-nav" aria-label="Filter claims">
         <?php foreach ($filters as $key => $label):
             $n = $key === 'open' ? $open : ($key === 'all' ? array_sum($counts) : ($counts[$key] ?? 0)); ?>
