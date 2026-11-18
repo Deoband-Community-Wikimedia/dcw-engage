@@ -619,6 +619,7 @@ if (!empty($schema['unlisted'])) {
 //            once as the big heading and again as the last breadcrumb.
 //   'tools'  signed-in members get the shared member menu (avatar + three lines) in the top bar.
 engage_header([
+    'page'        => 'form-apply',
     'title'       => $schema['title'],
     'heading'     => $schema['title'],
     'slim'        => true,
@@ -632,74 +633,6 @@ engage_header([
     'image_alt'   => $schema['title'],
 ]);
 ?>
-<style>
-    /* Application form only. All other styles are sourced from /assets/css/engage.css */
-
-    /* The form card uses the full content width, so its left edge lines up with the heading and the
-       top bar, like the panels on the member dashboard. To keep a narrower form, use for example:
-       .fcard { max-width: 860px; margin-left: 0; } */
-    .fcard { max-width: none; }
-
-    /* Banner serves as the card header image: flush with the card edges (card padding is 30px).
-       The attribution line (for Commons images) is positioned directly below it. */
-    .banner-fig { margin: -30px -30px 26px; }
-    .banner-img { display: block; width: 100%; height: auto; max-height: 260px; object-fit: cover; border-radius: 16px 16px 0 0; }
-    .banner-credit { padding: 6px 30px 0; font-size: 12px; color: var(--muted); text-align: right; }
-    .banner-credit a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
-
-    /* Program description: readable body text, separated from the form below */
-    .form-desc { margin: 0 0 26px; padding-bottom: 24px; border-bottom: 1px solid var(--border); color: var(--ink); font-size: 15.5px; line-height: 1.7; }
-    .form-desc p { margin: 0 0 12px; }
-    .form-desc > :last-child { margin-bottom: 0; }
-    .form-desc ol, .form-desc ul { margin: 0 0 12px; padding-left: 22px; }
-    .form-desc li { margin: 0 0 6px; }
-    .form-desc h2, .form-desc h3, .form-desc h4 { margin: 22px 0 8px; padding: 0; border: 0; font-size: 17px; font-weight: 800; line-height: 1.3; }
-
-    .boxed { background: #f8fafc; border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; margin: 0 0 24px; }
-    .boxed .field { margin-bottom: 0; }
-    .verified-line { margin: 0 0 16px; font-size: 14px; color: var(--muted); }
-    .fcard .linkbtn { background: none; border: none; box-shadow: none; color: var(--primary); padding: 0 0 0 6px; width: auto; font-size: 14px; font-weight: 600; text-decoration: underline; cursor: pointer; }
-    .fcard .linkbtn:hover:not(:disabled) { transform: none; box-shadow: none; }
-    .fcard .btn-outline { background: #fff; color: var(--primary); border: 1px solid var(--primary); box-shadow: none; }
-    .fcard .btn-outline:hover:not(:disabled) { transform: none; box-shadow: none; background: #f1f7fb; }
-    .fcard .btn-small { width: auto; padding: 8px 16px; font-size: 14px; }
-    .btnrow { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
-    .fcard .btnrow button { width: auto; flex: 1 1 180px; }
-    .error-text { display: block; margin-top: 6px; font-size: 13px; color: #b91c1c; }
-    .alert h3 { margin: 0 0 6px; padding: 0; border: 0; font-size: 17px; }
-    .alert p { margin: 8px 0 0; font-size: 14px; }
-
-    /* Code entry */
-    .otp-input { width: 100%; max-width: 320px; padding: 14px 16px; font: inherit; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 24px; font-weight: 700; letter-spacing: 4px; text-transform: uppercase; text-align: center; background: #fff; color: var(--ink); border: 1px solid var(--border); border-radius: 10px; }
-    .otp-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 0; }
-    .otp-actions form { margin: 0; }
-    .fcard .otp-actions button { width: auto; padding: 8px 18px; font-size: 14px; }
-    .fcard .otp-actions button[disabled] { opacity: .55; cursor: not-allowed; }
-
-    /* Input types not yet styled by engage.css */
-    .field input[type=url], .field input[type=time] { width: 100%; padding: 12px 14px; background: #fff; color: var(--ink); border: 1px solid var(--border); border-radius: 10px; font: inherit; font-size: 15px; }
-    .field input[type=url]:focus, .field input[type=time]:focus { outline: 2px solid var(--primary); outline-offset: -1px; border-color: transparent; }
-
-    .opt { display: flex; align-items: flex-start; gap: 10px; margin: 0 0 8px; font-weight: 500; font-size: 15px; cursor: pointer; }
-    .opt input { width: 17px; height: 17px; margin: 3px 0 0; accent-color: var(--primary); flex: none; }
-    .opt-group { display: grid; gap: 2px; margin-top: 6px; }
-
-    .dropzone { position: relative; border: 2px dashed var(--border); border-radius: 12px; background: #f8fafc; text-align: center; padding: 22px 16px; transition: border-color .15s, background .15s; }
-    .dropzone-dragover { border-color: var(--primary); background: #f1f7fb; }
-    .dropzone-has-error { border-color: #f87171; }
-    .dropzone-input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
-    .dropzone-icon { width: 34px; height: 34px; color: var(--primary); }
-    .dropzone-text { margin: 8px 0 2px; font-size: 14px; }
-    .dropzone-browse { color: var(--primary); font-weight: 600; text-decoration: underline; }
-    .dropzone-hint { margin: 0; font-size: 12.5px; color: var(--muted); }
-    .dropzone-preview { align-items: center; gap: 12px; text-align: left; position: relative; z-index: 1; }
-    .dropzone-file-icon { width: 30px; height: 30px; color: var(--primary); flex: none; }
-    .dropzone-file-info { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-    .dropzone-filename { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .dropzone-filesize { font-size: 12.5px; color: var(--muted); }
-    .fcard .dropzone-remove { width: 32px; height: 32px; padding: 0; border-radius: 50%; background: #fff; color: #991b1b; border: 1px solid #f87171; box-shadow: none; font-size: 18px; line-height: 1; cursor: pointer; position: relative; z-index: 2; }
-    .fcard .dropzone-remove:hover:not(:disabled) { transform: none; box-shadow: none; background: #fef2f2; }
-</style>
 
 <div class="fcard">
     <?php /* The "enter your code" screen renders only its own message: omitting the banner, deadline, and program description. */ ?>
