@@ -327,6 +327,7 @@ if (!empty($schema['unlisted'])) {
 //            once as the big heading and again as the last breadcrumb.
 //   'tools'  signed-in members get the shared member menu (avatar + three lines) in the top bar.
 engage_header([
+    'page'        => 'form-feedback',
     'title'       => $fbTitle,
     'heading'     => $fbTitle,
     'slim'        => true,
@@ -339,44 +340,6 @@ engage_header([
     'image_alt'   => $fbTitle,
 ]);
 ?>
-<style>
-    /* Feedback form only. The shared look comes from /assets/css/engage.css; these few rules
-       mirror the ones the application renderer defines inline. */
-
-    /* The form card uses the full content width, so its left edge lines up with the heading and the
-       top bar, like the panels on the member dashboard. To keep a narrower form, use for example:
-       .fcard { max-width: 860px; margin-left: 0; } */
-    .fcard { max-width: none; }
-
-    .banner-fig { margin: -30px -30px 26px; }
-    .banner-img { display: block; width: 100%; height: auto; max-height: 260px; object-fit: cover; border-radius: 16px 16px 0 0; }
-    .banner-credit { padding: 6px 30px 0; font-size: 12px; color: var(--muted); text-align: right; }
-    .banner-credit a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
-    .form-desc { margin: 0 0 26px; padding-bottom: 24px; border-bottom: 1px solid var(--border); color: var(--ink); font-size: 15.5px; line-height: 1.7; }
-    .form-desc p { margin: 0 0 12px; }
-    .form-desc > :last-child { margin-bottom: 0; }
-    .form-desc ol, .form-desc ul { margin: 0 0 12px; padding-left: 22px; }
-    .form-desc h2, .form-desc h3, .form-desc h4 { margin: 22px 0 8px; padding: 0; border: 0; font-size: 17px; font-weight: 800; line-height: 1.3; }
-    .boxed { background: #f8fafc; border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; margin: 0 0 24px; }
-    .boxed .field:last-child { margin-bottom: 0; }
-    .verified-line { margin: 0 0 16px; font-size: 14px; color: var(--muted); }
-    .error-text { display: block; margin-top: 6px; font-size: 13px; color: #b91c1c; }
-    .alert h3 { margin: 0 0 6px; padding: 0; border: 0; font-size: 17px; }
-    .alert p { margin: 8px 0 0; font-size: 14px; }
-    .opt { display: flex; align-items: flex-start; gap: 10px; margin: 0 0 8px; font-weight: 500; font-size: 15px; cursor: pointer; }
-    .opt input { width: 17px; height: 17px; margin: 3px 0 0; accent-color: var(--primary); flex: none; }
-    .opt-group { display: grid; gap: 2px; margin-top: 6px; }
-    .field input[type=url], .field input[type=time], .field input[type=tel] { width: 100%; padding: 12px 14px; background: #fff; color: var(--ink); border: 1px solid var(--border); border-radius: 10px; font: inherit; font-size: 15px; }
-    .privacy-note { margin: 18px 0 0; font-size: 13px; color: var(--muted); }
-    .hp-field { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
-
-    /* Code entry */
-    .otp-input { width: 100%; max-width: 320px; padding: 14px 16px; font: inherit; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 24px; font-weight: 700; letter-spacing: 4px; text-transform: uppercase; text-align: center; background: #fff; color: var(--ink); border: 1px solid var(--border); border-radius: 10px; }
-    .otp-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 0; }
-    .otp-actions form { margin: 0; }
-    .otp-actions button { width: auto; padding: 8px 18px; font-size: 14px; }
-    .otp-actions button[disabled] { opacity: .55; cursor: not-allowed; }
-</style>
 
 <div class="fcard">
     <?php if (!empty($schema['banner_image'])): ?>
