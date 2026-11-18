@@ -1530,3 +1530,187 @@ body.pg-form-apply {
     .fcard .dropzone-remove { width: 32px; height: 32px; padding: 0; border-radius: 50%; background: #fff; color: #991b1b; border: 1px solid #f87171; box-shadow: none; font-size: 18px; line-height: 1; cursor: pointer; position: relative; z-index: 2; }
     .fcard .dropzone-remove:hover:not(:disabled) { transform: none; box-shadow: none; background: #fef2f2; }
 }
+
+/* ===== Page: forms/resume.php ===== */
+body.pg-form-resume {
+    /* Page-specific bits not in engage.css: file drop zone and field errors */
+    .fcard .field .error-text { display: block; margin-top: 5px; font-size: 13px; color: #b91c1c; }
+    .dropzone { position: relative; padding: 22px; text-align: center; background: #f8fafc; border: 2px dashed #cbd5e1; border-radius: 12px; transition: border-color .15s, background .15s; }
+    .dropzone-dragover { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 6%, #fff); }
+    .dropzone-has-error { border-color: #ef4444; }
+    .dropzone-input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+    .dropzone-icon, .dropzone-file-icon { width: 40px; height: 40px; color: var(--primary); }
+    .dropzone-text { margin: 8px 0 2px; font-size: 14.5px; }
+    .dropzone-browse { color: var(--primary); font-weight: 700; text-decoration: underline; }
+    .dropzone-hint { margin: 0; font-size: 13px; color: var(--muted); }
+    .dropzone-preview { align-items: center; gap: 12px; text-align: left; }
+    .dropzone-file-info { flex: 1; min-width: 0; display: flex; flex-direction: column; font-size: 14px; }
+    .dropzone-filename { font-weight: 600; overflow-wrap: anywhere; }
+    .dropzone-filesize { color: var(--muted); font-size: 13px; }
+    .dropzone-remove { position: relative; z-index: 2; width: 32px; height: 32px; border: 1px solid var(--border); border-radius: 50%; background: #fff; font-size: 20px; line-height: 1; cursor: pointer; }
+    .btn-row { display: flex; flex-wrap: wrap; gap: 10px; }
+    .fcard .btn-row button[type=submit] { flex: 1 1 200px; width: auto; }
+    .fcard .btn-row button.draft[type=submit] { background: #fff; color: var(--primary); border: 1px solid var(--primary); box-shadow: none; }
+    .choices.stack input { margin: 0; }
+}
+
+/* ===== Page: forms/confirm.php ===== */
+body.pg-form-confirm {
+    /* Page-specific bits not in engage.css. Colors come from the design tokens, so chapter themes and staff.css still apply. */
+    .fcard .field .error-text { display: block; margin-top: 5px; font-size: 13px; color: var(--accent, #b91c1c); }
+    .choices.stack input { margin: 0; }
+    .confirm-intro { margin: 0 0 22px; line-height: 1.6; }
+    .confirm-hint { margin: 6px 0 0; font-size: 13px; color: var(--muted); }
+    .when-confirming[hidden], .when-declining[hidden], .fcard .field[hidden] { display: none !important; }
+}
+
+/* ===== Page: forms/feedback.php ===== */
+body.pg-form-feedback {
+    /* Feedback form only. The shared look comes from /assets/css/engage.css; these few rules
+       mirror the ones the application renderer defines inline. */
+
+    /* The form card uses the full content width, so its left edge lines up with the heading and the
+       top bar, like the panels on the member dashboard. To keep a narrower form, use for example:
+       .fcard { max-width: 860px; margin-left: 0; } */
+    .fcard { max-width: none; }
+
+    .banner-fig { margin: -30px -30px 26px; }
+    .banner-img { display: block; width: 100%; height: auto; max-height: 260px; object-fit: cover; border-radius: 16px 16px 0 0; }
+    .banner-credit { padding: 6px 30px 0; font-size: 12px; color: var(--muted); text-align: right; }
+    .banner-credit a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+    .form-desc { margin: 0 0 26px; padding-bottom: 24px; border-bottom: 1px solid var(--border); color: var(--ink); font-size: 15.5px; line-height: 1.7; }
+    .form-desc p { margin: 0 0 12px; }
+    .form-desc > :last-child { margin-bottom: 0; }
+    .form-desc ol, .form-desc ul { margin: 0 0 12px; padding-left: 22px; }
+    .form-desc h2, .form-desc h3, .form-desc h4 { margin: 22px 0 8px; padding: 0; border: 0; font-size: 17px; font-weight: 800; line-height: 1.3; }
+    .boxed { background: #f8fafc; border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; margin: 0 0 24px; }
+    .boxed .field:last-child { margin-bottom: 0; }
+    .verified-line { margin: 0 0 16px; font-size: 14px; color: var(--muted); }
+    .error-text { display: block; margin-top: 6px; font-size: 13px; color: #b91c1c; }
+    .alert h3 { margin: 0 0 6px; padding: 0; border: 0; font-size: 17px; }
+    .alert p { margin: 8px 0 0; font-size: 14px; }
+    .opt { display: flex; align-items: flex-start; gap: 10px; margin: 0 0 8px; font-weight: 500; font-size: 15px; cursor: pointer; }
+    .opt input { width: 17px; height: 17px; margin: 3px 0 0; accent-color: var(--primary); flex: none; }
+    .opt-group { display: grid; gap: 2px; margin-top: 6px; }
+    .field input[type=url], .field input[type=time], .field input[type=tel] { width: 100%; padding: 12px 14px; background: #fff; color: var(--ink); border: 1px solid var(--border); border-radius: 10px; font: inherit; font-size: 15px; }
+    .privacy-note { margin: 18px 0 0; font-size: 13px; color: var(--muted); }
+    .hp-field { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+
+    /* Code entry */
+    .otp-input { width: 100%; max-width: 320px; padding: 14px 16px; font: inherit; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 24px; font-weight: 700; letter-spacing: 4px; text-transform: uppercase; text-align: center; background: #fff; color: var(--ink); border: 1px solid var(--border); border-radius: 10px; }
+    .otp-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 0; }
+    .otp-actions form { margin: 0; }
+    .otp-actions button { width: auto; padding: 8px 18px; font-size: 14px; }
+    .otp-actions button[disabled] { opacity: .55; cursor: not-allowed; }
+}
+
+/* ===== Page: card_check.php ===== */
+body.pg-card-check {
+    /* Public membership check only. Uses the shared tokens from engage.css (--card, --border, --ink, --edge, --lift-hi...).
+       --tone is set on the card from PHP (the state's accent color). */
+    .cc { max-width: 560px; margin: 0 auto 30px; }
+
+    /* The card follows the same recipe as .fcard and .prog: 1.5px border, 18px radius, raised edge,
+       and a 5px accent bar across the top (no side stripe, so nothing is clipped at the corners). */
+    .cc-box {
+        --tone: var(--primary);
+        position: relative; overflow: hidden; padding: 30px 26px 20px;
+        background: var(--card); border: 1.5px solid var(--border); border-radius: 18px;
+        box-shadow: 0 2px 0 var(--edge), var(--lift-hi);
+    }
+    .cc-box::before { content: ''; position: absolute; inset: 0 0 auto 0; height: 5px; background: var(--tone); }
+
+    /* Status first: icon tile, small label, then the headline in normal ink so it does not compete with the page heading. */
+    .cc-top { display: flex; align-items: flex-start; gap: 16px; }
+    .cc-ico { flex: none; width: 48px; height: 48px; border-radius: 14px; display: grid; place-items: center; background: color-mix(in srgb, var(--tone) 13%, #fff); }
+    .cc-ico svg { width: 24px; height: 24px; stroke: var(--tone); fill: none; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+    .cc-main { min-width: 0; }
+    .cc-chip {
+        display: inline-block; margin: 0 0 7px; padding: 3px 11px; border-radius: 999px;
+        font-size: 11.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+        color: var(--tone); background: color-mix(in srgb, var(--tone) 12%, #fff);
+    }
+    .cc-head { margin: 0; font-size: 22px; font-weight: 800; letter-spacing: -.02em; line-height: 1.25; color: var(--ink); overflow-wrap: anywhere; }
+    .cc-sub { margin: 6px 0 0; color: var(--muted); font-size: 15px; line-height: 1.55; }
+
+    /* The member: a small label so it is clear this is the Wikimedia username. */
+    .cc-who { margin: 22px 0 0; padding: 16px 0; border-top: 1px solid var(--border); }
+    .cc-label { display: block; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+    .cc-name { margin: 4px 0 0; font-size: 22px; font-weight: 800; letter-spacing: -.01em; line-height: 1.3; overflow-wrap: anywhere; }
+
+    /* Chapter list (routine membership check only). */
+    .cc-list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border); }
+    .cc-top + .cc-list { margin-top: 22px; }
+    .cc-list li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; padding: 12px 0; border-top: 1px solid var(--border); font-size: 15px; }
+    .cc-list li:first-child { border-top: 0; }
+    .cc-list .n { display: inline-flex; align-items: center; gap: 10px; font-weight: 600; }
+    .cc-lg { width: 28px; height: 28px; object-fit: contain; flex: none; }
+    .cc-list .st { font-size: 13.5px; color: var(--muted); }
+    .cc-pill { padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; margin-right: 6px; color: var(--tone); background: color-mix(in srgb, var(--tone) 12%, #fff); }
+
+    /* Footer: what this confirms on the left, when it was checked on the right (wraps on a phone). */
+    .cc-note {
+        display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 16px;
+        margin: 4px 0 0; padding-top: 14px; border-top: 1px solid var(--border);
+        color: var(--muted); font-size: 13px; line-height: 1.5;
+    }
+    .cc-who + .cc-note, .cc-list + .cc-note { margin-top: 0; }
+    .cc-note time { font-variant-numeric: tabular-nums; font-weight: 600; }
+
+    @media (max-width: 480px) {
+        .cc-box { padding: 26px 18px 16px; }
+        .cc-top { gap: 12px; }
+        .cc-ico { width: 40px; height: 40px; border-radius: 12px; }
+        .cc-ico svg { width: 20px; height: 20px; }
+        .cc-head, .cc-name { font-size: 20px; }
+    }
+}
+
+/* ===== Page: event_card_check.php ===== */
+body.pg-event-card-check {
+    /* Public event card check only. Same card recipe as the membership check (views/card_check.php):
+       shared tokens from engage.css, a 5px accent bar across the top. --tone is set from PHP. */
+    .cc { max-width: 560px; margin: 0 auto 30px; }
+    .cc-box {
+        --tone: var(--primary);
+        position: relative; overflow: hidden; padding: 30px 26px 20px;
+        background: var(--card); border: 1.5px solid var(--border); border-radius: 18px;
+        box-shadow: 0 2px 0 var(--edge), var(--lift-hi);
+    }
+    .cc-box::before { content: ''; position: absolute; inset: 0 0 auto 0; height: 5px; background: var(--tone); }
+
+    .cc-top { display: flex; align-items: flex-start; gap: 16px; }
+    .cc-ico { flex: none; width: 48px; height: 48px; border-radius: 14px; display: grid; place-items: center; background: color-mix(in srgb, var(--tone) 13%, #fff); }
+    .cc-ico svg { width: 24px; height: 24px; stroke: var(--tone); fill: none; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+    .cc-main { min-width: 0; }
+    .cc-chip {
+        display: inline-block; margin: 0 0 7px; padding: 3px 11px; border-radius: 999px;
+        font-size: 11.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+        color: var(--tone); background: color-mix(in srgb, var(--tone) 12%, #fff);
+    }
+    .cc-head { margin: 0; font-size: 22px; font-weight: 800; letter-spacing: -.02em; line-height: 1.25; color: var(--ink); overflow-wrap: anywhere; }
+    .cc-sub { margin: 6px 0 0; color: var(--muted); font-size: 15px; line-height: 1.55; }
+
+    .cc-role { display: inline-block; margin: 10px 0 0; padding: 4px 14px; border-radius: 999px; color: #fff; font-size: 12.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+
+    .cc-who { margin: 22px 0 0; padding: 16px 0; border-top: 1px solid var(--border); }
+    .cc-label { display: block; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+    .cc-name { margin: 4px 0 0; font-size: 18px; font-weight: 800; letter-spacing: -.01em; line-height: 1.3; overflow-wrap: anywhere; }
+    .cc-ed { margin: 2px 0 0; color: var(--muted); font-size: 15px; }
+
+    .cc-note {
+        display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 16px;
+        margin: 4px 0 0; padding-top: 14px; border-top: 1px solid var(--border);
+        color: var(--muted); font-size: 13px; line-height: 1.5;
+    }
+    .cc-who + .cc-note { margin-top: 0; }
+    .cc-note time { font-variant-numeric: tabular-nums; font-weight: 600; }
+
+    @media (max-width: 480px) {
+        .cc-box { padding: 26px 18px 16px; }
+        .cc-top { gap: 12px; }
+        .cc-ico { width: 40px; height: 40px; border-radius: 12px; }
+        .cc-ico svg { width: 20px; height: 20px; }
+        .cc-head { font-size: 20px; }
+    }
+}
