@@ -4,76 +4,36 @@
 //   /member/goodies?view=claim        the claim form, the member's claims, and the ways to earn that are not claimable
 //   /member/goodies?claim=PC-XXXXXXXX one claim: status, the conversation, reply / withdraw
 // Needs includes/points_ui.php (points_h, points_cat_hue, points_cat_emoji) and models/PointClaimModel.php.
+// Styles: the .pc-* rules live in assets/css/engage.css (section "Claim points").
 //
 // Members never see who the reviewer is. Every reviewer message is labelled "DCW reviewer", and the model does not
 // hand reviewer emails (decided_by, message author) to this page at all. Keep it that way: never print them here.
 
-/** [label, colour] for a claim as the member sees it. */
+/** [label, colour token] for a claim as the member sees it. */
 function points_claim_status(array $c): array
 {
     switch ((string) $c['status']) {
-        case 'Submitted':  return ['In review', '#2E6599'];
-        case 'Needs info': return ['Reply needed', '#b45309'];
+        case 'Submitted':  return ['In review', 'var(--primary)'];
+        case 'Needs info': return ['Reply needed', 'var(--amber)'];
         case 'Approved':   return ($c['award_status'] ?? '') === 'Needs Second Approval'
-                                ? ['Approved, one more check', '#0f766e'] : ['Approved', '#15803d'];
-        case 'Rejected':   return ['Not approved', '#97161b'];
-        case 'Withdrawn':  return ['Withdrawn', '#64748b'];
+                                ? ['Approved, one more check', 'var(--leaf-dark)'] : ['Approved', 'var(--leaf-dark)'];
+        case 'Rejected':   return ['Not approved', 'var(--accent)'];
+        case 'Withdrawn':  return ['Withdrawn', 'var(--slate)'];
     }
-    return [(string) $c['status'], '#2E6599'];
+    return [(string) $c['status'], 'var(--primary)'];
 }
 
+/** The styles live in engage.css. Kept (and empty) so existing calls keep working. */
 function points_claim_css(): void
-{ ?>
-<style>
-    .pc-wrap { max-width: 820px; }
-    .pc-intro { margin: 0 0 18px; color: var(--muted); font-size: 14.5px; }
-    .pc-card { margin: 0 0 26px; padding: 20px 22px; background: var(--card); border: 1.5px solid var(--border); border-radius: 16px; box-shadow: 0 2px 0 var(--edge), var(--lift); }
-    .pc-card h2 { margin: 0 0 4px; font-size: 19px; font-weight: 800; }
-    .pc-card > p.sub { margin: 0 0 14px; color: var(--muted); font-size: 13.5px; }
+{
+}
 
-    .pc-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px; margin: 0 0 6px; }
-    .pc-tile { position: relative; display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: #fff; border: 1px solid var(--border); border-left: 5px solid hsl(var(--h) 60% 52%); border-radius: 12px; cursor: pointer; transition: box-shadow .12s, background .12s; }
-    .pc-tile input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
-    .pc-tile:has(input:checked) { background: hsl(var(--h) 85% 95%); border-color: hsl(var(--h) 55% 50%); box-shadow: 0 0 0 2px hsl(var(--h) 60% 62%); }
-    .pc-tile:has(input:focus-visible) { outline: 3px solid var(--focus); outline-offset: 2px; }
-    .pc-tile .e { font-size: 22px; line-height: 1; flex: none; }
-    .pc-tile .t { flex: 1; min-width: 0; font-weight: 700; font-size: 13.5px; line-height: 1.3; overflow-wrap: anywhere; }
-    .pc-tile .t small { display: block; margin-top: 2px; color: var(--muted); font-weight: 500; font-size: 12px; }
-    .pc-tile .p { flex: none; padding: 3px 10px; border-radius: 999px; font-weight: 800; font-size: 14px; color: hsl(var(--h) 65% 24%); background: hsl(var(--h) 85% 92%); font-variant-numeric: tabular-nums; }
-
-    .pc-form label.l { display: block; margin: 16px 0 6px; font-size: 14px; font-weight: 700; }
-    .pc-form .hint { display: block; margin: 4px 0 0; color: var(--muted); font-size: 13px; font-weight: 400; }
-    .pc-form input[type=date], .pc-form input[type=url], .pc-form textarea { width: 100%; box-sizing: border-box; padding: 11px 13px; font: inherit; font-size: 15px; background: #fff; color: var(--ink); border: 1.5px solid #C5D3DE; border-radius: 10px; }
-    .pc-form input:focus, .pc-form textarea:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 4px color-mix(in srgb, var(--primary) 20%, transparent); }
-    .pc-form textarea { min-height: 90px; resize: vertical; }
-    .pc-form .go { margin-top: 18px; padding: 11px 26px; font: inherit; font-size: 15px; font-weight: 700; color: #fff; background: var(--primary); border: 1px solid var(--primary-dark); border-radius: 999px; box-shadow: 0 3px 0 var(--primary-dark); cursor: pointer; }
-    .pc-form .go:hover { background: var(--primary-light); }
-    .pc-form .go:disabled { opacity: .5; cursor: not-allowed; }
-
-    .pc-list .req { margin: 0 0 10px; }
-    .pc-empty { padding: 22px; text-align: center; color: var(--muted); background: var(--card); border: 1px dashed #c3d0dc; border-radius: 14px; font-size: 14.5px; }
-    .pc-more { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
-    .pc-more li { display: flex; justify-content: space-between; gap: 12px; padding: 8px 12px; background: #f6f9fb; border-radius: 10px; font-size: 14px; }
-    .pc-more li b { font-variant-numeric: tabular-nums; }
-
-    .pc-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px 20px; margin: 0 0 16px; padding: 14px 16px; background: #F6F9FB; border-radius: 12px; font-size: 14px; }
-    .pc-facts span { display: block; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
-    .pc-facts div { min-width: 0; overflow-wrap: anywhere; }
-    .pc-msg { margin: 0 0 10px; padding: 12px 14px; background: #fff; border: 1.5px solid var(--border); border-radius: 12px; font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
-    .pc-msg.mine { margin-left: 24px; background: var(--primary-tint); border-color: color-mix(in srgb, var(--primary) 25%, #fff); }
-    .pc-msg small { display: block; margin-bottom: 4px; font-size: 12px; font-weight: 600; color: var(--muted); }
-    .pc-banner { margin: 0 0 16px; padding: 12px 16px; border-radius: 12px; font-size: 14.5px; border: 1.5px solid; }
-    .pc-banner.ok { background: var(--leaf-tint); border-color: #bfdfca; color: #2F6B45; }
-    .pc-banner.bad { background: var(--accent-tint); border-color: #f0c2bd; color: var(--accent-dark); }
-    .pc-banner.wait { background: #fffbeb; border-color: #fcd34d; color: #78350f; }
-    .pc-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 14px 0 0; }
-    .pc-actions form { margin: 0; }
-    .pc-actions button { font: inherit; font-size: 14px; cursor: pointer; }
-</style>
-<?php }
-
-/** The claim form. $old is what the member typed last time (kept when a check fails). */
-function points_claim_render_form(array $activities, array $old = []): void
+/**
+ * The claim form. $old is what the member typed last time (kept when a check fails).
+ * $cooldowns is [activity id => "date it can be claimed again"] for activities still on cooldown; those tiles
+ * are greyed out and cannot be picked.
+ */
+function points_claim_render_form(array $activities, array $old = [], array $cooldowns = []): void
 {
     $ist      = new DateTimeZone('Asia/Kolkata');
     $today    = new DateTimeImmutable('today', $ist);
@@ -94,14 +54,15 @@ function points_claim_render_form(array $activities, array $old = []): void
         <form class="pc-form" method="POST" action="/member/goodies?view=claim" id="pc-form">
             <?= CSRF::getInputField() ?>
             <input type="hidden" name="action" value="claim_submit">
-            <span class="l" style="display:block;margin:0 0 6px;font-size:14px;font-weight:700">What did you do?</span>
+            <span class="pc-lab">What did you do?</span>
             <div class="pc-tiles" role="radiogroup" aria-label="Activity">
-                <?php foreach ($activities as $a): $id = (int) $a['id']; $h = points_cat_hue((string) $a['category']); ?>
-                    <label class="pc-tile" style="--h:<?= $h ?>">
-                        <input type="radio" name="activity_type_id" value="<?= $id ?>" data-evidence="<?= (int) $a['needs_evidence'] ?>" required<?= $sel === $id ? ' checked' : '' ?>>
+                <?php foreach ($activities as $a): $id = (int) $a['id']; $h = points_cat_hue((string) $a['category']);
+                    $wait = (string) ($cooldowns[$id] ?? ''); ?>
+                    <label class="pc-tile<?= $wait !== '' ? ' wait' : '' ?>" style="--h:<?= $h ?>">
+                        <input type="radio" name="activity_type_id" value="<?= $id ?>" data-evidence="<?= (int) $a['needs_evidence'] ?>" required<?= $sel === $id && $wait === '' ? ' checked' : '' ?><?= $wait !== '' ? ' disabled' : '' ?>>
                         <span class="e" aria-hidden="true"><?= points_cat_emoji((string) $a['category'], (string) $a['code']) ?></span>
                         <span class="t"><?= points_h($a['name']) ?>
-                            <small><?= (int) $a['needs_evidence'] ? 'Link needed' : 'Link optional' ?><?= (int) ($a['one_time'] ?? 0) ? ' · once only' : '' ?></small></span>
+                            <small><?= (int) $a['needs_evidence'] ? 'Link needed' : 'Link optional' ?><?= (int) ($a['one_time'] ?? 0) ? ' · once only' : '' ?><?= $wait !== '' ? ' · again from ' . points_h($wait) : '' ?></small></span>
                         <span class="p">+<?= number_format((int) $a['points']) ?></span>
                     </label>
                 <?php endforeach; ?>
@@ -113,11 +74,11 @@ function points_claim_render_form(array $activities, array $old = []): void
                    value="<?= points_h($old['event_date'] ?? '') ?>">
             <span class="hint">Pick a date from <?= points_h($minLabel) ?> to <?= points_h($maxLabel) ?>. Older activity can't be claimed here; if there is a good reason, write to DCW Support.</span>
 
-            <label class="l" for="pc-ev">Evidence link <span id="pc-ev-star" style="color:var(--accent-light)" hidden>*</span></label>
+            <label class="l" for="pc-ev">Evidence link <span id="pc-ev-star" class="pc-star" hidden>*</span></label>
             <input type="url" id="pc-ev" name="evidence_url" maxlength="500" placeholder="https://" value="<?= points_h($old['evidence_url'] ?? '') ?>">
             <span class="hint">A diff, a page or a post that shows it. Each link can be used for one claim only.</span>
 
-            <label class="l" for="pc-note">Anything the reviewer should know <span style="font-weight:400;color:var(--muted)">(optional)</span></label>
+            <label class="l" for="pc-note">Anything the reviewer should know <span class="pc-opt">(optional)</span></label>
             <textarea id="pc-note" name="note" maxlength="<?= (int) PointClaimModel::MAX_NOTE ?>"><?= points_h($old['note'] ?? '') ?></textarea>
 
             <button type="submit" class="go">Send claim</button>
@@ -158,12 +119,11 @@ function points_claim_render_list(array $claims): void
         <?php foreach ($claims as $c):
             [$label, $tone] = points_claim_status($c);
             $act = $c['status'] === 'Needs info';
-            $h = points_cat_hue((string) $c['category']);
         ?>
             <div class="req<?= $act ? ' act' : '' ?>" style="--tone: <?= points_h($tone) ?>;">
-                <span class="tick" style="font-size:20px;display:grid;place-items:center" aria-hidden="true"><?= points_cat_emoji((string) $c['category'], (string) $c['activity_code']) ?></span>
+                <span class="tick pc-emoji" aria-hidden="true"><?= points_cat_emoji((string) $c['category'], (string) $c['activity_code']) ?></span>
                 <div>
-                    <h3><?= points_h($c['activity_name']) ?> <span style="color:var(--muted);font-weight:600">+<?= number_format((int) $c['activity_points']) ?></span></h3>
+                    <h3><?= points_h($c['activity_name']) ?> <span class="pc-pts">+<?= number_format((int) $c['activity_points']) ?></span></h3>
                     <p class="meta">
                         Claim &middot; <?= points_h(date('j M Y', strtotime((string) $c['event_date']))) ?>
                         &middot; <code><?= points_h($c['tracking_id']) ?></code>
@@ -201,7 +161,7 @@ function points_claim_render_detail(array $c, array $messages): void
     $open = in_array($c['status'], PointClaimModel::OPEN, true);
     ?>
     <section class="pc-card">
-        <h2><?= points_h($c['activity_name']) ?> <span class="pill" style="--tone:<?= points_h($tone) ?>;vertical-align:3px;margin-left:6px"><?= points_h($label) ?></span></h2>
+        <h2><?= points_h($c['activity_name']) ?> <span class="pill pc-status" style="--tone:<?= points_h($tone) ?>"><?= points_h($label) ?></span></h2>
         <p class="sub">Claim <code><?= points_h($c['tracking_id']) ?></code></p>
 
         <?php if ($c['status'] === 'Needs info'): ?>
@@ -221,11 +181,11 @@ function points_claim_render_detail(array $c, array $messages): void
             <div><span>It happened on</span><?= points_h(date('j M Y', strtotime((string) $c['event_date']))) ?></div>
             <div><span>Sent</span><?= points_h($ist($c['created_at'])) ?></div>
             <?php if (!empty($c['evidence_url'])): ?><div><span>Evidence</span><a href="<?= points_h($c['evidence_url']) ?>" target="_blank" rel="noopener noreferrer"><?= points_h($c['evidence_url']) ?></a></div><?php endif; ?>
-            <?php if (!empty($c['note'])): ?><div style="grid-column:1/-1"><span>Your note</span><?= nl2br(points_h($c['note'])) ?></div><?php endif; ?>
+            <?php if (!empty($c['note'])): ?><div class="pc-wide"><span>Your note</span><?= nl2br(points_h($c['note'])) ?></div><?php endif; ?>
         </div>
 
         <?php if ($messages): ?>
-            <h3 style="margin:0 0 8px;font-size:15px">Conversation</h3>
+            <h3 class="pc-conv">Conversation</h3>
             <?php foreach ($messages as $m): ?>
                 <div class="pc-msg<?= $m['sender'] === 'member' ? ' mine' : '' ?>">
                     <small><?= $m['sender'] === 'member' ? 'You' : 'DCW reviewer' ?> &middot; <?= points_h($ist($m['created_at'])) ?></small>
