@@ -88,72 +88,13 @@ if ($office !== null) {
 $checkedAt = MemberAuthModel::formatIst(gmdate('Y-m-d H:i:s'), 'j M Y, g:i A');
 
 engage_header([
+    'page'    => 'card-check',
     'title'   => 'Membership verification',
     'heading' => 'Membership verification',
     'lead'    => 'Deoband Community Wikimedia',
     'compact' => true,
 ]);
 ?>
-<style>
-    /* Public membership check only. Uses the shared tokens from engage.css (--card, --border, --ink, --edge, --lift-hi...).
-       --tone is set on the card from PHP (the state's accent color). */
-    .cc { max-width: 560px; margin: 0 auto 30px; }
-
-    /* The card follows the same recipe as .fcard and .prog: 1.5px border, 18px radius, raised edge,
-       and a 5px accent bar across the top (no side stripe, so nothing is clipped at the corners). */
-    .cc-box {
-        --tone: var(--primary);
-        position: relative; overflow: hidden; padding: 30px 26px 20px;
-        background: var(--card); border: 1.5px solid var(--border); border-radius: 18px;
-        box-shadow: 0 2px 0 var(--edge), var(--lift-hi);
-    }
-    .cc-box::before { content: ''; position: absolute; inset: 0 0 auto 0; height: 5px; background: var(--tone); }
-
-    /* Status first: icon tile, small label, then the headline in normal ink so it does not compete with the page heading. */
-    .cc-top { display: flex; align-items: flex-start; gap: 16px; }
-    .cc-ico { flex: none; width: 48px; height: 48px; border-radius: 14px; display: grid; place-items: center; background: color-mix(in srgb, var(--tone) 13%, #fff); }
-    .cc-ico svg { width: 24px; height: 24px; stroke: var(--tone); fill: none; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
-    .cc-main { min-width: 0; }
-    .cc-chip {
-        display: inline-block; margin: 0 0 7px; padding: 3px 11px; border-radius: 999px;
-        font-size: 11.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
-        color: var(--tone); background: color-mix(in srgb, var(--tone) 12%, #fff);
-    }
-    .cc-head { margin: 0; font-size: 22px; font-weight: 800; letter-spacing: -.02em; line-height: 1.25; color: var(--ink); overflow-wrap: anywhere; }
-    .cc-sub { margin: 6px 0 0; color: var(--muted); font-size: 15px; line-height: 1.55; }
-
-    /* The member: a small label so it is clear this is the Wikimedia username. */
-    .cc-who { margin: 22px 0 0; padding: 16px 0; border-top: 1px solid var(--border); }
-    .cc-label { display: block; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
-    .cc-name { margin: 4px 0 0; font-size: 22px; font-weight: 800; letter-spacing: -.01em; line-height: 1.3; overflow-wrap: anywhere; }
-
-    /* Chapter list (routine membership check only). */
-    .cc-list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border); }
-    .cc-top + .cc-list { margin-top: 22px; }
-    .cc-list li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; padding: 12px 0; border-top: 1px solid var(--border); font-size: 15px; }
-    .cc-list li:first-child { border-top: 0; }
-    .cc-list .n { display: inline-flex; align-items: center; gap: 10px; font-weight: 600; }
-    .cc-lg { width: 28px; height: 28px; object-fit: contain; flex: none; }
-    .cc-list .st { font-size: 13.5px; color: var(--muted); }
-    .cc-pill { padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; margin-right: 6px; color: var(--tone); background: color-mix(in srgb, var(--tone) 12%, #fff); }
-
-    /* Footer: what this confirms on the left, when it was checked on the right (wraps on a phone). */
-    .cc-note {
-        display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 16px;
-        margin: 4px 0 0; padding-top: 14px; border-top: 1px solid var(--border);
-        color: var(--muted); font-size: 13px; line-height: 1.5;
-    }
-    .cc-who + .cc-note, .cc-list + .cc-note { margin-top: 0; }
-    .cc-note time { font-variant-numeric: tabular-nums; font-weight: 600; }
-
-    @media (max-width: 480px) {
-        .cc-box { padding: 26px 18px 16px; }
-        .cc-top { gap: 12px; }
-        .cc-ico { width: 40px; height: 40px; border-radius: 12px; }
-        .cc-ico svg { width: 20px; height: 20px; }
-        .cc-head, .cc-name { font-size: 20px; }
-    }
-</style>
 
 <div class="cc">
     <section class="cc-box" style="--tone: <?= $h($accent) ?>;" aria-live="polite">
