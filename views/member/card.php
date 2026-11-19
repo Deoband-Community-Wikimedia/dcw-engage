@@ -119,6 +119,7 @@ if ($data !== null) {
 }
 
 engage_header([
+    'page'    => 'member-card',
     'title'   => 'Membership card',
     'heading' => 'Membership card',
     'lead'    => 'Show this code to prove you are a DCW member.',
@@ -129,66 +130,6 @@ engage_header([
 ]);
 cert_rows_css();
 ?>
-<style>
-    /* Member card page only. */
-    .mc { max-width: 520px; margin: 0 auto 30px; }
-
-    /* The card: one thin edge, a white header, a thin rule in the logo colours, a tinted body. */
-    .mc-card { margin: 0 0 20px; background: #fff; border: 1px solid var(--accent); border-radius: 14px; overflow: hidden; box-shadow: 0 10px 26px rgba(15,23,42,.10); }
-    .mc-head { display: grid; grid-template-columns: 56px minmax(0, 1fr) 48px; align-items: center; gap: 12px; padding: 14px 18px; }
-    .mc-head.solo { grid-template-columns: 56px minmax(0, 1fr); }
-    .mc-head.club .mc-text { text-align: center; }
-    .mc-logo { display: block; margin: 0 auto; max-height: 44px; max-width: 100%; width: auto; height: auto; object-fit: contain; }
-    .mc-chapter { margin: 0; font-size: 17px; font-weight: 800; letter-spacing: -.01em; line-height: 1.2; color: var(--ink); overflow-wrap: anywhere; }
-    .mc-org { margin: 3px 0 0; font-size: 12px; color: var(--muted); }
-    .mc-org.up { font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; }
-    .mc-rule { display: flex; height: 3px; }
-    .mc-rule span { flex: 1; }
-    .mc-main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(110px, 38%); gap: 16px; align-items: center; padding: 18px 20px 16px; background: var(--tint); }
-    .mc-lb { margin: 0 0 2px; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
-    .mc-name { margin: 0 0 14px; font-size: 21px; font-weight: 800; letter-spacing: -.01em; color: var(--ink); overflow-wrap: anywhere; }
-    .mc-id { display: inline-block; margin: 0; padding: 0 12px 3px 0; border-bottom: 2px solid var(--accent); font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; font-size: 17px; font-weight: 700; letter-spacing: .04em; color: var(--ink); }
-    .mc-title { margin: 0; padding-left: 10px; border-left: 4px solid var(--accent); font-size: 15px; font-weight: 800; line-height: 1.4; color: var(--ink); overflow-wrap: anywhere; }
-    .mc-project { margin: 0; font-size: 14px; font-weight: 700; color: var(--ink); overflow-wrap: anywhere; }
-    .mc-also { margin: 0; padding: 0; list-style: none; font-size: 14px; line-height: 1.5; }
-    .mc-also .dot { font-size: 11px; margin-right: 7px; }
-    .mc-sec { margin-top: 14px; }
-    .mc-qr svg { display: block; width: 100%; height: auto; padding: 6px; background: #fff; border-radius: 6px; box-sizing: border-box; }
-    .mc-scan { margin: 6px 0 0; text-align: center; color: var(--accent); font-size: 12px; font-weight: 700; }
-    .mc-issue { display: grid; grid-template-columns: minmax(0, 1fr) minmax(110px, 38%); gap: 16px; align-items: end; padding: 12px 20px 14px; background: var(--tint); border-top: 1px solid #d6dbe1; }
-    .mc-isn { margin: 0; font-size: 14px; font-weight: 800; line-height: 1.3; color: var(--ink); }
-    .mc-iss { margin: 1px 0 0; font-size: 12px; color: var(--muted); }
-    .mc-sig { text-align: center; }
-    .mc-sig img { display: block; margin: 0 auto 2px; max-height: 40px; max-width: 100%; width: auto; }
-    .mc-sig .line { border-top: 1px solid var(--ink); margin: 0 auto 3px; max-width: 150px; }
-    .mc-sgn { margin: 0; font-size: 12px; font-weight: 700; color: var(--ink); }
-    .mc-sgt { margin: 0; font-size: 11px; color: var(--muted); }
-    @media (max-width: 380px) { .mc-issue { grid-template-columns: 1fr; } }
-    .mc-foot { margin: 0; padding: 10px 20px; border-top: 1px solid #e2e8f0; text-align: center; color: var(--accent); font-size: 12px; font-weight: 700; letter-spacing: .08em; }
-    .mc-foot i { font-style: normal; font-size: 9px; margin: 0 8px; color: var(--accent2); }
-    @media (max-width: 380px) {
-        .mc-head, .mc-head.solo { grid-template-columns: 44px minmax(0, 1fr) 40px; gap: 8px; }
-        .mc-main { grid-template-columns: 1fr; }
-        .mc-qr { max-width: 200px; margin: 0 auto; }
-    }
-
-    /* Below the card: status, chapters, actions. */
-    .mc-box { margin: 0 0 20px; padding: 18px 22px; background: var(--card); border: 1px solid var(--border); border-radius: 16px; }
-    .mc-state { margin: 0; font-size: 15px; font-weight: 700; color: var(--tone); }
-    .mc-hint { margin: 8px 0 0; font-size: 13.5px; color: var(--muted); line-height: 1.5; }
-    .mc-hint a { color: var(--primary); font-weight: 600; }
-    .mc-ms { list-style: none; margin: 14px 0 0; padding: 0; }
-    .mc-ms li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; padding: 9px 0; border-top: 1px solid var(--border); font-size: 14.5px; }
-    .mc-ms .n { display: inline-flex; align-items: center; gap: 10px; font-weight: 600; }
-    .mc-ms .n img { width: 26px; height: 26px; object-fit: contain; }
-    .mc-ms .st { font-size: 13px; color: var(--muted); }
-    .mc-pill { padding: 2px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 700; margin-right: 6px; color: var(--tone); background: color-mix(in srgb, var(--tone) 12%, #fff); }
-    .mc-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0 0; }
-    .mc-box p { margin: 0 0 10px; color: var(--muted); font-size: 14px; line-height: 1.55; }
-    .mc-box summary { cursor: pointer; font-weight: 700; color: var(--primary); font-size: 14.5px; }
-    .mc-box form { margin-top: 12px; }
-</style>
-
 <div class="mc">
 <?php if ($saved === 'replaced'): ?>
     <div class="alert ok">Your card has been replaced. The old QR code no longer works.</div>
