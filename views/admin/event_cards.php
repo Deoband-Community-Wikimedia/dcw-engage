@@ -194,6 +194,7 @@ foreach ($people as $p) $roleCounts[$p['role']] = ($roleCounts[$p['role']] ?? 0)
 $initial = fn(string $s): string => mb_strtoupper(mb_substr(trim($s), 0, 1)) ?: '?';
 
 engage_header([
+    'page'    => 'event-cards',
     'title'   => 'Event cards',
     'heading' => $event !== null ? trim($event['name'] . ' ' . $event['edition']) : 'Event cards',
     'lead'    => $event !== null ? 'Add people, check their cards, then download the print file.' : 'Set up an event, add its people and print their cards.',
@@ -203,116 +204,6 @@ engage_header([
     'tools'   => '',
 ]);
 ?>
-<style>
-    [hidden] { display: none !important; }
-    .ec { max-width: 72rem; }
-    .ec h2 { display: flex; align-items: baseline; gap: 10px; font-size: 1.15rem; margin: 2rem 0 .8rem; }
-    .ec h2 small { color: var(--muted, #64748b); font-size: .85rem; font-weight: 500; }
-    .ec .msg { padding: .75rem 1rem; border-radius: 12px; margin: .8rem 0; font-weight: 500; }
-    .ec .ok  { background: #e3f6ee; color: #14513b; border: 1px solid #bfe6d4; }
-    .ec .bad { background: #fdeceb; color: #8f1c10; border: 1px solid #f3c4c0; }
-
-    .ec .btn, .ec button { font: inherit; cursor: pointer; }
-    .ec .b { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 9px 18px; border-radius: 999px; border: 1px solid var(--primary, #106b9a); background: var(--primary, #106b9a); color: #fff; font-weight: 700; font-size: 14px; text-decoration: none; }
-    .ec .b:hover { filter: brightness(1.08); }
-    .ec .b.line { background: #fff; color: var(--primary, #106b9a); }
-    .ec .b.red { background: #fff; color: #97161b; border-color: #e3b5b7; }
-    .ec .b.red:hover { border-color: #97161b; }
-    .ec .b.sm { padding: 6px 14px; font-size: 13px; }
-    .ec :is(.b, summary, input, select, textarea, .seg button):focus-visible { outline: 2px solid var(--primary, #106b9a); outline-offset: 2px; }
-
-    .ec .fld { display: block; font-size: 13px; font-weight: 600; }
-    .ec .fld small { display: block; margin-top: 2px; color: var(--muted, #64748b); font-weight: 400; font-size: 12px; }
-    .ec :is(input[type=text], input[type=search], select) { width: 100%; box-sizing: border-box; margin-top: 4px; padding: 9px 11px; font: inherit; border: 1px solid var(--border, #cbd5e1); border-radius: 10px; background: #fff; }
-    .ec .form-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); align-items: end; }
-    .ec .form-grid .wide { grid-column: 1 / -1; }
-
-    .ec .panel { padding: 20px; background: var(--card, #fff); border: 1px solid var(--border, #e2e8f0); border-radius: 16px; }
-    .ec .panel h3 { margin: 0 0 4px; font-size: 16px; }
-    .ec .panel > p { margin: 0 0 12px; color: var(--muted, #64748b); font-size: 13.5px; line-height: 1.45; }
-
-    /* Event list */
-    .ec .top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin: 1.4rem 0 1rem; }
-    .ec .evs { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
-    .ec .ev { position: relative; display: flex; flex-direction: column; gap: 14px; padding: 20px; background: var(--card, #fff); border: 1px solid var(--border, #e2e8f0); border-radius: 18px; color: inherit; text-decoration: none; transition: transform .18s, box-shadow .18s, border-color .18s; }
-    .ec .ev:hover { transform: translateY(-3px); box-shadow: 0 12px 28px rgba(15,23,42,.12); border-color: hsl(var(--h) 45% 70%); }
-    .ec .ev::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 6px; border-radius: 18px 18px 0 0; background: linear-gradient(90deg, hsl(var(--h) 65% 50%), hsl(calc(var(--h) + 40) 70% 55%)); }
-    .ec .ev .nm { display: block; font-size: 18px; font-weight: 800; line-height: 1.25; }
-    .ec .ev .ed { color: var(--muted, #64748b); font-size: 14px; }
-    .ec .ev .ft { display: flex; align-items: end; justify-content: space-between; margin-top: auto; }
-    .ec .ev .ct { font-size: 34px; font-weight: 800; line-height: 1; color: hsl(var(--h) 60% 28%); font-variant-numeric: tabular-nums; }
-    .ec .ev .ct small { display: block; margin-top: 4px; color: var(--muted, #64748b); font-size: 12.5px; font-weight: 500; }
-    .ec .ev .go { color: var(--primary, #106b9a); font-weight: 700; font-size: 14px; }
-    .ec .none { padding: 34px 20px; text-align: center; color: var(--muted, #64748b); background: var(--card, #fff); border: 1px dashed #c3d0dc; border-radius: 16px; }
-    .ec .none b { display: block; margin-bottom: 4px; color: var(--ink, #1e293b); font-size: 16px; }
-
-    details.ec-new > summary, details.ec-more > summary { list-style: none; cursor: pointer; }
-    details.ec-new > summary::-webkit-details-marker { display: none; }
-    details.ec-new[open] > summary { background: #fff; color: var(--primary, #106b9a); }
-    details.ec-new .panel { margin-top: 12px; max-width: 40rem; }
-
-    /* One event */
-    .ec .crumb { display: inline-block; margin-top: 1.2rem; color: var(--primary, #106b9a); font-weight: 600; text-decoration: none; }
-    .ec .crumb:hover { text-decoration: underline; }
-    .ec .sum { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px; margin: 14px 0 0; padding: 18px 20px; background: var(--card, #fff); border: 1px solid var(--border, #e2e8f0); border-radius: 16px; }
-    .ec .sum .tot b { display: block; font-size: 34px; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; }
-    .ec .sum .tot span { color: var(--muted, #64748b); font-size: 13px; }
-    .ec .rc { display: flex; flex-wrap: wrap; gap: 8px; flex: 1 1 260px; }
-    .ec .rchip { display: inline-flex; align-items: center; gap: 7px; padding: 5px 12px; border: 1px solid var(--border, #e2e8f0); border-radius: 999px; background: #fff; font-size: 13px; font-weight: 600; cursor: pointer; }
-    .ec .rchip i { width: 10px; height: 10px; border-radius: 50%; }
-    .ec .rchip b { font-variant-numeric: tabular-nums; }
-    .ec .rchip.on { background: var(--ink, #1e293b); border-color: var(--ink, #1e293b); color: #fff; }
-
-    .ec .find { margin: 16px 0 12px; }
-    .ec .find input { max-width: 340px; border-radius: 999px; padding: 10px 16px; margin: 0; }
-
-    .ec .pp { margin: 0 0 8px; background: var(--card, #fff); border: 1px solid var(--border, #e2e8f0); border-left: 5px solid var(--rc); border-radius: 12px; }
-    .ec .pp[open] { box-shadow: 0 8px 24px rgba(15,23,42,.09); }
-    .ec .pp > summary { display: grid; grid-template-columns: 40px 1fr auto auto; gap: 14px; align-items: center; padding: 10px 16px; cursor: pointer; list-style: none; }
-    .ec .pp > summary::-webkit-details-marker { display: none; }
-    .ec .pp > summary:hover { background: #f8fafc; border-radius: 12px; }
-    .ec .av { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; background: var(--rc); color: #fff; font-weight: 800; font-size: 17px; }
-    .ec .pp .who b { display: block; font-size: 15px; overflow-wrap: anywhere; }
-    .ec .pp .who span { color: var(--muted, #64748b); font-size: 13px; }
-    .ec .pill { display: inline-block; padding: 3px 12px; border-radius: 999px; background: var(--rc); color: #fff; font-size: 12.5px; font-weight: 700; white-space: nowrap; }
-    .ec .pp .ed { color: var(--primary, #106b9a); font-weight: 600; font-size: 14px; }
-    .ec .pp .ed::before { content: "Edit"; }
-    .ec .pp[open] .ed::before { content: "Close"; }
-    .ec .pp .body { padding: 16px 18px 18px; border-top: 1px dashed var(--border, #e2e8f0); }
-    .ec .pp .foot { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding-top: 4px; }
-    .ec .pp .foot .grow { margin-left: auto; }
-
-    /* Add people */
-    .ec .adds { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); align-items: start; }
-    .ec .adds .span { grid-column: 1 / -1; }
-    .ec .picks { max-height: 260px; overflow: auto; margin: 10px 0; padding: 4px 12px; border: 1px solid var(--border, #e2e8f0); border-radius: 12px; }
-    .ec .picks label { display: flex; gap: 8px; align-items: center; padding: 7px 0; border-top: 1px solid #eef2f6; font-size: 14px; cursor: pointer; }
-    .ec .picks label:first-child { border-top: 0; }
-    .ec .picks small { color: var(--muted, #64748b); }
-    .ec .drop { display: block; padding: 22px 14px; margin: 10px 0; text-align: center; border: 2px dashed #b9c8d6; border-radius: 14px; background: #f8fafc; color: #475569; font-size: 14px; }
-    .ec .drop input { margin: 8px 0 0; }
-    .ec code { padding: 1px 6px; border-radius: 6px; background: #eef2f6; font-size: 12.5px; }
-
-    /* Card preview: the modal on each person, and the live one beside "Add one person" */
-    .ec .seg { display: inline-flex; border: 1px solid var(--border, #cbd5e1); border-radius: 999px; overflow: hidden; background: #fff; }
-    .ec .seg button { border: 0; background: #fff; color: var(--ink, #1e293b); padding: 7px 16px; font-size: 13px; font-weight: 600; }
-    .ec .seg button.on { background: var(--ink, #1e293b); color: #fff; }
-    .ec iframe.card { display: block; width: 100%; aspect-ratio: 105 / 148; border: 0; border-radius: 12px; background: #eef2f6; }
-    .ec dialog.pv { width: min(92vw, 400px, calc((100vh - 120px) * .7095)); padding: 14px; border: 0; border-radius: 18px; background: var(--card, #fff); box-shadow: 0 24px 60px rgba(15,23,42,.35); }
-    .ec dialog.pv::backdrop { background: rgba(15,23,42,.55); }
-    .ec .pv-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
-    .ec .live-wrap { display: grid; gap: 22px; grid-template-columns: minmax(0, 1fr) 250px; align-items: start; }
-    .ec .live .seg { margin-bottom: 10px; }
-
-    @media (max-width: 640px) {
-        .ec .pp > summary { grid-template-columns: 40px 1fr auto; }
-        .ec .pp .ed { display: none; }
-        .ec .pp > summary .pill { grid-column: 2; justify-self: start; grid-row: 2; }
-        .ec .live-wrap { grid-template-columns: 1fr; }
-        .ec .live { max-width: 250px; }
-    }
-    @media (prefers-reduced-motion: reduce) { .ec .ev { transition: none; } .ec .ev:hover { transform: none; } }
-</style>
 <div class="ec">
 
 <?php if ($okText !== ''): ?><div class="msg ok" role="status"><?= $h($okText) ?></div><?php endif; ?>

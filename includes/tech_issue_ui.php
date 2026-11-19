@@ -35,32 +35,10 @@ function tech_require_staff(): void {
     engage_forbidden('This page is for the technical team. Ask an owner if you need access.');
 }
 
-/** Small stylesheet shared by the issue pages. Everything else comes from engage.css. */
-function tech_styles(): void { ?>
-<style>
-    .tech-form .field { max-width: 560px; margin-bottom: 14px; }
-    .tech-form textarea, .tech-form select, .tech-form input[type=text] {
-        width: 100%; box-sizing: border-box; padding: 11px 12px; font: inherit; font-size: 14px;
-        border: 1px solid var(--border, #e2e8f0); border-radius: 10px; background: #fff; color: inherit;
-    }
-    .warn-text { color: #b45309; }
-    .tech-form textarea { min-height: 130px; resize: vertical; }
-    .fcard .tech-form .send { width: auto; padding: 12px 30px; }
-    .thread { display: grid; gap: 10px; margin: 14px 0; }
-    .msg { padding: 12px 14px; border: 1px solid var(--border, #e2e8f0); border-radius: 12px; background: #fff; }
-    .msg.theirs { background: #f8fafc; }
-    .msg.internal { background: #fffbeb; border-color: #fcd34d; }
-    .msg .who { font-size: 12px; font-weight: 600; color: #64748b; margin-bottom: 4px; }
-    .msg .txt { font-size: 14px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
-    .issue-meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px 20px; margin: 10px 0 4px; font-size: 13px; color: #475569; }
-    .issue-meta b { display: block; font-size: 12px; color: #94a3b8; font-weight: 600; }
-    .chk { display: flex; align-items: center; gap: 8px; font-size: 14px; margin: 0 0 12px; }
-    .filters { display: flex; gap: 8px; margin: 0 0 12px; flex-wrap: wrap; }
-    .filters a { padding: 6px 14px; border-radius: 999px; border: 1px solid var(--border, #e2e8f0); font-size: 13px; font-weight: 600; color: #475569; text-decoration: none; }
-    .filters a.on { background: #106b9a; border-color: #106b9a; color: #fff; }
-    .tbl td a.ref { font-weight: 700; color: #106b9a; text-decoration: none; }
-</style>
-<?php }
+/** The styles live in assets/css/engage.css. Kept (and empty) so existing calls keep working. */
+function tech_styles(): void
+{
+}
 
 /** New-report form. Posts to the same URL. */
 function tech_report_form(): void { ?>

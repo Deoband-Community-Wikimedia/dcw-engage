@@ -38,6 +38,7 @@ $row = $cm->byToken((string) ($confirmToken ?? ''));
 if (!$row || ($row['status'] ?? '') !== 'Accepted') {
     http_response_code(404);
     engage_header([
+        'page'    => 'form-confirm',
         'title'   => 'Link not valid',
         'heading' => 'This link is not valid',
         'crumbs'  => [['Home', '/'], ['Confirm your scholarship']],
@@ -181,6 +182,7 @@ $respondedAt = FormModel::formatIst($row['responded_at'] ?? null);
 $shownNow = AwardConfirmationModel::visibleMap($fields, array_combine(array_column($fields, 'name'), array_map($value, $fields)) ?: []);
 
 engage_header([
+    'page'    => 'form-confirm',
     'title'   => 'Confirm your scholarship - ' . $title,
     'heading' => $title,
     'kicker'  => 'Confirm your scholarship',
@@ -189,15 +191,6 @@ engage_header([
     'noindex' => true,
 ]);
 ?>
-<style>
-    /* Page-specific bits not in engage.css. Colors come from the design tokens, so chapter themes and staff.css still apply. */
-    .fcard .field .error-text { display: block; margin-top: 5px; font-size: 13px; color: var(--accent, #b91c1c); }
-    .choices.stack input { margin: 0; }
-    .confirm-intro { margin: 0 0 22px; line-height: 1.6; }
-    .confirm-hint { margin: 6px 0 0; font-size: 13px; color: var(--muted); }
-    .when-confirming[hidden], .when-declining[hidden], .fcard .field[hidden] { display: none !important; }
-</style>
-
 <div class="fcard">
     <?php if ($success): ?>
         <div class="alert ok"><strong>Success:</strong> <?= $e($success) ?></div>

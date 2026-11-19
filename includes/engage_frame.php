@@ -21,6 +21,8 @@
  *   wide         wide content column (tables, queues)
  *   narrow       narrow content column
  *   auth         sign-in style page: a narrow centred column for an .auth-card
+ *   page         short name of the page, e.g. 'admin-goodies': adds class pg-<name> to <body>, so the page's
+ *                CSS in engage.css can be scoped with  body.pg-admin-goodies { ... }
  *   bare, flat   no page head: the page prints its own <h1>
  *   home, slim, compact   accepted and ignored (old options)
  *   kicker       accepted and ignored, except a value containing a digit (an ID) is shown as a small line
@@ -48,6 +50,7 @@ function engage_header(array $o) {
     $compact  = !empty($o['compact']);
     $noHead   = !empty($o['bare']) || !empty($o['flat']);
     $referrer = in_array(($o['referrer'] ?? ''), ['no-referrer', 'same-origin'], true) ? (string) $o['referrer'] : '';
+    $page     = (string) preg_replace('/[^a-z0-9-]/', '', strtolower((string) ($o['page'] ?? '')));
 
     $isStaff   = engage_is_staff_path();
     $isPreview = engage_is_theme_preview();
@@ -77,7 +80,8 @@ function engage_header(array $o) {
     $themeColor = $isStaff ? '#051A2B' : ($themeVars['--primary'] ?? '#2E6599');
     $logoUrl    = engage_logo_url($chapterKey);
     $brandHref  = $isStaff ? '/admin/dashboard' : '/';
-    $bodyClass  = 'f2 aud-' . $aud . ($isStaff ? ' admin' : '') . ($wide ? ' f2-wide' : '') . ($narrow ? ' f2-narrow' : '') . ($auth ? ' f2-auth' : '');
+    $bodyClass  = 'f2 aud-' . $aud . ($isStaff ? ' admin' : '') . ($wide ? ' f2-wide' : '') . ($narrow ? ' f2-narrow' : '')
+                . ($auth ? ' f2-auth' : '') . ($page !== '' ? ' pg-' . $page : '');
     ?>
 <!DOCTYPE html>
 <html lang="en">

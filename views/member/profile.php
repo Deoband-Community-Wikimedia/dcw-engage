@@ -133,6 +133,7 @@ if ($initials === '') $initials = 'M';
 $saved = (string) ($_GET['saved'] ?? '');
 
 engage_header([
+    'page'    => 'member-profile',
     'title'   => 'My profile',
     'heading' => 'My profile',
     'lead'    => 'Who you are on DCW Engage.',
@@ -144,71 +145,6 @@ engage_header([
 ]);
 cert_rows_css();   // .d-btn buttons and icons
 ?>
-<style>
-    /* Member profile only. Colors, radii and fonts come from the tokens in /assets/css/engage.css. */
-    .pf { display: grid; gap: 0 22px; }
-    @media (min-width: 1000px) {
-        .pf { grid-template-columns: 340px minmax(0, 1fr); align-items: start; }
-        .pf-side { position: sticky; top: 14px; }
-    }
-    .pf-card { position: relative; margin: 0 0 20px; padding: 22px 24px; background: var(--card); border: 1px solid var(--border); border-radius: 16px; box-shadow: 0 6px 18px rgba(15,23,42,.06); }
-    .pf-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 14px; margin: 0 0 14px; }
-    .pf-head h2 { margin: 0; font-size: 18px; font-weight: 800; letter-spacing: -.01em; }
-    .pf-lead { margin: 0 0 14px; color: var(--muted); font-size: 14.5px; }
-    .pf-note { margin: 12px 0 0; color: var(--muted); font-size: 13px; line-height: 1.55; }
-    .pf a:not(.d-btn) { color: var(--primary); font-weight: 600; }
-
-    /* Identity card: the logo's three-colour stripe on top, same as the dashboard */
-    .pf-id { padding-top: 30px; overflow: hidden; text-align: center; }
-    .pf-id::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 5px; background: linear-gradient(90deg, var(--primary) 0 40%, var(--accent) 40% 70%, var(--leaf) 70% 100%); }
-    .pf-av { width: 76px; height: 76px; margin: 0 auto 12px; border-radius: 50%; display: grid; place-items: center; font-size: 26px; font-weight: 800; color: #fff; background: linear-gradient(135deg, var(--primary), var(--leaf-dark)); box-shadow: 0 0 0 4px color-mix(in srgb, var(--leaf) 22%, #fff); }
-    .pf-id h2 { margin: 0; font-size: 20px; font-weight: 800; letter-spacing: -.01em; overflow-wrap: anywhere; }
-    .pf-mid { display: inline-flex; align-items: center; gap: 8px; margin: 8px 0 0; }
-    .pf-mid code { font-size: 14px; padding: 3px 10px; border-radius: 8px; background: #eef3f8; letter-spacing: .04em; }
-    .pf-cardbtn { margin: 14px 0 0; }
-    .pf-facts { margin: 18px 0 0; padding-top: 14px; border-top: 1px solid var(--border); text-align: left; display: grid; grid-template-columns: auto 1fr; gap: 8px 14px; font-size: 14px; }
-    .pf-facts dt { color: var(--muted); font-weight: 600; }
-    .pf-facts dd { margin: 0; overflow-wrap: anywhere; }
-
-    /* Memberships: names and join dates only */
-    .pf-ms { list-style: none; margin: 0; padding: 0; }
-    .pf-ms li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 12px; padding: 10px 0; border-top: 1px solid var(--border); font-size: 14.5px; }
-    .pf-ms li:first-child { border-top: 0; padding-top: 0; }
-    .pf-ms .n { font-weight: 600; }
-    .pf-ms .v { color: var(--muted); font-size: 13px; }
-
-    /* Wikimedia card */
-    .pf-wm-name { margin: 0; font-size: 22px; font-weight: 800; letter-spacing: -.01em; overflow-wrap: anywhere; }
-    .pf-wm-sub { margin: 4px 0 14px; color: var(--muted); font-size: 14px; }
-    .pf-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 4px; }
-    .pf-fold { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
-    .pf-fold > summary { cursor: pointer; list-style: none; font-size: 14.5px; font-weight: 700; color: var(--primary); }
-    .pf-fold > summary::-webkit-details-marker { display: none; }
-    .pf-fold > summary::before { content: '\25B8'; margin-right: 8px; color: var(--muted); }
-    .pf-fold[open] > summary::before { content: '\25BE'; }
-    .pf-fold form { margin-top: 14px; }
-    .pf-warn { margin: 0 0 14px; padding: 10px 12px; background: #fffbeb; border: 1px solid #fcd34d; border-radius: 10px; font-size: 13.5px; color: #92400e; }
-
-    /* Public members list */
-    .pf-list { display: flex; align-items: flex-start; gap: 10px; margin: 0 0 14px; font-size: 14.5px; font-weight: 400; cursor: pointer; }
-    .pf-list input { width: 18px; height: 18px; margin-top: 2px; accent-color: var(--primary); }
-
-    /* About you */
-    .pf-areas { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px 14px; }
-    .pf-areas label { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 14.5px; font-weight: 400; cursor: pointer; }
-    .pf-areas input { width: 17px; height: 17px; accent-color: var(--primary); }
-    .pf textarea { min-height: 96px; resize: vertical; }
-    .pf-count { float: right; font-weight: 400; color: var(--muted); font-variant-numeric: tabular-nums; }
-
-    /* History */
-    .pf-hist { list-style: none; margin: 0; padding: 0; font-size: 14px; }
-    .pf-hist li { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-top: 1px solid var(--border); }
-    .pf-hist li:first-child { border-top: 0; padding-top: 0; }
-    .pf-hist span:last-child { color: var(--muted); }
-
-    .pf-acct { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
-    .pf-acct form { margin: 0; }
-</style>
 
 <div class="dash">
 

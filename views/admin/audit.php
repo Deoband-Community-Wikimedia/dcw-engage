@@ -31,6 +31,7 @@ $tones = [
 ];
 
 engage_header([
+    'page'    => 'audit',
     'title'   => 'Audit log',
     'heading' => 'Audit log',
     'kicker'  => 'Organizer workspace',
@@ -39,20 +40,6 @@ engage_header([
     'crumbs'  => [['Workspace', '/admin/dashboard'], ['Team', '/admin/team'], ['Audit log']],
 ]);
 ?>
-<style>
-    /* Audit page only. Everything else comes from engage.css and staff.css */
-    .ctitle { margin: 0 0 6px; font-size: 20px; font-weight: 800; letter-spacing: -.02em; }
-    .pill.t-grant  { --tone: var(--primary); }
-    .pill.t-revoke { --tone: var(--accent); }
-    .pill.t-change { --tone: var(--gold-dark); }
-    .pill.t-plain  { --tone: var(--slate); }
-    .tbl td.when { white-space: nowrap; color: var(--muted); }
-    .tbl td.actor { font-weight: 700; }
-    .tbl td.detail { color: var(--muted); }
-    .tbl td.ip { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--muted); }
-    .dash { color: var(--muted); }
-</style>
-
 <section class="fcard wide">
     <h2 class="ctitle">Recent activity</h2>
     <p class="intro">Newest first, most recent 200 shown.</p>

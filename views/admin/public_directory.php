@@ -78,6 +78,7 @@ foreach ($o['legacy'] as $r) {
 }
 
 engage_header([
+    'page'    => 'public-directory',
     'title'   => 'Public members list',
     'heading' => 'Public members list',
     'lead'    => 'Who appears on the public members page.',
@@ -86,23 +87,6 @@ engage_header([
     'wide'    => true,
 ]);
 ?>
-<style>
-    .pa-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; margin: 0 0 20px; }
-    .pa-stat { padding: 16px 18px; background: var(--card); border: 1px solid var(--border); border-radius: 14px; }
-    .pa-stat b { display: block; font-size: 28px; font-weight: 800; letter-spacing: -.02em; }
-    .pa-stat span { color: var(--muted); font-size: 13.5px; }
-    .pa-card { margin: 0 0 20px; padding: 20px 22px; background: var(--card); border: 1px solid var(--border); border-radius: 16px; }
-    .pa-card h2 { margin: 0 0 8px; font-size: 18px; font-weight: 800; }
-    .pa-card p { color: var(--muted); font-size: 14px; }
-    .pa-t { width: 100%; border-collapse: collapse; font-size: 14px; }
-    .pa-t th { text-align: left; color: var(--muted); font-size: 12.5px; padding: 6px 8px; }
-    .pa-t td { padding: 8px; border-top: 1px solid var(--border); vertical-align: top; }
-    .pa-t input[type=text] { width: 100%; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: inherit; font: inherit; }
-    .pa-t input[type=checkbox] { width: auto; }
-    .pa-clubs label { display: inline-block; margin: 0 12px 4px 0; white-space: nowrap; }
-    .pa-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 0 0 18px; }
-    .pa-actions form { margin: 0; }
-</style>
 
 <div class="dash">
 <?php if (isset($_GET['refreshed'])): ?>

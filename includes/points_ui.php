@@ -231,41 +231,7 @@ function points_render_pending(array $pending): void
     </section>
 <?php }
 
-/** Styles for the history rows. Uses the tokens from /assets/css/engage.css. Print once per page. */
+/** The styles live in assets/css/engage.css. Kept (and empty) so existing calls keep working. */
 function points_history_css(): void
-{ ?>
-<style>
-    .ph-month { margin: 0 0 22px; }
-    .ph-month > header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 12px; margin: 0 0 4px; padding-bottom: 6px; border-bottom: 2px solid var(--border); }
-    .ph-month h3 { margin: 0; font-size: 15px; font-weight: 800; letter-spacing: -.01em; }
-    .ph-month .tot { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
-    .ph-list { list-style: none; margin: 0; padding: 0; }
-    .ph-list > li { border-top: 1px solid var(--border); }
-    .ph-list > li:first-child { border-top: 0; }
-    .ph-row, .ph-group > summary { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 10px 0; }
-    .ph-group > summary { cursor: pointer; list-style: none; }
-    .ph-group > summary::-webkit-details-marker { display: none; }
-    .ph-group > summary:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; border-radius: 8px; }
-    .ph-ic { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; font-size: 18px; background: hsl(var(--h, 215) 75% 92%); }
-    .ph-tx b { display: block; font-size: 14.5px; font-weight: 700; line-height: 1.35; overflow-wrap: anywhere; }
-    .ph-tx small { display: block; margin-top: 1px; color: var(--muted); font-size: 12.5px; overflow-wrap: anywhere; }
-    .ph-pt { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-    .ph-pt strong { font-size: 17px; font-weight: 800; }
-    .ph-pt small { display: block; color: var(--muted); font-size: 11.5px; }
-    .earn .ph-pt strong { color: var(--leaf-dark); }
-    .spend .ph-pt strong { color: var(--accent); }
-    .ph-x { margin-left: 4px; padding: 0 8px; border-radius: 999px; background: #eef3f8; color: var(--muted); font-size: 12px; font-weight: 700; }
-    .ph-group > ul { list-style: none; margin: 0 0 8px 52px; padding: 0 0 0 14px; border-left: 2px solid var(--border); }
-    .ph-group > ul li { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; color: var(--muted); font-size: 13px; }
-    .ph-group > ul li em { font-style: normal; opacity: .8; }
-    .ph-pend { margin: 0 0 22px; padding: 14px 16px 6px; background: #fffbeb; border: 1.5px dashed #fcd34d; border-radius: 14px; }
-    .ph-pend h3 { margin: 0; font-size: 15px; font-weight: 800; color: #78350f; }
-    .ph-pend > p { margin: 2px 0 6px; color: #92400e; font-size: 13px; }
-    .ph-pend .ph-list > li { border-top-color: #fde68a; }
-    .ph-pend .ph-pt strong { color: #92400e; }
-    .ph-sum { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 18px; }
-    .ph-sum span { padding: 5px 13px; border-radius: 999px; background: #f6f9fb; border: 1px solid var(--border); font-size: 13.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
-    .ph-sum b { font-weight: 800; }
-    .ph-sum .c { background: hsl(var(--h) 80% 94%); border-color: transparent; }
-</style>
-<?php }
+{
+}
