@@ -101,6 +101,7 @@ $today = (new DateTimeImmutable('today', new DateTimeZone('Asia/Kolkata')))->for
 $live = count($sessions) >= CommunityRecordsModel::WINDOW;
 
 engage_header([
+    'page'    => 'community-records',
     'title'   => 'Community records',
     'heading' => 'Community records',
     'kicker'  => 'Organizer workspace',
@@ -112,12 +113,6 @@ engage_header([
         : [['Workspace', '/admin/dashboard'], ['Community records']],
 ]);
 ?>
-<style>
-    /* Community records only. Shared pieces (.sect, .tag, .fields, .idform, .hint, tabs) live in staff.css */
-    .tbl .btn-ghost, .tbl .btn-ok, .tbl .btn-bad { width: auto; padding: 4px 13px; font-size: 12.5px; }
-    .tbl td.act { white-space: nowrap; text-align: right; }
-    .tbl td .sub { display: block; color: var(--muted); font-size: 12.5px; }
-</style>
 
 <?php if ($flash): ?><div class="alert ok"><?= $h($flash) ?></div><?php endif; ?>
 <?php if ($error): ?><div class="alert error"><?= $h($error) ?></div><?php endif; ?>
