@@ -218,6 +218,7 @@ if (!$form) {
 }
 
 engage_header([
+    'page'    => 'feedback-review',
     'title'   => 'Feedback',
     'heading' => 'Feedback',
     'kicker'  => 'Organizer workspace',
@@ -229,90 +230,6 @@ engage_header([
 
 $svgStar = '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>';
 ?>
-<style>
-    /* Feedback review only. Shared pieces (.vtabs, .adm-shell, .pill, .tbl, buttons) come from engage.css and staff.css */
-    .sect { background: var(--card); border: 1.5px solid var(--border); border-radius: 16px; padding: 20px 22px; margin: 0 0 18px; box-shadow: 0 2px 0 var(--edge), var(--lift); }
-    .sect > h3:first-child { margin: 0 0 12px; font-size: 15px; font-weight: 800; letter-spacing: -.005em; }
-    .sect input[type=search] { padding: 8px 12px; background: #fff; color: var(--ink); border: 1.5px solid #C5D3DE; border-radius: 10px; font: inherit; font-size: 14px; }
-    .sect input[type=search]:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 4px color-mix(in srgb, var(--primary) 20%, transparent); }
-    .btn-ghost.sm, .btn-solid.sm { width: auto; padding: 7px 16px; font-size: 13.5px; }
-    a.btn-ghost, a.btn-bad, a.btn-ok { display: inline-block; text-decoration: none; }
-    .muted { color: #94a3b8; }
-
-    /* Sidebar extras: the forms listed under "All feedback" */
-    .vsub.on { background: var(--primary-tint); color: var(--primary-dark); box-shadow: inset 3px 0 0 var(--primary); }
-    .vsub span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-    .vsub span:last-child { font-variant-numeric: tabular-nums; font-weight: 800; }
-    @media (max-width: 860px) { .vtabs .vsub { display: flex; flex: none; margin: 0; gap: 8px; white-space: nowrap; } }
-
-    /* Form bar: status and actions */
-    .fb-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
-    .fb-bar form { margin: 0; }
-    .fb-bar .grow { margin-left: auto; font-size: 13.5px; color: var(--muted); }
-    .fb-note { margin: 12px 0 0; font-size: 13.5px; color: var(--muted); }
-
-    /* Search row */
-    .rv-search { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 0 0 14px; }
-    .rv-search input[type=search] { flex: 1 1 280px; min-width: 0; padding: 10px 14px 10px 38px; font-size: 15px;
-        background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='%2355696C' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M21 21l-4.3-4.3'/%3E%3C/svg%3E") no-repeat 12px center; }
-    .rv-search .clear { font-size: 13.5px; font-weight: 600; color: var(--primary); text-decoration: none; }
-    .rv-search .clear:hover { text-decoration: underline; }
-    .rv-result { margin: 0 0 12px; font-size: 14px; color: var(--muted); }
-
-    /* Tables */
-    .tbl td .sub { display: block; color: var(--muted); font-size: 12.5px; }
-    .tbl td.act { white-space: nowrap; text-align: right; }
-    .tbl .btn-ghost { width: auto; padding: 4px 13px; font-size: 12.5px; }
-    .tbl td.snip { color: #2c3a52; max-width: 460px; overflow-wrap: anywhere; }
-    .age { display: block; margin-top: 3px; font-size: 12.5px; color: var(--muted); }
-    .slug { font-size: 12.5px; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-    .gone { display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 700; background: #F1F5F9; color: #475569; border: 1px solid #CBD5E1; }
-
-    .pager { display: flex; gap: 10px; justify-content: center; align-items: center; margin-top: 16px; font-size: 13.5px; color: var(--muted); }
-
-    /* Single response */
-    .rv-back { display: inline-block; margin: 0 0 12px; font-size: 14px; font-weight: 600; color: var(--primary); text-decoration: none; }
-    .rv-back:hover { text-decoration: underline; }
-    .rv-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 0 0 4px; }
-    .rv-head h2 { margin: 0; font-size: 24px; font-weight: 800; letter-spacing: -.01em; overflow-wrap: anywhere; }
-    .rv-meta { margin: 0; color: var(--muted); font-size: 14px; overflow-wrap: anywhere; }
-    .rv-grid { display: grid; gap: 0 22px; }
-    @media (min-width: 1000px) {
-        .rv-grid { grid-template-columns: minmax(0, 1fr) 340px; align-items: start; }
-        .rv-side { position: sticky; top: 12px; }
-    }
-    dl.answers { margin: 0; display: grid; grid-template-columns: minmax(130px, 240px) minmax(0, 1fr); }
-    dl.answers dt, dl.answers dd { margin: 0; padding: 12px 0; border-top: 1px solid var(--border); }
-    dl.answers dt:first-of-type, dl.answers dt:first-of-type + dd { border-top: 0; }
-    dl.answers dt { padding-right: 16px; font-size: 13px; font-weight: 700; color: var(--muted); }
-    dl.answers dd { white-space: pre-wrap; overflow-wrap: anywhere; }
-    dl.answers dt em { font-weight: 500; }
-    @media (max-width: 700px) {
-        dl.answers { grid-template-columns: 1fr; }
-        dl.answers dt { padding-bottom: 0; border-top: 1px solid var(--border); }
-        dl.answers dd { padding-top: 3px; border-top: 0; }
-        dl.answers dt:first-of-type { border-top: 0; }
-    }
-    .who-name { margin: 0; font-size: 16px; font-weight: 700; overflow-wrap: anywhere; }
-    .who-sub { margin: 4px 0 0; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
-    .side-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
-    .side-actions form { margin: 0; }
-    .pn { display: flex; justify-content: space-between; gap: 10px; }
-    .pn .off { opacity: .45; pointer-events: none; }
-
-    /* Email respondent (sent through the system) */
-    .reply-fold { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
-    .reply-fold > summary { cursor: pointer; font-size: 14.5px; font-weight: 800; list-style: none; color: var(--primary-dark); }
-    .reply-fold > summary::-webkit-details-marker { display: none; }
-    .reply-fold > summary::before { content: '\25B8'; margin-right: 8px; color: var(--muted); }
-    .reply-fold[open] > summary::before { content: '\25BE'; }
-    .reply-fold form { margin: 12px 0 0; }
-    .reply-fold .field { margin-bottom: 12px; }
-    .reply-fold input[type=text], .reply-fold textarea { width: 100%; padding: 10px 12px; background: #fff; color: var(--ink); border: 1.5px solid #C5D3DE; border-radius: 10px; font: inherit; font-size: 14px; }
-    .reply-fold input[type=text]:focus, .reply-fold textarea:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 4px color-mix(in srgb, var(--primary) 20%, transparent); }
-    .reply-fold .hint { display: block; margin-top: 6px; font-size: 12.5px; color: var(--muted); }
-    .reply-fold .err { margin: 0 0 12px; padding: 10px 12px; background: var(--accent-tint); border: 1.5px solid #f0c2bd; border-radius: 10px; font-size: 13.5px; color: var(--accent-dark); }
-</style>
 
 <?php if (!empty($_GET['deleted'])): ?><div class="alert ok">Response deleted.</div><?php endif; ?>
 <?php if (!empty($_GET['toggled'])): ?><div class="alert ok">Form status updated.</div><?php endif; ?>
