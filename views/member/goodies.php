@@ -314,6 +314,7 @@ $summary = $historyMode ? points_summary($ledger, $fy ?: (int) (new DateTimeImmu
 // ---- Page frame ------------------------------------------------------------------------------------
 if ($claimPage) {
     engage_header([
+        'page'    => 'member-goodies',
         'title'   => 'Claim points',
         'heading' => $claimRef !== '' ? 'My claim' : 'Claim points',
         'lead'    => $claimRef !== '' ? 'Where your claim stands.' : 'Ask for points for something you did that DCW did not log for you.',
@@ -325,6 +326,7 @@ if ($claimPage) {
     ]);
 } elseif ($historyMode) {
     engage_header([
+        'page'    => 'member-goodies',
         'title'   => 'Points history',
         'heading' => 'Points history',
         'lead'    => 'Every award and redemption, newest first. Balance now: ' . number_format($balance) . ' points.',
@@ -336,6 +338,7 @@ if ($claimPage) {
     ]);
 } else {
     engage_header([
+        'page'    => 'member-goodies',
         'title'   => 'My goodies',
         'heading' => 'My goodies',
         'lead'    => 'Points you have earned for contributing to DCW. They never expire.',
@@ -348,173 +351,6 @@ cert_rows_css();
 points_history_css();
 points_claim_css();
 ?>
-<style>
-    [hidden] { display: none !important; }
-
-    /* Hero: the balance, and how far it goes. This is the one loud thing on the page. */
-    .mg-hero { position: relative; overflow: hidden; margin: 0 0 18px; padding: 28px 30px; border-radius: 22px; color: #fff;
-        background: radial-gradient(circle at 92% 12%, rgba(255,255,255,.22) 0 8%, transparent 8.5%),
-                    radial-gradient(circle at 92% 12%, rgba(255,255,255,.12) 0 18%, transparent 18.5%),
-                    radial-gradient(circle at 92% 12%, rgba(255,255,255,.07) 0 30%, transparent 30.5%),
-                    linear-gradient(135deg, var(--primary-dark) 0%, var(--primary) 60%, var(--primary-light) 100%);
-        box-shadow: 0 14px 34px rgba(31,74,117,.28); }
-    .mg-hero .who { margin: 0; font-size: 14px; opacity: .85; }
-    .mg-hero .big { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; margin: 6px 0 0; }
-    .mg-hero .big b { font-size: clamp(48px, 9vw, 76px); line-height: 1; font-weight: 800; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
-    .mg-hero .big span { font-size: 18px; font-weight: 600; opacity: .9; }
-    .mg-hero .big em { align-self: center; padding: 3px 12px; border-radius: 999px; background: rgba(255,255,255,.2); font-size: 13.5px; font-style: normal; font-weight: 700; }
-    .mg-goal { margin: 20px 0 0; max-width: 520px; }
-    .mg-goal p { margin: 0 0 8px; font-size: 14.5px; }
-    .mg-bar { height: 10px; border-radius: 999px; background: rgba(255,255,255,.25); overflow: hidden; }
-    .mg-bar i { display: block; height: 100%; border-radius: 999px; background: #ffd166; }
-    .mg-hero .go { display: inline-block; margin-top: 18px; padding: 9px 20px; border-radius: 999px; background: #fff; color: var(--primary-dark); font-weight: 700; font-size: 14px; text-decoration: none; }
-
-    /* Jump links under the hero */
-    .mg-nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 26px; }
-    .mg-nav a { padding: 7px 16px; border-radius: 999px; background: var(--card); border: 1px solid var(--border); color: var(--ink); font-size: 14px; font-weight: 600; text-decoration: none; transition: border-color .15s; }
-    .mg-nav a:hover { border-color: var(--primary); color: var(--primary-dark); }
-
-    .mg-title { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 16px; margin: 0 0 14px; }
-    .mg-title h2 { margin: 0; font-size: 21px; }
-    .mg-title p { margin: 0; color: var(--muted); font-size: 13.5px; max-width: 520px; }
-    .mg-title a { font-size: 14px; font-weight: 600; color: var(--primary); text-decoration: none; }
-    .mg-title a:hover { text-decoration: underline; }
-
-    /* Two columns on wide screens (history and past orders). The dashboard defines its own .d-two; this page needs this one. */
-    .mg-two { display: grid; gap: 0 34px; margin: 0 0 34px; }
-    @media (min-width: 1000px) { .mg-two { grid-template-columns: 1.2fr 1fr; align-items: start; } }
-
-    /* Catalogue */
-    .mg-grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); margin: 0 0 34px; }
-    .mg-card { display: flex; flex-direction: column; overflow: hidden; background: var(--card); border: 1px solid var(--border); border-radius: 18px; transition: transform .18s, box-shadow .18s; }
-    .mg-card:hover { transform: translateY(-3px); box-shadow: 0 12px 28px rgba(15,23,42,.12); }
-    .mg-card.locked { opacity: .92; }
-    .mg-art { position: relative; display: flex; align-items: center; justify-content: center; width: 100%; height: 116px; padding: 0; border: 0; background: linear-gradient(135deg, hsl(var(--h) 70% 90%), hsl(calc(var(--h) + 35) 75% 82%)); }
-    .mg-art span.ini { display: grid; place-items: center; width: 64px; height: 64px; border-radius: 50%; background: #fff; color: hsl(var(--h) 60% 32%); font-size: 30px; font-weight: 800; box-shadow: 0 6px 16px rgba(15,23,42,.14); }
-    /* A goody with a picture: the cover fills the top of the card, and opens the picture viewer. */
-    .mg-art.has-img { height: 180px; background: #f1f5f9; cursor: zoom-in; }
-    .mg-art.has-img img { display: block; width: 100%; height: 100%; object-fit: cover; }
-    .mg-more { position: absolute; right: 10px; bottom: 10px; padding: 2px 10px; border-radius: 999px; background: rgba(15,23,42,.72); color: #fff; font-size: 12px; font-weight: 700; }
-    .mg-zoom { position: absolute; left: 10px; bottom: 10px; padding: 2px 10px; border-radius: 999px; background: rgba(15,23,42,.72); color: #fff; font-size: 12px; font-weight: 700; }
-    .mg-body { display: flex; flex: 1; flex-direction: column; padding: 16px 18px 18px; }
-    .mg-body h3 { margin: 0 0 4px; font-size: 17px; }
-    .mg-body p { margin: 0 0 12px; color: var(--muted); font-size: 14px; line-height: 1.45; }
-    .mg-opts { display: flex; flex-wrap: wrap; gap: 5px; margin: 0 0 12px; }
-    .mg-opts span { padding: 1px 9px; border-radius: 999px; background: #f1f5f9; color: #475569; font-size: 12px; font-weight: 600; }
-    .mg-foot { margin-top: auto; }
-    .mg-cost { display: flex; align-items: baseline; gap: 5px; font-variant-numeric: tabular-nums; }
-    .mg-cost b { font-size: 24px; font-weight: 800; color: hsl(var(--h) 60% 28%); }
-    .mg-cost span { color: var(--muted); font-size: 13px; }
-    .mg-mini { height: 6px; margin: 10px 0 6px; border-radius: 999px; background: #e8edf2; overflow: hidden; }
-    .mg-mini i { display: block; height: 100%; background: hsl(var(--h) 60% 50%); border-radius: 999px; }
-    .mg-need { margin: 0 !important; color: #92400e !important; font-size: 13px !important; font-weight: 600; }
-    .mg-btn { width: 100%; margin-top: 12px; padding: 10px 16px; font: inherit; font-weight: 700; border: 0; border-radius: 999px; background: var(--primary); color: #fff; cursor: pointer; }
-    .mg-btn:hover { background: var(--primary-dark); }
-    .mg-btn.ghost { background: #fff; color: var(--primary); border: 1px solid var(--border); }
-    .mg-btn[disabled] { opacity: .5; cursor: not-allowed; }
-    .mg-btn:focus-visible, .mg-dlg input:focus-visible, .mg-dlg select:focus-visible, .mg-dlg textarea:focus-visible, .mg-thumbs button:focus-visible,
-    .mg-art:focus-visible, .mg-line button:focus-visible, .mg-lb button:focus-visible, .mg-gal-main:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
-
-    /* Stock and limits. The strikethrough is for a size chip only: the "Out of stock" tag keeps its text readable. */
-    .mg-opts span.out:not(.mg-tag) { text-decoration: line-through; opacity: .6; }
-    .mg-tag { padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; }
-    .mg-tag.out { background: #fbe4e5; color: #97161b; text-decoration: none; }
-    .mg-tag.low { background: #fef3c7; color: #92400e; }
-    .mg-tag.cap { background: #e8f3f9; color: #0b4f73; }
-    .mg-card.soldout .mg-art { filter: grayscale(1); opacity: .7; }
-
-    /* Dialogs: detail, cart */
-    .mg-dlg { width: min(480px, calc(100vw - 32px)); max-height: calc(100vh - 32px); padding: 0; border: 0; border-radius: 20px; box-shadow: 0 24px 60px rgba(15,23,42,.35); }
-    .mg-dlg::backdrop { background: rgba(15,23,42,.5); }
-    .mg-dlg header { padding: 20px 22px 14px; background: linear-gradient(135deg, hsl(var(--h, 205) 70% 92%), hsl(calc(var(--h, 205) + 35) 75% 86%)); }
-    .mg-dlg header h3 { margin: 0 0 2px; font-size: 19px; }
-    .mg-dlg header p { margin: 0; color: #475569; font-size: 13.5px; }
-    .mg-dlg form, .mg-dbody { padding: 8px 22px 22px; }
-    .mg-dlg label { display: block; margin: 12px 0 0; font-size: 13px; font-weight: 600; }
-    .mg-dlg input[type=text], .mg-dlg input[type=tel], .mg-dlg input[type=number], .mg-dlg select, .mg-dlg textarea { width: 100%; box-sizing: border-box; margin-top: 4px; padding: 10px 12px; font: inherit; border: 1px solid var(--border); border-radius: 10px; }
-    .mg-dlg .fine { margin: 12px 0 0; color: var(--muted); font-size: 12.5px; }
-    .mg-dlg .acts { display: flex; gap: 10px; margin-top: 16px; }
-    .mg-dlg .acts .mg-btn { margin: 0; }
-    .mg-dbody p.desc { margin: 10px 0 0; color: #475569; font-size: 14px; line-height: 1.5; }
-    .mg-qty { display: inline-flex; align-items: center; gap: 8px; margin-top: 4px; }
-    .mg-qty button { width: 34px; height: 34px; border: 1px solid var(--border); border-radius: 50%; background: #fff; font: inherit; font-weight: 800; font-size: 17px; cursor: pointer; }
-    .mg-qty button[disabled] { opacity: .4; cursor: not-allowed; }
-    .mg-qty input[type=number] { width: 4.2em !important; margin: 0 !important; text-align: center; }
-    .mg-qty b { min-width: 1.6em; text-align: center; font-variant-numeric: tabular-nums; }
-
-    /* Pictures in the detail dialog: a large one that opens the viewer, and thumbnails when there are several */
-    .mg-gal { position: relative; background: #f1f5f9; }
-    .mg-gal-main { position: relative; display: block; width: 100%; padding: 0; border: 0; background: #f8fafc; cursor: zoom-in; }
-    .mg-gal-main img { display: block; width: 100%; height: 260px; object-fit: contain; }
-    .mg-thumbs { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 22px; background: #fff; border-bottom: 1px solid var(--border); }
-    .mg-thumbs button { width: 54px; height: 54px; padding: 0; border: 2px solid transparent; border-radius: 10px; overflow: hidden; background: #f1f5f9; cursor: pointer; }
-    .mg-thumbs button[aria-current="true"] { border-color: var(--primary); }
-    .mg-thumbs img { display: block; width: 100%; height: 100%; object-fit: cover; }
-
-    /* Cart bar and cart lines */
-    .mg-cartbar { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 50; display: flex; align-items: center; gap: 14px; max-width: calc(100vw - 24px); padding: 10px 12px 10px 20px; border-radius: 999px; background: var(--ink); color: #fff; box-shadow: 0 12px 30px rgba(15,23,42,.35); font-weight: 700; font-size: 14.5px; }
-    .mg-cartbar .mg-btn { width: auto; margin: 0; padding: 8px 18px; background: #ffd166; color: #1e293b; }
-    .mg-line { display: grid; grid-template-columns: 52px minmax(0, 1fr) auto; gap: 4px 12px; align-items: center; padding: 12px 0; border-top: 1px solid var(--border); }
-    .mg-line:first-child { border-top: 0; }
-    .mg-line .th { width: 52px; height: 52px; border-radius: 10px; overflow: hidden; background: #f1f5f9; display: grid; place-items: center; font-weight: 800; color: #475569; }
-    .mg-line .th img { width: 100%; height: 100%; object-fit: cover; }
-    .mg-line .nm { font-weight: 700; font-size: 14.5px; overflow-wrap: anywhere; }
-    .mg-line .nm small { display: block; color: var(--muted); font-weight: 500; font-size: 12.5px; }
-    .mg-line .pr { text-align: right; font-weight: 800; font-variant-numeric: tabular-nums; }
-    .mg-line .ctl { grid-column: 2 / -1; display: flex; align-items: center; gap: 10px; }
-    .mg-line .rm { border: 0; background: none; color: #97161b; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
-    .mg-sum { margin: 10px 0 4px; padding: 10px 14px; border-radius: 12px; background: #e8f3f9; color: #0b4f73; font-weight: 700; font-size: 14.5px; }
-    .mg-sum.bad { background: #fee2e2; color: #97161b; }
-    @media (max-width: 520px) { .mg-cartbar { bottom: 10px; padding-left: 16px; } }
-
-    /* Picture viewer: full picture, click or the Zoom button to zoom in, scroll to look around */
-    .mg-lb { width: 100vw; max-width: 100vw; height: 100vh; height: 100dvh; max-height: 100vh; max-height: 100dvh; margin: 0; padding: 0; border: 0; background: rgba(8,12,20,.96); color: #fff; }
-    .mg-lb[open] { display: flex; flex-direction: column; }
-    .mg-lb::backdrop { background: rgba(0,0,0,.8); }
-    .mg-lb-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 14px; font-weight: 700; }
-    .mg-lb button { padding: 8px 16px; border: 0; border-radius: 999px; background: rgba(255,255,255,.16); color: #fff; font: inherit; font-weight: 700; cursor: pointer; }
-    .mg-lb button:hover { background: rgba(255,255,255,.28); }
-    .mg-lb-wrap { position: relative; flex: 1; min-height: 0; display: flex; }
-    .mg-lb-stage { flex: 1; display: flex; overflow: auto; cursor: zoom-in; touch-action: pan-x pan-y pinch-zoom; }
-    .mg-lb-stage.zoomed { cursor: zoom-out; }
-    .mg-lb-stage img { display: block; margin: auto; max-width: 100%; max-height: 100%; object-fit: contain; }
-    .mg-lb-nav { position: absolute; top: 50%; transform: translateY(-50%); width: 44px; height: 44px; padding: 0 !important; font-size: 22px; }
-    .mg-lb-nav.prev { left: 12px; } .mg-lb-nav.next { right: 12px; }
-    .mg-lb-cap { margin: 0; padding: 8px 14px 14px; text-align: center; font-size: 14px; color: #cbd5e1; }
-
-    .mg-empty { padding: 26px; text-align: center; color: var(--muted); background: var(--card); border: 1px dashed #c3d0dc; border-radius: 16px; }
-
-    /* History filters and pager (full history view) */
-    .mg-filter { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 16px; }
-    .mg-filter select { font: inherit; font-size: 14.5px; padding: 9px 14px; color: var(--ink); background: #fff; border: 1px solid var(--border); border-radius: 999px; }
-    .mg-filter select:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
-    .mg-filter .clear { align-self: center; font-size: 14px; font-weight: 600; color: var(--primary); }
-    .mg-count { margin: 0 0 12px; font-size: 13.5px; color: var(--muted); }
-    .mg-pager { display: flex; align-items: center; justify-content: center; gap: 14px; margin: 18px 0 0; font-size: 14px; color: var(--muted); }
-    .mg-pager .off { opacity: .45; pointer-events: none; }
-    .mg-hist-wrap { max-width: 760px; }
-
-    /* Orders */
-    .mg-orders { display: grid; gap: 12px; }
-    .mg-order { padding: 14px 16px; background: var(--card); border: 1px solid var(--border); border-radius: 14px; }
-    .mg-order .top { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 12px; align-items: baseline; }
-    .mg-order h3 { margin: 0; font-size: 15.5px; }
-    .mg-order .meta { margin: 3px 0 0; color: var(--muted); font-size: 13px; }
-    .mg-order .st { padding: 2px 11px; border-radius: 999px; background: var(--primary-tint); color: var(--primary-dark); font-size: 12.5px; font-weight: 700; }
-    .mg-order .st.done { background: #d9f3ee; color: #0f766e; }
-    .mg-order .st.cx { background: #fbe4e5; color: #97161b; }
-    .mg-lines { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 4px; font-size: 14px; }
-    .mg-lines em.rf { display: block; margin-top: 1px; color: #92400e; font-size: 12.5px; font-style: normal; font-weight: 600; }
-    .mg-track { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin: 14px 0 0; padding: 0; list-style: none; }
-    .mg-track li { position: relative; padding-top: 16px; text-align: center; color: #94a3b8; font-size: 12px; font-weight: 600; }
-    .mg-track li::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 6px; border-radius: 999px; background: #e2e8f0; }
-    .mg-track li.on { color: var(--primary-dark); }
-    .mg-track li.on::before { background: var(--primary); }
-    .mg-order .note { margin: 10px 0 0; color: #97161b; font-size: 13px; }
-
-    @media (prefers-reduced-motion: reduce) { .mg-card { transition: none; } .mg-card:hover { transform: none; } }
-    @media (max-width: 520px) { .mg-hero { padding: 22px 20px; border-radius: 18px; } .mg-gal-main img { height: 220px; } }
-</style>
 
 <div class="dash">
 
