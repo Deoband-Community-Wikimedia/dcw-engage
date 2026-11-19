@@ -31,6 +31,7 @@ $tones = [
 ];
 
 engage_header([
+    'page'    => 'audit',
     'title'   => 'Audit log',
     'heading' => 'Audit log',
     'kicker'  => 'Organizer workspace',
