@@ -103,6 +103,7 @@ if ($id > 0) {
         : trim($ticket['member_name'] . ' (' . $ticket['member_id'] . ')');
 
     engage_header([
+        'page'    => 'admin-member-support',
         'title'   => $ticket['tracking_id'],
         'heading' => (string) $ticket['subject'],
         'lead'    => $ticket['tracking_id'] . ' · ' . $label . ' · started ' . ms_date($ticket['created_at']),
@@ -199,6 +200,7 @@ if ($fAssignee !== 'none' && $fAssignee !== '' && !in_array($fAssignee, $assigne
 $tickets = $model->listForStaff($isOwner, $fType, $fStatus, $fAssignee);
 
 engage_header([
+    'page'    => 'admin-member-support',
     'title'   => MemberTicketModel::SUPPORT_LABEL,
     'heading' => MemberTicketModel::SUPPORT_LABEL,
     'lead'    => 'Complaints, suggestions and questions from members. Oldest activity first.',
