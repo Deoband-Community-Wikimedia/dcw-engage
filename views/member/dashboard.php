@@ -372,6 +372,7 @@ $lock = fn(bool $open) => !$memberActive ? 'Renew membership' : (!$open ? 'Curre
 // Same page frame as the rest of Engage: the slim top bar with the shared member menu.
 // "bare" renders the top bar only (no heading, lead or trail); the greeting is in the identity card.
 engage_header([
+     'page'    => 'member-dashboard',
     'title'   => 'My dashboard',
     'heading' => 'Hello, ' . $firstName,      // used for the page title and share text only
     'bare'    => true,                         // top bar only: no heading, lead or trail
@@ -381,96 +382,6 @@ engage_header([
 ]);
 cert_rows_css();   // icons, buttons and certificate rows shared with /member/certificates
 ?>
-<style>
-    /* Member dashboard only. Colors, radii and fonts come from the tokens in /assets/css/engage.css. */
-
-    /* ---- Identity card: shown once. The logo's three-color stripe on top, like the site footer ---- */
-    .d-id { position: relative; overflow: hidden; margin: 0 0 28px; padding: 26px 22px 6px; background: var(--card); border: 1px solid var(--border); border-radius: 16px; box-shadow: 0 6px 18px rgba(15,23,42,.06); }
-    .d-id::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 5px; background: linear-gradient(90deg, var(--primary) 0 40%, var(--accent) 40% 70%, var(--leaf) 70% 100%); }
-    .d-id-top { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; padding: 0 2px 18px; }
-    .d-id-link { display: flex; align-items: center; gap: 16px; min-width: 0; color: inherit; text-decoration: none; }
-    .d-id-link:hover h1 { color: var(--primary); }
-    .d-prof { margin-left: auto; padding: 7px 16px; font-size: 13.5px; }
-    .d-avatar { width: 52px; height: 52px; flex: none; border-radius: 50%; display: grid; place-items: center; font-size: 18px; font-weight: 700; color: var(--primary-dark); background: var(--primary-tint); }
-    .d-id-who { min-width: 0; }
-    .d-id-who h1 { margin: 0; font-size: 19px; font-weight: 700; letter-spacing: -.01em; line-height: 1.3; overflow-wrap: anywhere; }
-    .d-id-who p { margin: 2px 0 0; color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; }
-
-    /* Memberships: one slim row each, a dot and a tinted label instead of a pill-and-card */
-    .d-ms { list-style: none; margin: 0; padding: 0; }
-    .d-ms li { --tone: var(--primary); display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding: 12px 2px; border-top: 1px solid var(--border); }
-    .d-ms .dot { width: 9px; height: 9px; flex: none; border-radius: 50%; background: var(--tone); }
-    .d-ms .n { flex: 1 1 200px; min-width: 0; font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
-    .d-ms .st { padding: 2px 10px; border-radius: 999px; font-size: 12.5px; font-weight: 700; color: var(--tone); background: color-mix(in srgb, var(--tone) 10%, #fff); }
-    .d-ms .v { color: var(--muted); font-size: 13.5px; font-variant-numeric: tabular-nums; }
-    .d-ms .d-btn { padding: 6px 14px; font-size: 13px; }
-
-    /* Quick links, inside the card as its footer */
-    .d-glance { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 0 16px; border-top: 1px solid var(--border); }
-    .d-chip { --tone: var(--primary); display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px; border-radius: 999px; background: #f6f9fc; border: 1px solid transparent; color: var(--ink); font-size: 14px; font-weight: 600; text-decoration: none; transition: border-color .15s, background .15s; }
-    .d-chip svg.i { width: 16px; height: 16px; color: var(--tone); }
-    .d-chip b { color: var(--tone); font-size: 15px; font-weight: 700; }
-    .d-chip:hover { border-color: var(--tone); background: color-mix(in srgb, var(--tone) 6%, #fff); }
-
-    /* Goodies card: balance, the next goal, the last three events */
-    .d-gd { position: relative; overflow: hidden; display: grid; gap: 20px 32px; margin: 0 0 30px; padding: 24px 22px 20px; background: var(--card); border: 1px solid var(--border); border-radius: 16px; box-shadow: 0 6px 18px rgba(15,23,42,.06); }
-    .d-gd::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 5px; background: linear-gradient(90deg, var(--accent) 0 40%, var(--primary) 40% 70%, var(--leaf) 70% 100%); }
-    @media (min-width: 900px) { .d-gd { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
-    .d-gd-k { margin: 0; font-size: 12.5px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
-    .d-gd-big { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin: 2px 0 0; }
-    .d-gd-big b { font-size: 46px; line-height: 1.1; font-weight: 800; letter-spacing: -.02em; color: var(--primary-dark); font-variant-numeric: tabular-nums; }
-    .d-gd-big span { font-size: 16px; font-weight: 600; color: var(--muted); }
-    .d-gd-big em { align-self: center; padding: 2px 11px; border-radius: 999px; background: #fffbeb; border: 1px solid #fcd34d; color: #92400e; font-size: 13px; font-style: normal; font-weight: 700; }
-    .d-gd-goal { margin: 12px 0 0; font-size: 14.5px; }
-    .d-gd-bar { height: 9px; margin: 6px 0 0; border-radius: 999px; background: #e8edf2; overflow: hidden; }
-    .d-gd-bar i { display: block; height: 100%; border-radius: 999px; background: var(--leaf); }
-    .d-gd-acts { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0 0; }
-    .d-gd-side h3 { margin: 0 0 4px; font-size: 14px; font-weight: 800; }
-    .d-gd-side ul { list-style: none; margin: 0; padding: 0; }
-    .d-gd-side li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; padding: 8px 0; border-top: 1px solid var(--border); font-size: 14px; }
-    .d-gd-side li:first-child { border-top: 0; }
-    .d-gd-side li small { grid-column: 1; color: var(--muted); font-size: 12.5px; }
-    .d-gd-side li strong { grid-row: 1 / span 2; grid-column: 2; align-self: center; font-variant-numeric: tabular-nums; }
-    .d-gd-side li.earn strong { color: var(--leaf-dark); }
-    .d-gd-side li.spend strong { color: var(--accent); }
-    .d-gd-ord { margin: 12px 0 0; padding: 8px 12px; border-radius: 10px; background: var(--primary-tint); color: var(--primary-dark); font-size: 13.5px; font-weight: 600; }
-
-    /* Requires your attention (same amber family as .action-banner) */
-    .d-attn { margin: 0 0 30px; background: #fffbeb; border: 1px solid #fcd34d; border-radius: 14px; overflow: hidden; }
-    .d-attn-head { display: flex; align-items: center; gap: 10px; padding: 13px 18px; font-weight: 800; color: #78350f; }
-    .d-attn-head .num { min-width: 24px; padding: 1px 8px; border-radius: 999px; background: #92400e; color: #fff; font-size: 13px; text-align: center; }
-    .d-attn-item { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; padding: 12px 18px; border-top: 1px solid #fcd34d; color: #78350f; font-size: 14.5px; }
-    .d-attn-item p { margin: 0; min-width: 0; overflow-wrap: anywhere; }
-    .d-attn-item strong { margin-right: 6px; }
-    .d-attn-item form { margin: 0; }
-    .d-attn-item button.d-btn { font: inherit; font-size: 13.5px; cursor: pointer; }
-
-    /* Result of "Email me the link" */
-    .d-note { margin: 0 0 20px; }
-
-    /* A form button inside a request/application row (draft: "Email me the link") */
-    .req .side form { margin: 0; }
-    .req .side button.d-btn { font: inherit; font-size: 13.5px; cursor: pointer; }
-
-    /* Certificates and applications header: title with the total, and a link to the full list */
-    .c-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 16px; }
-    .c-head h2 { margin: 0; }
-    .c-head .c-count { margin-left: 8px; padding: 1px 10px; border-radius: 999px; font-size: 13px; font-weight: 700; color: var(--leaf-dark); background: var(--leaf-tint); vertical-align: 2px; }
-    .c-head .c-all { font-size: 14px; font-weight: 600; color: var(--primary); text-decoration: none; }
-    .c-head .c-all:hover { text-decoration: underline; }
-    .d-more a { color: var(--primary); font-weight: 600; text-decoration: none; }
-    .d-more a:hover { text-decoration: underline; }
-
-    /* Requests and conversations side by side on wide screens */
-    .d-two { display: grid; gap: 0 30px; }
-    @media (min-width: 1000px) { .d-two { grid-template-columns: 1.25fr 1fr; align-items: start; } }
-    .d-more { margin: 10px 0 0; text-align: center; color: var(--muted); font-size: 13px; }
-    .d-empty { padding: 24px 22px; text-align: center; color: var(--muted); background: var(--card); border: 1px dashed #c3d0dc; border-radius: 14px; font-size: 14.5px; }
-    .d-empty strong { display: block; margin-bottom: 4px; color: var(--ink); font-size: 16px; }
-    .d-empty p { margin: 0 auto; max-width: 52ch; }
-    .d-empty .d-btn { margin-top: 14px; }
-</style>
-
 <div class="dash">
 
     <!-- Greeting and identity (once), then memberships (one slim row each) -->
