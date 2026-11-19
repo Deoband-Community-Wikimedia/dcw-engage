@@ -11,43 +11,37 @@ function dash_status(string $type, string $status): array
     $map = $type === 'internet'
         ? [
             'Submitted'            => $review,
-            'Info Requested'       => ['Reply needed', '#b45309', true],
+            'Info Requested'       => ['Reply needed', 'var(--amber)', true],
             'Approved for Support' => ['Approved', '#0f766e', false],
             'Recharge Failed'      => $review,
-            'Awaiting Receipt'     => ['Upload your receipt', '#b45309', true],
+            'Awaiting Receipt'     => ['Upload your receipt', 'var(--amber)', true],
             'Receipt Submitted'    => ['Receipt being checked', '#106b9a', false],
             'Closed'               => ['Completed', '#15803d', false],
-            'Rejected'             => ['Not approved', '#97161b', false],
+            'Rejected'             => ['Not approved', 'var(--accent)', false],
         ]
         : [
             'Submitted'            => $review,
             'Under Review'         => $review,
-            'Info Requested'       => ['Reply needed', '#b45309', true],
+            'Info Requested'       => ['Reply needed', 'var(--amber)', true],
             'Approved for Payment' => ['Approved', '#0f766e', false],
             'Payment Failed'       => $review,
             'Paid'                 => ['Paid', '#15803d', false],
-            'Rejected'             => ['Not approved', '#97161b', false],
+            'Rejected'             => ['Not approved', 'var(--accent)', false],
         ];
     return $map[$status] ?? $review;
 }
 
-/**
- * [label, colour, needs-the-member] for an application status, as the applicant sees it.
- * Used by the dashboard and /member/applications. "Discarded" (staff-only, spam) shows as
- * "Under review": applicants are never told it was discarded. A Draft needs the member only
- * while its form is still open ($canResume); otherwise it shows as "Draft closed".
- */
 function dash_app_status(string $status, bool $canResume): array
 {
     switch ($status) {
-        case 'Draft':        return $canResume ? ['Draft', '#b45309', true] : ['Draft closed', '#64748b', false];
+        case 'Draft':        return $canResume ? ['Draft', 'var(--amber)', true] : ['Draft closed', '#64748b', false];
         case 'New':
         case 'Submitted':    return ['Submitted', '#106b9a', false];
         case 'Under Review':
         case 'Discarded':    return ['Under review', '#106b9a', false];
         case 'Accepted':     return ['Accepted', '#0f766e', false];
         case 'Dispatched':   return ['Dispatched', '#0f766e', false];
-        case 'Rejected':     return ['Not accepted', '#97161b', false];
+        case 'Rejected':     return ['Not accepted', 'var(--accent)', false];
         default:             return [$status, '#106b9a', false];
     }
 }
