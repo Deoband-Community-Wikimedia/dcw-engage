@@ -55,6 +55,7 @@ $pageUrl = function (int $p) use ($q, $year): string {
 };
 
 engage_header([
+     'page'    => 'member-certificates',
     'title'   => 'My certificates',
     'heading' => 'My certificates',
     'kicker'  => 'Member ID ' . $member['member_id'],
@@ -66,21 +67,6 @@ engage_header([
 ]);
 cert_rows_css();
 ?>
-<style>
-    .c-filter { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 16px; }
-    .c-filter input[type=search], .c-filter select { font: inherit; font-size: 14.5px; padding: 9px 14px; color: var(--ink); background: #fff; border: 1px solid var(--border); border-radius: 999px; }
-    .c-filter input[type=search] { flex: 1 1 240px; min-width: 0; }
-    .c-filter input:focus-visible, .c-filter select:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
-    .c-sum { margin: 0 0 10px; font-size: 13.5px; color: var(--muted); }
-    .c-pager { display: flex; align-items: center; justify-content: center; gap: 14px; margin: 18px 0 0; font-size: 14px; color: var(--muted); }
-    .c-pager .off { opacity: .45; pointer-events: none; }
-    .c-clear { margin-left: 4px; font-size: 14px; font-weight: 600; color: var(--primary); }
-    .d-empty { padding: 24px 22px; text-align: center; color: var(--muted); background: var(--card); border: 1px dashed #c3d0dc; border-radius: 14px; font-size: 14.5px; }
-    .d-empty strong { display: block; margin-bottom: 4px; color: var(--ink); font-size: 16px; }
-    .d-empty p { margin: 0 auto; max-width: 52ch; }
-    .d-empty .d-btn { margin-top: 14px; }
-</style>
-
 <div class="dash">
     <section class="panel">
 
