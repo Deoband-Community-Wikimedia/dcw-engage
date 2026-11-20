@@ -324,6 +324,37 @@ class EventCardModel
         return $base . '/event-card/' . $token;
     }
 
+    // ---- PDF file names --------------------------------------------------------------------------
+
+    /** One person's card: "Aisha Khan, Train-a-Wikipedian.pdf" ("person, event name.pdf"). */
+    public static function cardFileName(string $person, array $event): string
+    {
+        return self::safeFileName($person . ', ' . (string) ($event['name'] ?? '')) . '.pdf';
+    }
+
+    /** Everyone's cards in one PDF: "Event cards, Train-a-Wikipedian.pdf" ("Event cards, event name.pdf"). */
+    public static function allCardsFileName(array $event): string
+    {
+        return self::safeFileName('Event cards, ' . (string) ($event['name'] ?? '')) . '.pdf';
+    }
+
+    /** Content-Disposition value that keeps the comma, spaces and any non-ASCII letters intact. */
+    public static function contentDisposition(string $file, bool $inline = false): string
+    {
+        $ascii = str_replace(['"', '\\'], '_', preg_replace('/[^\x20-\x7E]/', '_', $file) ?? 'cards.pdf');
+        return ($inline ? 'inline' : 'attachment')
+             . '; filename="' . $ascii . '"; filename*=UTF-8\'\'' . rawurlencode($file);
+    }
+
+    /** Remove characters that are illegal in file names on Windows/macOS/Linux, collapse spaces, cap the length. */
+    private static function safeFileName(string $s): string
+    {
+        $s = preg_replace('/[\x00-\x1F\x7F\\\\\/:*?"<>|]+/u', ' ', $s) ?? '';
+        $s = trim(preg_replace('/\s+/u', ' ', $s) ?? '', " .");
+        $s = mb_substr($s, 0, 150, 'UTF-8');
+        return $s !== '' ? $s : 'Event card';
+    }
+
     // ---- Internals -------------------------------------------------------------------------------
 
     private function requireEvent(int $id): void
