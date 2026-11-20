@@ -95,6 +95,7 @@ function event_card_fields(array $event, array $p): array
  * on the long edge. Nothing is saved on the server.
  *
  * $event is a card_events row; $people is a list of card_participants rows (all of them, or just one).
+ * File name: one person => "person, event name.pdf"; several => "Event cards, event name.pdf".
  * Throws on failure; the caller decides what to show.
  */
 function event_cards_pdf_send(array $event, array $people): void
@@ -158,7 +159,10 @@ function event_cards_pdf_send(array $event, array $people): void
     }
     $mpdf->WriteHTML($html);
 
-    $filename = 'Event-Cards-' . preg_replace('/[^A-Za-z0-9_-]+/', '-', trim($event['name'] . '-' . $event['edition'], '-')) . '.pdf';
+    // One person: "person, event name.pdf". Everyone: "Event cards, event name.pdf".
+    $filename = count($people) === 1
+        ? EventCardModel::cardFileName((string) (array_values($people)[0]['name'] ?? ''), $event)
+        : EventCardModel::allCardsFileName($event);
     $mpdf->Output($filename, \Mpdf\Output\Destination::DOWNLOAD);
 }
 
