@@ -1,7 +1,7 @@
 /* ======================================================================
-   DCW Engage: STAFF STYLESHEET, "Logo Blue, Green & Crimson".  (standalone)
-   Loaded AFTER engage.css on every staff page (/admin, /finance) and on the staff sign-in pages
-   (engage_header() links it automatically for staff paths; sign-in pages link it themselves).
+   DCW Engage: STAFF STYLESHEET, "Logo Blue, Green & Crimson".
+   Loaded AFTER engage.css on every staff page (/admin, /finance); engage_header() links it automatically
+   for staff paths, including the staff sign-in pages.
 
    This file holds the staff-specific tokens, vertical tabs, list rows, queue cards, payment form,
    the shared components (.sect, .tag, .fields ...), and the page pieces that used to live in
@@ -53,7 +53,6 @@ body.admin ::selection { background: var(--primary); color: #fff; }
 body.admin .topbar .brand-logo { box-shadow: 0 0 0 2px rgba(255,255,255,.55); }
 body.admin .chip-btn { background: rgba(255,255,255,.16); border-color: rgba(255,255,255,.45); }
 body.admin .chip-btn:hover { background: #fff; border-color: #fff; color: var(--deep); }
-body.admin .wrap.cards-wrap { margin-top: 0; padding-top: 30px; }
 
 /* ---------- Shell: vertical tabs + content ---------- */
 .adm-shell { display: grid; grid-template-columns: 252px minmax(0, 1fr); gap: 28px; align-items: start; }
@@ -259,10 +258,10 @@ body.admin .alert.error { background: var(--accent-tint); border-color: #F0B5B0;
 .idform form, form.inline { display: inline; margin: 0; }
 
 /* Tabs on a page (Community records, Membership review): one white card, green underline on the current one */
-body.admin .cards-wrap .rv-tabs { border-top: 4px solid var(--primary-light); }
-body.admin .cards-wrap .rv-tab { font-weight: 800; color: var(--muted); border-bottom: 3px solid transparent; text-decoration: none; }
-body.admin .cards-wrap .rv-tab:hover { color: var(--primary-dark); }
-body.admin .cards-wrap .rv-tab.on { color: var(--primary-dark); border-bottom-color: var(--leaf); }
+body.admin main.wrap .rv-tabs { border-top: 4px solid var(--primary-light); }
+body.admin main.wrap .rv-tab { font-weight: 800; color: var(--muted); border-bottom: 3px solid transparent; text-decoration: none; }
+body.admin main.wrap .rv-tab:hover { color: var(--primary-dark); }
+body.admin main.wrap .rv-tab.on { color: var(--primary-dark); border-bottom-color: var(--leaf); }
 .rv-back { display: inline-block; margin: 0 0 14px; font-size: 14px; font-weight: 700; color: var(--primary-dark); text-decoration: none; }
 .rv-back:hover { text-decoration: underline; color: var(--accent); }
 

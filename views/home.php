@@ -329,8 +329,8 @@ engage_header([
     'heading'     => $heroHeading,
     'lead'        => $heroLead,
     'lead_html'   => $heroLeadHtml,
-    'home'        => true,
-    'flat'        => (bool) $signedInMember,   // members: top bar only, content starts below the band
+    'head'        => !$signedInMember,   // members: top bar only, content starts below the band
+    'back'        => null,
     'member'      => null,           // the header's own name / dashboard / sign-out row is replaced by 'tools'
     'tools'       => $headerTools,
     'description' => 'Scholarships, fellowships, volunteering, membership and more from Deoband Community Wikimedia.',

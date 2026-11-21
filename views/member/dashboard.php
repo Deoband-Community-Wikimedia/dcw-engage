@@ -375,7 +375,7 @@ engage_header([
      'page'    => 'member-dashboard',
     'title'   => 'My dashboard',
     'heading' => 'Hello, ' . $firstName,      // used for the page title and share text only
-    'bare'    => true,                         // top bar only: no heading, lead or trail
+    'head' => false,                         // top bar only: no heading, lead or trail
     'member'  => $member,
     'tools'   => engage_member_menu($member, ['current' => '/member/dashboard']),
     'wide'    => true,
