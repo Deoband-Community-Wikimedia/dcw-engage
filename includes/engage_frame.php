@@ -14,8 +14,8 @@
  *   heading      the page <h1> (defaults to title)
  *   lead         one plain-text sentence under the heading
  *   lead_html    trusted, already-escaped HTML under the lead
- *   back         [label, href]: one quiet "← label" link above the heading
- *   crumbs       legacy: the nearest linked crumb becomes the back link (the trail is not printed). Pass [] for none.
+ *   back         [label, href]: one quiet "← label" link above the heading. Left out, public and member pages get
+ *                "← Home" and staff pages get nothing. Pass null for no link at all.
  *   member       MemberSession::current() row: chapter colours and logo, member menu
  *   tools        raw, already-escaped HTML printed beside the menu (a menu already in it, marked data-nav, is not doubled)
  *   wide         wide content column (tables, queues)
@@ -23,9 +23,7 @@
  *   auth         sign-in style page: a narrow centred column for an .auth-card
  *   page         short name of the page, e.g. 'admin-goodies': adds class pg-<name> to <body>, so the page's
  *                CSS in engage.css can be scoped with  body.pg-admin-goodies { ... }
- *   bare, flat   no page head: the page prints its own <h1>
- *   home, slim, compact   accepted and ignored (old options)
- *   kicker       accepted and ignored, except a value containing a digit (an ID) is shown as a small line
+ *   head         false = no page head: the page prints its own <h1> (the dashboard, the member home page)
  *   referrer     'no-referrer' or 'same-origin': a <meta name="referrer"> for pages whose URL holds a token
  *   noindex      keep the page out of search results (staff pages always are)
  *   description, image, image_alt   social preview
@@ -39,27 +37,24 @@ function engage_header(array $o) {
     $heading  = $o['heading'] ?? $title;
     $lead     = (string) ($o['lead'] ?? '');
     $leadHtml = (string) ($o['lead_html'] ?? '');
-    $kicker   = (string) ($o['kicker'] ?? '');
     $member   = $o['member'] ?? null;
     $tools    = trim((string) ($o['tools'] ?? ''));
     $noindex  = !empty($o['noindex']);
     $wide     = !empty($o['wide']);
     $narrow   = !empty($o['narrow']) && !$wide;
     $auth     = !empty($o['auth']);
-    $home     = !empty($o['home']);
-    $compact  = !empty($o['compact']);
-    $noHead   = !empty($o['bare']) || !empty($o['flat']);
+    $noHead   = isset($o['head']) && !$o['head'];
     $referrer = in_array(($o['referrer'] ?? ''), ['no-referrer', 'same-origin'], true) ? (string) $o['referrer'] : '';
     $page     = (string) preg_replace('/[^a-z0-9-]/', '', strtolower((string) ($o['page'] ?? '')));
 
     $isStaff   = engage_is_staff_path();
     $isPreview = engage_is_theme_preview();
 
-    // Back link: explicit 'back' wins, else the nearest linked crumb.
-    $crumbs = $noHead ? [] : ($o['crumbs'] ?? (($home || $compact || $auth) ? [] : [['Home', '/'], [$heading]]));
-    $back = (isset($o['back']) && is_array($o['back']) && !empty($o['back'][0]) && !empty($o['back'][1])) ? $o['back'] : null;
-    if (!$back) {
-        foreach ($crumbs as $c) { if (!empty($c[1])) $back = [$c[0], $c[1]]; }
+    // Back link. 'back' given: use it (null = none). Not given: "← Home", except on staff, sign-in and head-less pages.
+    if (array_key_exists('back', $o)) {
+        $back = (is_array($o['back']) && !empty($o['back'][0]) && !empty($o['back'][1])) ? $o['back'] : null;
+    } else {
+        $back = ($isStaff || $auth) ? null : ['Home', '/'];
     }
     if ($noHead) $back = null;
 
@@ -114,20 +109,31 @@ function engage_header(array $o) {
         </div>
     </div>
 </header>
-<main class="wrap cards-wrap<?= $wide ? ' wide' : '' ?>">
+<main class="wrap<?= $wide ? ' wide' : '' ?>">
 <?php if ($back): ?>
     <a class="page-back" href="<?= $e($back[1]) ?>">&larr; <?= $e($back[0]) ?></a>
 <?php endif; ?>
 <?php if (!$noHead): ?>
     <header class="page-head">
-        <?php /* Temporary: a kicker that carries an ID (tracking ID, Member ID) is still useful. Remove once request.php and profile.php put the ID in the lead. */ ?>
-        <?php if ($kicker !== '' && preg_match('/\d/', $kicker)): ?><p class="page-eyebrow"><?= $e($kicker) ?></p><?php endif; ?>
         <h1><?= $e($heading) ?></h1>
         <?php if ($lead !== ''): ?><p class="lead"><?= $e($lead) ?></p><?php endif; ?>
         <?php if ($leadHtml !== ''): ?><?= $leadHtml ?><?php endif; ?>
     </header>
 <?php endif; ?>
 <?php
+}
+
+/**
+ * The back link for an old-style breadcrumb trail: its last item that has a link, as [label, href], or null.
+ * Lets a page keep building a trail and pass  'back' => engage_back_from_crumbs($crumbs).  New pages pass
+ * 'back' => ['Label', '/href'] directly.
+ */
+function engage_back_from_crumbs(array $crumbs): ?array {
+    $back = null;
+    foreach ($crumbs as $c) {
+        if (!empty($c[0]) && !empty($c[1])) $back = [(string) $c[0], (string) $c[1]];
+    }
+    return $back;
 }
 
 /**
