@@ -75,7 +75,6 @@ a:focus-visible, summary:focus-visible, button:focus-visible { outline: 3px soli
 }
 .topbar .tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; margin-left: auto; font-size: 14px; }
 .topbar form { margin: 0; }
-.who { color: rgba(255,255,255,.85); margin-right: 4px; }
 .chip-btn {
     display: inline-block; padding: 6px 14px; border-radius: 999px; font: inherit; font-size: 13.5px; font-weight: 600;
     color: #fff; text-decoration: none; cursor: pointer;
@@ -134,9 +133,6 @@ a:focus-visible, summary:focus-visible, button:focus-visible { outline: 3px soli
 .mpop a.cur { background: var(--primary-tint); color: var(--primary-dark); }
 .mpop .mlabel { padding: 6px 12px 2px; font-size: 11.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
 .mpop a.xs-only { display: none; }                 /* "Join DCW", shown only on small phones (see the 480px block) */
-
-/* Content column */
-.cards-wrap { position: relative; }
 
 /* ---------- Cards ---------- */
 .grid { display: flex; flex-wrap: wrap; justify-content: center; gap: 22px; padding-bottom: 12px; }
@@ -310,7 +306,6 @@ a:focus-visible, summary:focus-visible, button:focus-visible { outline: 3px soli
 .tile.new { border: 2px dashed #c3d0dc; border-left: 2px dashed #c3d0dc; background: transparent; box-shadow: none; grid-template-columns: 42px 1fr; }
 .tile.new h3 { color: var(--tone); }
 .tile.new:hover { border-color: var(--tone); background: color-mix(in srgb, var(--tone) 5%, #fff); box-shadow: none; }
-
 /* ---------- Member area ---------- */
 .auth-card button[type=submit] {
     width: 100%; min-height: 46px; padding: 13px; border: 1px solid var(--primary-dark); border-radius: 999px; cursor: pointer;
@@ -501,7 +496,6 @@ fieldset.group legend { padding: 0 8px; font-weight: 700; font-size: 14px; color
 .tbl .sub { display: block; font-size: 12px; color: var(--muted); }
 .tbl a.dl { color: var(--primary); font-weight: 700; text-decoration: none; white-space: nowrap; }
 .tbl a.dl:hover { text-decoration: underline; }
-
 /* ======================================================================
    Home page sections (stats line, photo strip, empty state).
    They live here so the home page needs no styles of its own.
@@ -811,7 +805,6 @@ a.help-item:hover { transform: translateY(-2px); box-shadow: 0 4px 0 var(--edge)
     .btn-primary:active, .btn-ok:active, .btn-bad:active, .btn-neutral:active, .btn-pill:active,
     .prog:active, .tile:active { transform: none; }
 }
-
 /* ======================================================================
    Membership review (staff).
 
@@ -819,40 +812,40 @@ a.help-item:hover { transform: translateY(-2px); box-shadow: 0 4px 0 var(--edge)
    one white card. The search row had no border or font rules of its own, so the browser's thick default
    border showed.
 
-   These selectors start with .cards-wrap, so they outrank the page's own <style> block (one class)
+   These selectors start with main.wrap, so they outrank the page's own <style> block (one class)
    without needing !important or any change to the PHP.
 
    (The staff scheme itself, "Logo Blue, Green & Crimson", lives in assets/css/staff.css.)
    ====================================================================== */
 
 /* ---- Queue page: the tabs become one white card ---- */
-.cards-wrap .rv-tabs {
+main.wrap .rv-tabs {
     gap: 4px; margin: 0 0 18px; padding: 6px 14px 0;
     background: var(--card); border: 1.5px solid var(--border); border-radius: 16px;
     box-shadow: 0 2px 0 var(--edge), var(--lift);
 }
-.cards-wrap .rv-tab { margin-bottom: 0; padding: 12px 16px 10px; }
-.cards-wrap .rv-tab:focus-visible { outline-offset: -3px; border-radius: 10px; }
+main.wrap .rv-tab { margin-bottom: 0; padding: 12px 16px 10px; }
+main.wrap .rv-tab:focus-visible { outline-offset: -3px; border-radius: 10px; }
 
 /* ---- Search row: same look as the other form fields on the site ---- */
-.cards-wrap .rv-search select,
-.cards-wrap .rv-search input[type=search] {
+main.wrap .rv-search select,
+main.wrap .rv-search input[type=search] {
     -webkit-appearance: none; appearance: none;
     border: 1.5px solid #C5D3DE; border-radius: 10px; box-shadow: none;
     background-color: #fff; color: var(--ink); font: inherit; font-size: 15px;
 }
-.cards-wrap .rv-search select {
+main.wrap .rv-search select {
     padding: 10px 34px 10px 14px; cursor: pointer;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none' stroke='%235B6B7C' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1.5l5 5 5-5'/%3E%3C/svg%3E");
     background-repeat: no-repeat; background-position: right 12px center;
 }
-.cards-wrap .rv-search input[type=search]::-webkit-search-cancel-button { -webkit-appearance: none; }
-.cards-wrap .rv-search select:focus,
-.cards-wrap .rv-search input[type=search]:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 4px color-mix(in srgb, var(--primary) 20%, transparent); }
-.cards-wrap .rv-search .btn-solid { width: auto; padding: 11px 24px; }
+main.wrap .rv-search input[type=search]::-webkit-search-cancel-button { -webkit-appearance: none; }
+main.wrap .rv-search select:focus,
+main.wrap .rv-search input[type=search]:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 4px color-mix(in srgb, var(--primary) 20%, transparent); }
+main.wrap .rv-search .btn-solid { width: auto; padding: 11px 24px; }
 
 /* ---- Application page ---- */
-.cards-wrap .rv-back { margin-bottom: 12px; }
+main.wrap .rv-back { margin-bottom: 12px; }
 
 /* If the page is ever wrapped in a white card (<section class="sect rv-top">), this keeps it tidy */
 .rv-top .rv-meta { margin: 0; }
@@ -860,9 +853,9 @@ a.help-item:hover { transform: translateY(-2px); box-shadow: 0 4px 0 var(--edge)
 
 /* ---- Small screens ---- */
 @media (max-width: 560px) {
-    .cards-wrap .rv-tabs { padding: 4px 8px 0; }
-    .cards-wrap .rv-tab { padding: 10px 10px 8px; font-size: 14px; }
-    .cards-wrap .rv-search select { flex: 1 1 100%; }
+    main.wrap .rv-tabs { padding: 4px 8px 0; }
+    main.wrap .rv-tab { padding: 10px 10px 8px; font-size: 14px; }
+    main.wrap .rv-search select { flex: 1 1 100%; }
 }
 
 /* ======================================================================
@@ -1170,8 +1163,7 @@ table.ms-table { width: 100%; border-collapse: collapse; min-width: 720px; }
 }
 /* ======================================================================
    FRAME V2 (Phase 1 of the "one shared layout" issue)
-   Every rule starts with .f2 (a class on <body>, only printed by the new frame), so with
-   ENGAGE_FRAME_V2 off nothing here applies.
+   Every rule starts with .f2 (a class on <body>, only printed by the new frame), so the class f2 on <body> is the frame's hook.
 
    Shape: a blue top bar (brand, page tools, one menu), then <main> on the light page:
    optional back link, one <h1>, optional lead, content. No overlap with the band.
@@ -1202,7 +1194,6 @@ table.ms-table { width: 100%; border-collapse: collapse; min-width: 720px; }
 
 /* ---- Content column ---- */
 .f2 main.wrap { padding-top: 26px; }
-.f2 .cards-wrap { margin-top: 0; }
 .f2.f2-narrow main.wrap { max-width: 804px; }
 
 .f2 .page-back {
@@ -1216,9 +1207,6 @@ table.ms-table { width: 100%; border-collapse: collapse; min-width: 720px; }
     color: var(--ink); text-wrap: balance; overflow-wrap: anywhere;
 }
 .f2 .page-head .lead { margin: 0; max-width: 680px; color: var(--muted); font-size: 15.5px; }
-.f2 .page-eyebrow {
-    margin: 0 0 4px; font-size: 12.5px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: var(--muted);
-}
 
 /* Pieces that used to sit on the blue band and assumed white text */
 .f2 .section-title.first { color: var(--muted); }
@@ -1226,10 +1214,25 @@ table.ms-table { width: 100%; border-collapse: collapse; min-width: 720px; }
     display: inline-block; margin: 12px 0 0; padding: 4px 14px; border-radius: 999px;
     font-size: 13.5px; font-weight: 600; color: var(--leaf-dark); background: var(--leaf-tint); border: 1px solid #bfdfca;
 }
-/* TODO: the original .f2 .lead-link rule (and anything after it) was cut off in the file you pasted.
-   This is a placeholder so the stylesheet parses; restore the real rule from your copy. */
-.f2 .lead-link { color: var(--primary); font-weight: 600; }
+.f2 .lead-link { margin: 12px 0 0; font-size: 14.5px; }
+.f2 .lead-link a { color: var(--primary); font-weight: 600; }
 
+/* ---- Small phones: "Join" moves into the menu (the menu shows it at the top) ---- */
+@media (max-width: 480px) {
+    .f2 .site-bar .chip-btn.solid { display: none; }
+}
+@media (max-width: 640px) {
+    .f2 .site-bar { padding: 12px 18px; }
+    .f2 main.wrap { padding-top: 20px; }
+}
+
+/* ---- Sign-in style pages (member and staff): a narrow centred column ---- */
+.f2.f2-auth main.wrap { max-width: 484px; }                 /* 440px card + the 22px column padding on each side */
+.auth-card .hint { margin: -10px 0 18px; font-size: 12.5px; line-height: 1.5; color: var(--muted); }
+.auth-card .notice {
+    padding: 14px 16px; border-radius: 12px; font-size: 14px; line-height: 1.6;
+    background: var(--leaf-tint); border: 1.5px solid #bfdfca; border-left: 6px solid var(--leaf); color: var(--leaf-dark);
+}
 /* ======================================================================
    Site footer (printed by engage_footer() in includes/engage_page.php).
    The top edge is a three-colour stripe from the DCW logo: blue, crimson, green.
@@ -1405,7 +1408,6 @@ body.admin footer.site-footer {
 /* Technical issues: link in the issue table (includes/tech_issue_ui.php).
    The rest of the old tech_styles() rules already exist in the "Technical issues" section above. */
 .tbl td a.ref { font-weight: 700; color: var(--primary); text-decoration: none; }
-
 /* ===== Page: views/admin/goodies.php ===== */
 /* So far this holds the rules from goodies_claims_admin.php and goodies_orders_admin.php.
    Paste the <style> CSS from views/admin/goodies.php itself inside this same block, before the closing brace. */
@@ -1973,7 +1975,6 @@ body.pg-member-goodies {
     @media (prefers-reduced-motion: reduce) { .mg-card { transition: none; } .mg-card:hover { transform: none; } }
     @media (max-width: 520px) { .mg-hero { padding: 22px 20px; border-radius: 18px; } .mg-gal-main img { height: 220px; } }
 }
-
 /* ===== Page: member/profile.php ===== */
 body.pg-member-profile {
     /* Member profile only. Colors, radii and fonts come from the tokens in /assets/css/engage.css. */
@@ -2135,7 +2136,6 @@ body.pg-member-applications {
     .d-empty p { margin: 0 auto; max-width: 52ch; }
     .d-empty .d-btn { margin-top: 14px; }
 }
-
 /* ===== Page: admin/goodies.php ===== */
 /* If the CSS from goodies_claims_admin.php and goodies_orders_admin.php already sits in a
    body.pg-admin-goodies block, paste the rules below into that block instead of repeating the wrapper. */
@@ -2386,7 +2386,6 @@ body.pg-admin-goodies {
     }
     @media (prefers-reduced-motion: reduce) { * { transition: none !important; } .pg-card:hover, .tl:hover { transform: none; } }
 }
-
 /* ===== Page: admin/membership_review.php ===== */
 body.pg-membership-review {
     /* Membership review only. Everything else comes from /assets/css/engage.css */
@@ -2635,7 +2634,6 @@ body.pg-application-review {
     .confirm-hint { margin: 6px 0 0; font-size: 13px; color: var(--muted); }
     .when-confirming[hidden], .when-declining[hidden], .fcard .field[hidden] { display: none !important; }
 }
-
 /* ===== Page: admin/feedback_review.php ===== */
 body.pg-feedback-review {
     /* Feedback review only. Shared pieces (.vtabs, .adm-shell, .pill, .tbl, buttons) come from engage.css and staff.css */
