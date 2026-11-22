@@ -16,8 +16,10 @@ require_once __DIR__ . '/../includes/crypto.php';
  *
  * AMOUNTS. Three figures can exist for one request:
  *   - claimed:  total_amount_paise, summed from the applicant's line items
- *   - approved: approved_amount_paise, set by the reviewer when approving
- *               (never above the claimed total). NULL means "approved as claimed"
+ *   - approved: approved_amount_paise, set by the reviewer when approving.
+ *               It may be below OR above the claimed total (for example when
+ *               the claim was mistyped against the receipt), but a reason is
+ *               then required. NULL means "approved as claimed"
  *               (see approvedAmountPaise()).
  *   - paid:     paid_amount_paise, set by finance when marking the request paid.
  *               NULL means "paid as approved" (older rows).
@@ -32,7 +34,9 @@ require_once __DIR__ . '/../includes/crypto.php';
  * step (resubmitDraft(): Info Requested -> Submitted). Payment details,
  * expense categories and receipt files are never shown or changed from
  * there. While Info Requested, a claim can only be rejected or discarded;
- * it cannot be approved until it comes back.
+ * it cannot be approved until it comes back. If the applicant does not
+ * reply within INFO_EXPIRY_DAYS days, autoCloseStaleInfoRequests() (run
+ * daily by bin/expire_info_requests.php) closes it as unsuccessful.
  *
  * One global form now, not one per event: the applicant types the event
  * name themselves (event_name, free text) rather than this being scoped to
@@ -64,6 +68,9 @@ class ReimbursementModel {
 
     /** Longest reason a reviewer or finance may give for changing an amount. */
     public const MAX_AMOUNT_NOTE_LENGTH = 500;
+
+    /** An applicant who doesn't answer a sent-back claim within this many days has it closed as unsuccessful. */
+    public const INFO_EXPIRY_DAYS = 7;
 
     /** "Today" for the claim window is judged in India time, not server time. */
     private const CLAIM_TIMEZONE = 'Asia/Kolkata';
@@ -461,9 +468,10 @@ class ReimbursementModel {
 
     /**
      * Approve the claim for $amountPaise (null = approve the full claimed total).
-     * $amountNote is the reason the amount differs from the claim; the
-     * applicant sees it. Pass '' when the amount is unchanged. The caller is
-     * responsible for checking $amountPaise is positive and not above the claim.
+     * The amount may be below or above the claim. $amountNote is the reason the
+     * amount differs from the claim; the applicant sees it. Pass '' when the
+     * amount is unchanged. The caller is responsible for checking $amountPaise is
+     * positive, that a reason is given when it differs, and exceedsUpiLimit().
      */
     public function approveForPayment($requestId, $adminIdentifier, $amountPaise = null, $amountNote = '') {
         $amountNote = trim((string) $amountNote);
@@ -481,6 +489,83 @@ class ReimbursementModel {
             'id'   => $requestId,
         ]);
         return $stmt->rowCount() === 1;
+    }
+
+    /**
+     * True if approving $amountPaise would put a UPI claim above the UPI payout cap.
+     * Returns only a yes/no, never the payment method itself, so the reviewer side still
+     * sees no payment details. A reviewer may raise an amount above the claim, but
+     * not past what the claim's payout method allows.
+     */
+    public function exceedsUpiLimit($requestId, $amountPaise) {
+        $stmt = $this->db->prepare("SELECT payment_method FROM reimbursement_requests WHERE id = :id");
+        $stmt->execute(['id' => (int) $requestId]);
+        return $stmt->fetchColumn() === 'upi' && (int) $amountPaise > self::UPI_MAX_PAISE;
+    }
+
+    /**
+     * Reviewer corrects the event name. Same cleanup, length limit and one-claim-per-event
+     * rule as submission, so a rename can't be used to slip past the duplicate check.
+     * Only while the request is still open (not Approved for Payment, Paid, Rejected or Discarded).
+     *
+     * Returns null if the request isn't renameable any more,
+     * otherwise ['old' => string, 'new' => string, 'changed' => bool].
+     *
+     * @throws \InvalidArgumentException on an empty/too long name or a duplicate
+     */
+    public function renameEvent($requestId, $newName) {
+        $newName = self::normalizeEventName($newName);
+        if ($newName === '') {
+            throw new \InvalidArgumentException('Please enter the name of the event.');
+        }
+        if (mb_strlen($newName) > 255) {
+            throw new \InvalidArgumentException('Event name is too long (255 characters max).');
+        }
+
+        $this->db->beginTransaction();
+        try {
+            $find = $this->db->prepare(
+                "SELECT id, email, event_name FROM reimbursement_requests
+                 WHERE id = :id AND status IN ('Submitted', 'Under Review', 'Payment Failed', 'Info Requested')
+                 FOR UPDATE"
+            );
+            $find->execute(['id' => (int) $requestId]);
+            $req = $find->fetch();
+            if (!$req) {
+                $this->db->rollBack();
+                return null;
+            }
+
+            $old = $req['event_name'];
+            if ($newName === self::normalizeEventName($old)) {
+                $this->db->rollBack();
+                return ['old' => $old, 'new' => $newName, 'changed' => false];
+            }
+
+            // The same member's other open requests, compared the same way as hasOpenOrPaidRequest().
+            $others = $this->db->prepare(
+                "SELECT event_name FROM reimbursement_requests
+                 WHERE email = :email AND id <> :id AND status NOT IN ('Rejected', 'Discarded')"
+            );
+            $others->execute(['email' => $req['email'], 'id' => (int) $req['id']]);
+            $wanted = mb_strtolower($newName);
+            foreach ($others->fetchAll(\PDO::FETCH_COLUMN) as $existing) {
+                if (mb_strtolower(self::normalizeEventName($existing)) === $wanted) {
+                    throw new \InvalidArgumentException('This applicant already has another request for "' . $newName . '".');
+                }
+            }
+
+            $up = $this->db->prepare("UPDATE reimbursement_requests SET event_name = :n WHERE id = :id");
+            $up->execute(['n' => $newName, 'id' => (int) $req['id']]);
+
+            $this->db->commit();
+            return ['old' => $old, 'new' => $newName, 'changed' => true];
+        } catch (\Throwable $e) {
+            if ($this->db->inTransaction()) {
+                $this->db->rollBack();
+            }
+            throw $e;
+        }
     }
 
     /**
@@ -553,6 +638,46 @@ class ReimbursementModel {
         );
         $stmt->execute(['who' => $adminIdentifier, 'notes' => $notes, 'id' => $requestId]);
         return $stmt->rowCount() === 1;
+    }
+
+    /**
+     * Close, as unsuccessful, every sent-back claim whose applicant hasn't replied within $days.
+     * "Sent back" time is the date of the reviewer's latest message on the claim (there is no
+     * separate column), so a claim with no reviewer message is never touched. Used by
+     * bin/expire_info_requests.php.
+     *
+     * Moves 'Info Requested' -> 'Rejected' with an applicant-visible note. Re-checks status and
+     * age in the UPDATE itself, so a reply that lands mid-run wins. Returns the closed requests
+     * (getForNotification() rows plus a 'note' key) so the caller can audit-log and email each applicant.
+     */
+    public function autoCloseStaleInfoRequests($days = self::INFO_EXPIRY_DAYS) {
+        $days = max(1, (int) $days);
+        $stale = "r.status = 'Info Requested'
+                  AND (SELECT MAX(m.created_at) FROM reimbursement_request_messages m
+                       WHERE m.request_id = r.id AND m.sender = 'reviewer') < (NOW() - INTERVAL $days DAY)";
+
+        $ids = $this->db->query("SELECT r.id FROM reimbursement_requests r WHERE $stale")
+                        ->fetchAll(\PDO::FETCH_COLUMN);
+
+        $note = "Closed automatically: we didn't receive a reply to the reviewer's question within $days days. "
+              . "If you still want this claim considered, please write to the organisers.";
+
+        $up = $this->db->prepare(
+            "UPDATE reimbursement_requests r
+             SET r.status = 'Rejected', r.decided_by = 'system', r.decided_at = NOW(), r.admin_notes = :note
+             WHERE r.id = :id AND $stale"
+        );
+
+        $closed = [];
+        foreach ($ids as $id) {
+            $up->execute(['note' => $note, 'id' => (int) $id]);
+            if ($up->rowCount() === 1) {
+                $info = $this->getForNotification((int) $id);
+                $info['note'] = $note;
+                $closed[] = $info;
+            }
+        }
+        return $closed;
     }
 
     // ------------------------------------------------------------------
