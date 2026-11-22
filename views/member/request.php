@@ -27,6 +27,10 @@ require_once __DIR__ . '/../../models/CommunityRecordsModel.php';
  * verified profile when the request is made) and the Conversation Hours / technical-projects
  * answers (they always come from staff records; InternetSupportModel::resubmitDraft() keeps them
  * as stored whatever is posted).
+ *
+ * Reimbursement, "Info Requested": same idea. The member sees the reviewer's question, the date by
+ * which they need to reply (ReimbursementModel::INFO_EXPIRY_DAYS days after the question; after that
+ * bin/expire_info_requests.php closes the request as unsuccessful), and an editable copy of the claim.
  */
 MemberSession::requireLogin();
 $member = MemberSession::current();
@@ -325,6 +329,19 @@ engage_header([
                     add a short note, and resubmit. Your payment details and uploaded receipts are not shown here
                     and stay exactly as you submitted them.
                 </p>
+                <?php
+                // The reply deadline: INFO_EXPIRY_DAYS days after the reviewer's latest message.
+                $askedAt = null;
+                foreach ($reimbursementThread as $m) {
+                    if ($m['sender'] === 'reviewer') { $askedAt = $m['created_at']; }
+                }
+                if ($askedAt): ?>
+                    <div class="alert error">
+                        <strong>Please reply by
+                        <?= $e(date('j M Y', strtotime($askedAt . ' +' . ReimbursementModel::INFO_EXPIRY_DAYS . ' days'))) ?>.</strong>
+                        If we don't hear from you by then, this request is closed automatically as unsuccessful.
+                    </div>
+                <?php endif; ?>
                 <?php $renderThread($reimbursementThread); ?>
                 <form method="POST">
                     <?= CSRF::getInputField() ?>

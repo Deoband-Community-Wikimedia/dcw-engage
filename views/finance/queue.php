@@ -18,9 +18,11 @@ require_once __DIR__ . '/../../models/InternalNoteModel.php';
 //
 // Finance may pay (or recharge) a DIFFERENT amount than the reviewer approved,
 // for example when the operator's real price differs or a figure was mistaken.
-// A reason is then required and the applicant is told. Reimbursements can never
-// be paid above what the applicant claimed, and recharges never above the
-// programme limit; both are typo guards, not policy: change them below if needed.
+// A reason is then required and the applicant is told. A reimbursement can never be
+// paid above the LARGER of what the applicant claimed and what the reviewer approved
+// (a reviewer may approve more than was claimed, e.g. when the claim was mistyped
+// against the receipt), and recharges never above the programme limit; both are typo
+// guards, not policy: change them below if needed.
 //
 // Finance may also SEND A REQUEST BACK to the reviewers (for example an accidental
 // approval) with a reason. It returns to the reviewers' queue as if new; the applicant
@@ -113,6 +115,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $paidPaise     = rupees_to_paise($_POST['paid_amount'] ?? '');
             $approvedPaise = $reimbursementModel->approvedAmountPaise($requestId);
             $claimedPaise  = $reimbursementModel->claimedAmountPaise($requestId);
+            // A reviewer may have approved MORE than was claimed, so the typo guard is the larger of the two.
+            $maxPayablePaise = max($claimedPaise, $approvedPaise);
             $amountNote    = trim($_POST['amount_note'] ?? '');
             $differs       = $paidPaise !== null && $paidPaise !== $approvedPaise;
             $paidNote      = $differs ? $amountNote : '';
@@ -125,8 +129,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $error = "That transaction reference is too long (255 characters max).";
             } elseif ($paidPaise === null) {
                 $error = "Enter the amount you are paying, in ₹ (for example 250 or 250.50).";
-            } elseif ($paidPaise > $claimedPaise) {
-                $error = "You can't pay more than the applicant claimed (" . rupees_label($claimedPaise) . ").";
+            } elseif ($paidPaise > $maxPayablePaise) {
+                $error = "You can't pay more than " . rupees_label($maxPayablePaise) . " (the larger of the claimed and approved amounts).";
             } elseif ($differs && $amountNote === '') {
                 $error = "This differs from the approved amount (" . rupees_label($approvedPaise) . "). Add a reason: the applicant will see it.";
             } elseif (mb_strlen($amountNote) > 500) {
