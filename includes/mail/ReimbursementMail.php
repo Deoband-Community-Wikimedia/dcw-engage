@@ -40,6 +40,8 @@ class ReimbursementMail {
      * 'Info Requested': the email only asks the member to sign in and open the request.
      * The reviewer's question is NEVER put in the email (it stays behind the member
      * sign-in, and the reviewer stays anonymous), so $note is ignored for this status.
+     * The email does state the reply deadline (ReimbursementModel::INFO_EXPIRY_DAYS days),
+     * after which bin/expire_info_requests.php closes the request as unsuccessful.
      *
      * $paymentReference is the transaction reference (UTR / transaction ID)
      * finance recorded when marking the request paid. Only used for 'Paid',
@@ -77,10 +79,14 @@ class ReimbursementMail {
                 }
                 break;
 
-            case 'Info Requested':
-                $subject = 'Further information required for your reimbursement request';
-                $line = "The reviewer has requested additional information regarding your reimbursement request for <strong>$event</strong> (Tracking ID: $tid). Kindly log in to your member account, open the request, review the query, and submit your response. Please note that your request cannot be processed further until this detail is provided.";
-                $alt  = "The reviewer has requested additional information regarding your reimbursement request for $eventTitle (Tracking ID: $trackingId). Kindly log in to your member account, open the request ($trackUrl), review the query, and submit your response. Please note that your request cannot be processed further until this detail is provided.";
+         case 'Info Requested':
+                $subject = 'Additional information required for your reimbursement request';
+                $line = "The reviewer has requested additional information regarding your reimbursement request for <strong>$event</strong> (Tracking ID: $tid). Kindly log in to your member account, open the request, review the query, and share your response. Please note that processing is on hold until these details are provided.";
+                $alt  = "The reviewer has requested additional information regarding your reimbursement request for $eventTitle (Tracking ID: $trackingId). Kindly log in to your member account, open the request ($trackUrl), review the query, and share your response. Please note that processing is on hold until these details are provided.";
+                // The reply deadline. After this many days without a reply the request is closed as unsuccessful.
+                $days = class_exists('ReimbursementModel') ? ReimbursementModel::INFO_EXPIRY_DAYS : 7;
+                $line .= " Please respond within $days days, failing which the request will be closed as unsuccessful.";
+                $alt  .= " Please respond within $days days, failing which the request will be closed as unsuccessful.";
                 $altLink = '';   // the link is already in the sentence above
                 $note = '';      // the question itself never goes in the email
                 break;
