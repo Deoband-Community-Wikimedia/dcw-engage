@@ -1041,6 +1041,46 @@ table.ms-table { width: 100%; border-collapse: collapse; min-width: 720px; }
     margin-top: 12px;
 }
 
+/* Form builder: optional sections toggle */
+.builder-section-controls {
+    margin: 18px 0;
+}
+
+.builder-sections-toggle {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    cursor: pointer;
+}
+
+.builder-sections-toggle input {
+    flex: 0 0 auto;
+    margin: 4px 0 0;
+}
+
+.builder-sections-toggle > span {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.builder-sections-toggle small {
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+/* Show all questions as one continuous list when sections are disabled. */
+#sections_container.sections-disabled .form-section-card,
+#sections_container.sections-disabled .section-fields {
+    display: contents;
+}
+
+#sections_container.sections-disabled .section-metadata,
+#sections_container.sections-disabled .add-section-field {
+    display: none;
+}
+
 /* ======================================================================
    Public members directory (/members): .pm-* rules.
    Append to the end of assets/css/engage.css. Replaces the old inline .pd-* styles.
