@@ -6,6 +6,8 @@
  * engage_resolve_image($v,$w) turns a stored banner value into a public image URL ($w px wide for Commons)
  * engage_commons_caption($v)  credit line (author, licence, Commons link) or '' if not from Commons
  * engage_commons_credit($v)   the same credit as data
+ * engage_social_icon($name)   inline SVG icon for a social platform (footer buttons, home page Follow band)
+ * engage_social_links()       the social profiles from engage_footer_config(), in display order, with icon and one-line hook
  *
  * An "image" value can be any of:
  *   - a Commons file name:      Group photo from DCW 5th Anniversary.jpg   (File: prefix is fine)
@@ -249,4 +251,58 @@ function engage_social_meta(array $o = []): void {
     <meta name="twitter:image" content="<?= $e($img['url']) ?>">
     <meta name="description" content="<?= $e($desc) ?>">
     <?php
+}
+
+// ======================================================================================================
+// Social profile links and icons
+// The profile URLs themselves stay in ONE place: engage_footer_config()['social'] in includes/engage_page.php.
+// The footer icon buttons and the home page "Follow DCW" band both read from it, so they can never drift apart.
+// (These functions only use engage_footer_config() and engage_safe_url() when called, so load order does not matter.)
+// ======================================================================================================
+
+/** Inline SVG (24x24, stroke icon, same style as the other Engage icons) for a platform name, or '' if unknown. */
+function engage_social_icon(string $name): string {
+    static $paths = [
+        'youtube'   => '<path d="M22.54 6.42a2.78 2.78 0 0 0-1.94-2C18.88 4 12 4 12 4s-6.88 0-8.6.46a2.78 2.78 0 0 0-1.94 2A29 29 0 0 0 1 11.75a29 29 0 0 0 .46 5.33A2.78 2.78 0 0 0 3.4 19c1.72.46 8.6.46 8.6.46s6.88 0 8.6-.46a2.78 2.78 0 0 0 1.94-2 29 29 0 0 0 .46-5.25 29 29 0 0 0-.46-5.33z"/><polygon points="9.75 15.02 15.5 11.75 9.75 8.48 9.75 15.02"/>',
+        'instagram' => '<rect x="2" y="2" width="20" height="20" rx="5" ry="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"/>',
+        'linkedin'  => '<path d="M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-2-2 2 2 0 0 0-2 2v7h-4v-7a6 6 0 0 1 6-6z"/><rect x="2" y="9" width="4" height="12"/><circle cx="4" cy="4" r="2"/>',
+        'x'         => '<path d="M4 4l16 16"/><path d="M20 4L4 20"/>',
+        'threads'   => '<circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-3.92 7.94"/>',
+        'facebook'  => '<path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z"/>',
+    ];
+    $k = strtolower(trim($name));
+    return isset($paths[$k]) ? '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">' . $paths[$k] . '</svg>' : '';
+}
+
+/**
+ * The social links for the home page band, in display order, from the footer settings:
+ * [['name', 'url', 'hook' (one line on what you get there), 'tone' (CSS colour), 'icon' (SVG)], ...].
+ * A platform that is not in the settings is simply left out; one that is not in the list below goes last.
+ */
+function engage_social_links(): array {
+    $meta = [
+        'youtube'   => ['Recorded sessions and talks',     'var(--accent)'],
+        'instagram' => ['Event photos and moments',        'var(--accent)'],
+        'linkedin'  => ['News for partners and institutions', 'var(--primary)'],
+        'x'         => ['Quick updates and announcements', 'var(--ink)'],
+        'threads'   => ['Conversations with the community', 'var(--ink)'],
+        'facebook'  => ['Event announcements and albums',  'var(--primary)'],
+    ];
+    $by = [];
+    $cfg = function_exists('engage_footer_config') ? engage_footer_config() : [];
+    foreach (($cfg['social'] ?? []) as $p) {
+        $name = trim((string) ($p[0] ?? ''));
+        $url  = function_exists('engage_safe_url') ? engage_safe_url($p[1] ?? '') : '';
+        if ($name !== '' && $url !== '') $by[strtolower($name)] = [$name, $url];
+    }
+    $out = [];
+    foreach ($meta as $k => [$hook, $tone]) {
+        if (!isset($by[$k])) continue;
+        $out[] = ['name' => $by[$k][0], 'url' => $by[$k][1], 'hook' => $hook, 'tone' => $tone, 'icon' => engage_social_icon($k)];
+        unset($by[$k]);
+    }
+    foreach ($by as $k => [$name, $url]) {
+        $out[] = ['name' => $name, 'url' => $url, 'hook' => '', 'tone' => 'var(--primary)', 'icon' => engage_social_icon($k)];
+    }
+    return $out;
 }

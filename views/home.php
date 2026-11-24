@@ -6,6 +6,7 @@ require_once __DIR__ . '/../models/FeedbackModel.php';
 require_once __DIR__ . '/../includes/member_session.php';
 require_once __DIR__ . '/../includes/member_stats.php';
 require_once __DIR__ . '/../includes/dcw_events.php';
+require_once __DIR__ . '/../includes/dcw_videos.php';
 require_once __DIR__ . '/../models/PublicDirectoryModel.php';
 
 $formModel = new FormModel();
@@ -57,6 +58,20 @@ try {
     $events = dcw_upcoming_events(3);
 } catch (Throwable $e) {
     $events = [];
+}
+
+// Latest videos from the DCW YouTube channel (public RSS feed, no Shorts; see includes/dcw_videos.php).
+// Cached, never throws. The section needs three videos (one large, two small): with fewer it is left out.
+try {
+    $videos = dcw_latest_videos(3);
+} catch (Throwable $e) {
+    $videos = [];
+}
+if (count($videos) < 3) $videos = [];
+// Channel link for the "More on YouTube" button: the YouTube entry of the footer settings.
+$youtubeUrl = 'https://www.youtube.com/@dcwwiki';
+foreach (engage_social_links() as $sl) {
+    if (strtolower($sl['name']) === 'youtube') { $youtubeUrl = $sl['url']; break; }
 }
 
 // "Meet our members" strip: a few current members picked at random on each visit, from the same public
@@ -276,6 +291,28 @@ $eventCard = function (array $ev): string {
     return ob_get_clean();
 };
 
+// One "Latest videos" card. A plain link with a thumbnail from i.ytimg.com: no player, no script and no
+// YouTube cookies load until the visitor chooses to open the video on YouTube.
+$videoCard = function (array $v, bool $big): string {
+    $h = fn($x) => htmlspecialchars((string) $x, ENT_QUOTES, 'UTF-8');
+    ob_start();
+    ?>
+    <a class="vid<?= $big ? ' big' : '' ?>" href="<?= $h($v['url']) ?>" target="_blank" rel="noopener"
+       aria-label="<?= $h($v['label']) ?>">
+        <span class="vid-thumb" aria-hidden="true">
+            <img src="<?= $h($v['thumb']) ?>" alt="" width="480" height="360" loading="lazy" decoding="async">
+            <span class="vid-play"><svg viewBox="0 0 24 24" focusable="false"><path d="M8 5v14l11-7z"/></svg></span>
+            <?php if ($v['new']): ?><span class="vid-new">New</span><?php endif; ?>
+        </span>
+        <span class="vid-body">
+            <h3><?= $h($v['title']) ?></h3>
+            <span class="vid-when"><?= $h($v['ago']) ?></span>
+        </span>
+    </a>
+    <?php
+    return ob_get_clean();
+};
+
 // ---- Header content, built from the data above --------------------------------------------
 // Everyone gets the same slim top bar, with the logo alone on the left. The rest differs:
 //   guests:  a blue band with a headline about what they can do, and "Sign in" + "Join" on the right
@@ -306,6 +343,7 @@ if ($signedInMember) {
         'home'     => true,
         'programs' => !empty($programs),
         'events'   => !empty($events),
+        'videos'   => !empty($videos),
     ]);
 } else {
     $heroHeading = 'Welcome to DCW Engage';
@@ -433,6 +471,19 @@ $onBand = false; // headings no longer sit on the blue band
             <?php endif; ?>
         <?php endif; ?>
 
+        <?php /* Latest videos: newest one large, two smaller. Shown to everyone; left out if YouTube gave fewer than three. */ ?>
+        <?php if (!empty($videos)): ?>
+            <section class="vids" id="videos" aria-label="Latest videos">
+                <h2 class="section-title">Latest videos</h2>
+                <div class="vids-grid">
+                    <?php foreach ($videos as $k => $v) echo $videoCard($v, $k === 0); ?>
+                </div>
+                <p class="vids-foot">
+                    <a class="btn-pill" href="<?= $h($youtubeUrl) ?>" target="_blank" rel="noopener"><?= $signedInMember ? 'Catch up on YouTube' : 'More on YouTube' ?></a>
+                </p>
+            </section>
+        <?php endif; ?>
+
         <?php /* Meet our members: a few random current members, linking to their Meta-Wiki user pages and to the full list. */ ?>
         <?php if (count($stripMembers) >= 3): ?>
             <?php $cmTitleClass = 'section-title' . (empty($cards) && empty($programs) && empty($feedbackCards) && empty($events) && $reflectionCard === '' && $onBand ? ' first' : ''); ?>
@@ -516,6 +567,25 @@ $onBand = false; // headings no longer sit on the blue band
                 </div>
             </section>
         <?php endif; ?>
+
+<?php /* Follow DCW: one button per profile in engage_footer_config()['social'], so it always matches the footer. */ ?>
+<?php $followLinks = engage_social_links(); ?>
+<?php if (!empty($followLinks)): ?>
+        <section class="follow" id="follow" aria-label="Follow DCW">
+            <h2>Follow DCW</h2>
+            <div class="follow-card">
+                <p class="follow-lead">See Wikimedians at work, event recaps and the people behind them.</p>
+                <ul class="follow-list">
+                    <?php foreach ($followLinks as $sl): ?>
+                        <li><a class="follow-btn" href="<?= $h($sl['url']) ?>" target="_blank" rel="noopener" style="--tone: <?= $h($sl['tone']) ?>;">
+                            <span class="fi" aria-hidden="true"><?= $sl['icon'] /* trusted inline SVG */ ?></span>
+                            <span class="ft"><b><?= $h($sl['name']) ?></b><?php if ($sl['hook'] !== ''): ?><small><?= $h($sl['hook']) ?></small><?php endif; ?></span>
+                        </a></li>
+                    <?php endforeach; ?>
+                </ul>
+            </div>
+        </section>
+<?php endif; ?>
 
 <?php if ($reflectionCard !== ''): ?>
         <link rel="preconnect" href="https://fonts.googleapis.com">
