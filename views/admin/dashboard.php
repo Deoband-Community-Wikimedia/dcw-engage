@@ -9,6 +9,8 @@ require_once __DIR__ . '/../../models/MemberModel.php';
 require_once __DIR__ . '/../../models/TechIssueModel.php';
 require_once __DIR__ . '/../../models/PointsModel.php';
 require_once __DIR__ . '/../../models/PointClaimModel.php';
+require_once __DIR__ . '/../../models/ReimbursementModel.php';
+require_once __DIR__ . '/../../models/InternetSupportModel.php';
 
 Auth::requireLogin();
 
@@ -48,6 +50,20 @@ $canWorkTech             = Auth::hasAnyRole(TechIssueModel::STAFF_ROLES);
 $canManageRecords        = Auth::hasAnyRole(['membership_reviewer', 'owner']);   // mirrors community_records.php
 $canManageDirectory      = Auth::hasAnyRole(['membership_reviewer', 'organizer', 'owner']);   // mirrors public_directory.php
 
+/**
+ * Runs one count. Returns null when it cannot be read (a table or migration is missing), so that badge is simply
+ * left out instead of breaking the page. null = "no number shown"; 0 = "All clear".
+ */
+function dash_count(callable $f): ?int
+{
+    try {
+        return (int) $f();
+    } catch (Throwable $e) {
+        app_log_ignored('dashboard.php:count', $e);
+        return null;
+    }
+}
+
 // Technical: open count for the queue tile, and this person's own reports that have a new reply.
 $techOpen = 0; $techWaiting = [];
 try {
@@ -56,16 +72,40 @@ try {
     $techWaiting = $techModel->awaitingReporter('team', strtolower((string) Auth::email()));
 } catch (Throwable $e) { app_log_ignored('dashboard.php:47', $e); /* tables not created yet */ }
 
-// Goodies: awards waiting for a second reviewer, new orders and members' claims for points, shown as the badge on the
-// Goodies tab. If the goodies tables (or the claims migration) have not been created yet, that part is simply left out.
-$goodiesWaiting = 0;
+// Goodies: awards waiting for a second reviewer, new orders, and members' claims for points. Each one is a number on
+// its own row, and together they are the badge on the Goodies tab. If the goodies tables (or the claims migration)
+// have not been created yet, that number is simply left out (null).
+$goodiesAwards = $goodiesOrders = $goodiesClaims = null;
 if ($canManageGoodies) {
     try {
-        $goodiesTotals  = (new PointsModel())->totals();
-        $goodiesWaiting = (int) $goodiesTotals['awaiting_second'] + (int) $goodiesTotals['requested'];
+        $goodiesTotals = (new PointsModel())->totals();
+        $goodiesAwards = (int) $goodiesTotals['awaiting_second'];
+        $goodiesOrders = (int) $goodiesTotals['requested'];
     } catch (Throwable $e) { app_log_ignored('dashboard.php:goodies', $e); /* tables not created yet */ }
-    try { $goodiesWaiting += (new PointClaimModel())->awaitingCount(); } catch (Throwable $e) { app_log_ignored('dashboard.php:claims', $e); /* migration not run yet */ }
+    $goodiesClaims = dash_count(fn() => (new PointClaimModel())->awaitingCount());   // migration not run yet: null
 }
+$goodiesWaiting = (int) $goodiesAwards + (int) $goodiesOrders + (int) $goodiesClaims;
+
+// Volunteer support, finance side: approved claims awaiting payment, recharges to do, receipts to check. The same
+// lists the finance queue shows, so the numbers here always match it.
+$financeReimb = $financeRecharge = $financeReceipts = null;
+if ($canProcessFinance) {
+    $financeReimb    = dash_count(fn() => count((new ReimbursementModel())->listForFinanceQueue()));
+    $financeRecharge = dash_count(fn() => count((new InternetSupportModel())->listForRechargeQueue()));
+    $financeReceipts = dash_count(fn() => count((new InternetSupportModel())->listForReceiptVerification()));
+}
+$financeKnown = array_filter([$financeReimb, $financeRecharge, $financeReceipts], fn($v) => $v !== null);
+$financeTotal = $financeKnown ? (int) array_sum($financeKnown) : null;
+
+// Volunteer support, reviewer side and DCW Support conversations. These need each model's own count method, which
+// this page has not been given yet, so they stay null (no number) until the two lines below are filled in.
+// Example:  $reimbReview = dash_count(fn() => (new ReimbursementModel())->countAwaitingReview());
+$reimbReview    = null;   // reimbursement claims waiting for a reviewer
+$internetReview = null;   // internet support requests waiting for a reviewer
+$ticketsOpen    = null;   // member conversations waiting for DCW Support
+
+$supportWaiting = (int) $financeTotal + (int) $reimbReview + (int) $internetReview;
+$techTabWaiting = (int) $techOpen + (int) $ticketsOpen;
 
 // Who gets which forms. Mirrors FormModel::userCanOpen(), which form_manager.php enforces:
 //   membership forms -> membership_reviewer, owner (all chapters);
@@ -203,6 +243,25 @@ if ($canReviewMembership) {
     } catch (Throwable $e) { $membershipWaiting = null; }
 }
 
+// "Waiting for you": everything above with a number greater than zero, as one line of links at the top of the page,
+// so nothing waiting is out of sight on a tab that is not open. [label, count, link].
+$attention = [];
+$addAttention = function (string $one, string $many, ?int $n, string $href) use (&$attention): void {
+    if ($n !== null && $n > 0) $attention[] = [$n === 1 ? $one : $many, $n, $href];
+};
+if ($canReviewApplications)   $addAttention('application to review', 'applications to review', $appsWaiting, '/admin/application-review');
+if ($canReviewMembership)     $addAttention('membership request', 'membership requests', $membershipWaiting, '/admin/membership-review');
+if ($canReviewReimbursements) $addAttention('reimbursement to review', 'reimbursements to review', $reimbReview, '/admin/reimbursements/review');
+if ($canReviewInternet)       $addAttention('internet request to review', 'internet requests to review', $internetReview, '/admin/internet-review');
+if ($canProcessFinance)       $addAttention('payment or receipt in finance', 'payments and receipts in finance', $financeTotal, '/finance');
+if ($canManageGoodies) {
+    $addAttention('award needs a second reviewer', 'awards need a second reviewer', $goodiesAwards, '/admin/goodies?tab=award');
+    $addAttention('points claim', 'points claims', $goodiesClaims, '/admin/goodies?tab=claims');
+    $addAttention('new goodies order', 'new goodies orders', $goodiesOrders, '/admin/goodies?tab=redemptions');
+}
+if ($canWorkMemberSupport)    $addAttention('member conversation', 'member conversations', $ticketsOpen, '/admin/member-support');
+if ($canWorkTech)             $addAttention('open problem report', 'open problem reports', $techOpen, '/admin/tech-issues');
+
 // The "Review" tab holds the review queues: applications, membership, community records and the public
 // members list. Feedback is read, not decided on, so it has its own tab. Everything else is its own tab too.
 $showReviewPanel = $canReviewApplications || $canReviewMembership || $canManageRecords || $canManageDirectory;
@@ -234,8 +293,8 @@ $icons = [
 // The vertical tabs, in order: [id, label, icon, number shown in a coral badge (0 = none)].
 $vtabs = [];
 if ($showReviewPanel) $vtabs[] = ['review',   'Review',               'inbox', (int) $appsWaiting + (int) $membershipWaiting];
-if ($canSeeSupport)   $vtabs[] = ['support',  'Volunteer support',    'card',  0];
-if ($canManageGoodies) $vtabs[] = ['goodies', 'Goodies',              'star',  (int) $goodiesWaiting];
+if ($canSeeSupport)   $vtabs[] = ['support',  'Volunteer support',    'card',  $supportWaiting];
+if ($canManageGoodies) $vtabs[] = ['goodies', 'Goodies',              'star',  $goodiesWaiting];
 // One tab for each kind of form, then Events, then Feedback (no badge on any of them: forms have nothing "waiting").
 $formKindOrder = ['application', 'scholarship', 'swag', 'membership'];
 foreach ($formKindOrder as $k) {
@@ -243,7 +302,7 @@ foreach ($formKindOrder as $k) {
 }
 if ($canManageEventCards) $vtabs[] = ['events', 'Events',             'badge', 0];
 if ($kindTabs['feedback']['show']) $vtabs[] = [$kindTabs['feedback']['id'], $kindTabs['feedback']['label'], $kindTabs['feedback']['icon'], 0];
-if ($showSupportTech) $vtabs[] = ['tech',     'Support & technical',  'chat',  (int) $techOpen];
+if ($showSupportTech) $vtabs[] = ['tech',     'Support & technical',  'chat',  $techTabWaiting];
 
 /**
  * Renders one list row (one per line). $count: a number > 0 shows a coral "7 waiting" chip, 0 shows a green
@@ -289,7 +348,7 @@ function form_tile(array $icons, array $form, array $feedbackCounts = []): void
     $kind       = FormModel::kindOf($form);
     $isFeedback = $kind === 'feedback';
     $count      = $isFeedback ? (int) ($feedbackCounts[(int) $form['id']] ?? 0) : (int) $form['applicant_count'];
-    $tone       = $open ? 'var(--leaf-dark, #3E7A53)' : '#94a3b8';
+    $tone       = $open ? 'var(--leaf-dark)' : 'var(--slate)';
     $icon       = ['feedback' => 'star', 'membership' => 'people', 'scholarship' => 'badge', 'swag' => 'archive'][$kind] ?? 'doc';
 
     $pill = $open ? 'Active' : ($byDeadline ? 'Closed (deadline)' : 'Closed');
@@ -352,19 +411,25 @@ function forms_panel(array $icons, array $tab, array $open, array $closed, array
     <?php
 }
 
-// The top bar (email, Team, Audit log, Chapter themes, Sign out, and the phone hamburger) comes from
-// engage_staff_menu(), which engage_header() adds on every staff page, so 'tools' is left empty here.
-// engage_header() adds the staff stylesheet, the "admin" body class, noindex and the shared footer for /admin pages.
+// The top bar (the menu with the email, Team, Audit log, Chapter themes and Sign out) is added by engage_header() on
+// every staff page. The Workspace is the top level, so it has no back link.
 engage_header([
     'title'   => 'Organizer workspace',
     'heading' => 'Workspace',
     'lead'    => 'Everything you can review, approve and manage, in one place.',
-    'slim'    => true,
     'wide'    => true,
-    'crumbs'  => [],
-    'tools'   => '',
+    'back'    => null,
 ]);
 ?>
+
+        <?php if ($attention): ?>
+            <div class="action-banner" role="status">
+                <strong>Waiting for you:</strong>
+                <?php foreach ($attention as $i => [$label, $n, $href]): ?>
+                    <span><?= $i > 0 ? '&middot; ' : '' ?><a href="<?= htmlspecialchars($href) ?>"><?= (int) $n ?> <?= htmlspecialchars($label) ?></a></span>
+                <?php endforeach; ?>
+            </div>
+        <?php endif; ?>
 
         <?php foreach ($techWaiting as $t): ?>
             <div class="action-banner" role="status">
@@ -411,12 +476,12 @@ engage_header([
                                 '/admin/membership-review', $membershipWaiting);
                         }
                         if ($canManageRecords) {
-                            lrow($icons, 'var(--leaf-dark, #3E7A53)', 'check', 'Community records',
+                            lrow($icons, 'var(--leaf-dark)', 'check', 'Community records',
                                 'Log Conversation Hour attendance and keep the technical contributors list. Internet support reads from these.',
                                 '/admin/community-records');
                         }
                         if ($canManageDirectory) {
-                            lrow($icons, 'var(--leaf-dark, #3E7A53)', 'people', 'Public members list',
+                            lrow($icons, 'var(--leaf-dark)', 'people', 'Public members list',
                                 'Who appears on the public members page: current members, alumni and earlier-list names. See opt-outs and remove entries.',
                                 '/admin/public-directory');
                         }
@@ -431,29 +496,29 @@ engage_header([
                         <h2>Volunteer support</h2>
                         <p>Reimbursements and internet support, from review to payment.</p>
                         <div class="legend">
-                            <?php if ($canReviewAny): ?><span style="--tone:var(--leaf-dark, #3E7A53)"><i></i>Review</span><?php endif; ?>
-                            <?php if ($canProcessFinance): ?><span style="--tone:#C96A12"><i></i>Finance</span><?php endif; ?>
+                            <?php if ($canReviewAny): ?><span style="--tone:var(--leaf-dark)"><i></i>Review</span><?php endif; ?>
+                            <?php if ($canProcessFinance): ?><span style="--tone:var(--amber)"><i></i>Finance</span><?php endif; ?>
                         </div>
                     </div>
                     <div class="lrows">
                         <?php
                         if ($canReviewReimbursements) {
-                            lrow($icons, 'var(--leaf-dark, #3E7A53)', 'check', 'Reimbursement review',
-                                'Approve or reject claims. Line items and receipts only, no payment details.', '/admin/reimbursements/review');
+                            lrow($icons, 'var(--leaf-dark)', 'check', 'Reimbursement review',
+                                'Approve or reject claims. Line items and receipts only, no payment details.', '/admin/reimbursements/review', $reimbReview);
                         }
                         if ($canReviewInternet) {
-                            lrow($icons, 'var(--leaf-dark, #3E7A53)', 'wifi', 'Internet support review',
-                                'Judge reasons and packages. No phone numbers shown.', '/admin/internet-review');
+                            lrow($icons, 'var(--leaf-dark)', 'wifi', 'Internet support review',
+                                'Judge reasons and packages. No phone numbers shown.', '/admin/internet-review', $internetReview);
                         }
                         if ($canEmailMembers) {
-                            lrow($icons, 'var(--leaf-dark, #3E7A53)', 'chat', 'Email a member',
+                            lrow($icons, 'var(--leaf-dark)', 'chat', 'Email a member',
                                 'Send a message to a member, with an optional PDF such as a support letter. Their address is never shown.',
                                 '/admin/email-member');
                         }
                         if ($canProcessFinance) {
-                            lrow($icons, '#C96A12', 'card', 'Finance queue',
-                                'Pay claims, recharge numbers and check receipts, one tab for each.', '/finance');
-                            lrow($icons, '#C96A12', 'archive', 'Closed requests',
+                            lrow($icons, 'var(--amber)', 'card', 'Finance queue',
+                                'Pay claims, recharge numbers and check receipts, one tab for each.', '/finance', $financeTotal);
+                            lrow($icons, 'var(--amber)', 'archive', 'Closed requests',
                                 'Paid and closed requests, with a receipt PDF for each.', '/finance/closed');
                         }
                         ?>
@@ -470,15 +535,15 @@ engage_header([
                     <div class="lrows">
                         <?php
                         lrow($icons, 'var(--primary)', 'star', 'Award points',
-                            'Award points for activities, approve large awards, or take points back.', '/admin/goodies?tab=award');
+                            'Award points for activities, approve large awards, or take points back.', '/admin/goodies?tab=award', $goodiesAwards);
                         lrow($icons, 'var(--primary)', 'inbox', 'Claims',
-                            'Points members have claimed for activities DCW did not log: approve, reject or ask for more information.', '/admin/goodies?tab=claims');
+                            'Points members have claimed for activities DCW did not log: approve, reject or ask for more information.', '/admin/goodies?tab=claims', $goodiesClaims);
                         lrow($icons, 'var(--primary)', 'check', 'Activities and points',
                             'What members can earn points for, and how many. Changing points revises past awards.', '/admin/goodies?tab=activities');
                         lrow($icons, 'var(--primary)', 'doc', 'Catalogue',
                             'The goodies members can redeem, and what each costs in points.', '/admin/goodies?tab=catalogue');
-                        lrow($icons, 'var(--leaf-dark, #3E7A53)', 'inbox', 'Orders',
-                            'Order, ship and deliver what members have redeemed.', '/admin/goodies?tab=redemptions');
+                        lrow($icons, 'var(--leaf-dark)', 'inbox', 'Orders',
+                            'Order, ship and deliver what members have redeemed.', '/admin/goodies?tab=redemptions', $goodiesOrders);
                         ?>
                     </div>
                 </section>
@@ -521,7 +586,7 @@ engage_header([
                         <?php
                         if ($canWorkMemberSupport) {
                             lrow($icons, 'var(--primary)', 'chat', 'DCW Support',
-                                'Read and answer member conversations. Replies are emailed as a notification only.', '/admin/member-support');
+                                'Read and answer member conversations. Replies are emailed as a notification only.', '/admin/member-support', $ticketsOpen);
                         }
                         if ($canWorkTech) {
                             lrow($icons, 'var(--primary-dark)', 'alert', 'Reported problems',
