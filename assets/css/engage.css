@@ -3014,3 +3014,28 @@ body.pg-audit {
     .follow-card { padding: 22px 16px 18px; }
     .follow-list { grid-template-columns: 1fr; }
 }
+
+/* ======================================================================
+   Home page: section headings (scoped to body.pg-home, set by 'page' => 'home' in views/home.php).
+   ====================================================================== */
+body.pg-home .section-title,
+body.pg-home .gallery h2,
+body.pg-home .follow h2 {
+    margin: 48px 0 22px; text-align: center; text-transform: none; letter-spacing: -.02em;
+    font-size: clamp(24px, 3.6vw, 32px); font-weight: 800; line-height: 1.2; color: var(--ink);
+    text-wrap: balance;
+}
+body.pg-home .section-title.first { margin-top: 0; color: var(--ink); }
+body.pg-home .section-title::before,
+body.pg-home .gallery h2::before,
+body.pg-home .follow h2::before {
+    content: ''; display: block; width: 56px; height: 4px; margin: 0 auto 14px; border-radius: 999px;
+    background: linear-gradient(90deg, var(--primary), var(--leaf) 60%, var(--accent));
+}
+body.pg-home .st-sub {
+    display: block; margin-top: 8px; font-size: 15.5px; font-weight: 500; letter-spacing: 0; line-height: 1.45; color: var(--muted);
+}
+@media (max-width: 640px) {
+    body.pg-home .section-title, body.pg-home .gallery h2, body.pg-home .follow h2 { margin: 40px 0 18px; }
+    body.pg-home .st-sub { font-size: 14.5px; }
+}
