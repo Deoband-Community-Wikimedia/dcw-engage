@@ -403,6 +403,21 @@ class ReimbursementModel {
     // ------------------------------------------------------------------
 
     /**
+     * How many claims need a reviewer right now: new ones, ones being looked at, and ones whose payment
+     * failed (they come back to the reviewers). Claims sent back to the applicant ('Info Requested') are
+     * left out, because the next move is theirs. Claims finance sent back to review are 'Submitted' again,
+     * so they are counted. This is the number behind the "reimbursements to review" badge on the
+     * Workspace dashboard; it matches what reimbursement_review.php shows as needing action.
+     * One COUNT query, no rows loaded.
+     */
+    public function countAwaitingReview() {
+        return (int) $this->db->query(
+            "SELECT COUNT(*) FROM reimbursement_requests
+             WHERE status IN ('Submitted', 'Under Review', 'Payment Failed')"
+        )->fetchColumn();
+    }
+
+    /**
      * Full detail for admin/organizer substance review: line items and
      * receipts included, but NO payment-execution fields at all —
      * payment_method, upi_id, bank_account_name, bank_ifsc,

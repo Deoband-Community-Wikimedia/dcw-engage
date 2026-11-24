@@ -11,6 +11,7 @@ require_once __DIR__ . '/../../models/PointsModel.php';
 require_once __DIR__ . '/../../models/PointClaimModel.php';
 require_once __DIR__ . '/../../models/ReimbursementModel.php';
 require_once __DIR__ . '/../../models/InternetSupportModel.php';
+require_once __DIR__ . '/../../models/MemberTicketModel.php';
 
 Auth::requireLogin();
 
@@ -97,12 +98,29 @@ if ($canProcessFinance) {
 $financeKnown = array_filter([$financeReimb, $financeRecharge, $financeReceipts], fn($v) => $v !== null);
 $financeTotal = $financeKnown ? (int) array_sum($financeKnown) : null;
 
-// Volunteer support, reviewer side and DCW Support conversations. These need each model's own count method, which
-// this page has not been given yet, so they stay null (no number) until the two lines below are filled in.
-// Example:  $reimbReview = dash_count(fn() => (new ReimbursementModel())->countAwaitingReview());
-$reimbReview    = null;   // reimbursement claims waiting for a reviewer
-$internetReview = null;   // internet support requests waiting for a reviewer
-$ticketsOpen    = null;   // member conversations waiting for DCW Support
+// Volunteer support, reviewer side, and DCW Support conversations. Each number mirrors what the matching page lists
+// as needing someone right now, so the badge here always matches that page:
+//   reimbursements   Submitted, Under Review and Payment Failed (ReimbursementModel::countAwaitingReview). Claims sent
+//                    back to the applicant are not counted: the next move is theirs.
+//   internet support Submitted and Recharge Failed, the same split internet_review.php makes. Requests waiting on the
+//                    applicant are not counted. This reads the review list and counts it; a countAwaitingReview() on
+//                    InternetSupportModel would avoid loading the rows.
+//   conversations    not closed and the member wrote last (MemberTicketModel::countAwaitingStaff). Conversations about
+//                    staff are counted for owners only, as on the DCW Support page.
+// A count that cannot be read stays null and is simply left out.
+$reimbReview = $internetReview = $ticketsOpen = null;
+if ($canReviewReimbursements) {
+    $reimbReview = dash_count(fn() => (new ReimbursementModel())->countAwaitingReview());
+}
+if ($canReviewInternet) {
+    $internetReview = dash_count(fn() => count(array_filter(
+        (new InternetSupportModel())->listForReview(),
+        fn($r) => in_array($r['status'], ['Submitted', 'Recharge Failed'], true)
+    )));
+}
+if ($canWorkMemberSupport) {
+    $ticketsOpen = dash_count(fn() => (new MemberTicketModel())->countAwaitingStaff(Auth::isOwner()));
+}
 
 $supportWaiting = (int) $financeTotal + (int) $reimbReview + (int) $internetReview;
 $techTabWaiting = (int) $techOpen + (int) $ticketsOpen;
