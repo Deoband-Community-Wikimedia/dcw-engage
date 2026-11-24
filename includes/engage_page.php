@@ -207,8 +207,12 @@ function engage_footer() {
                 <p class="sf-about"><strong>DCW Engage</strong> serves as the central administrative hub for Deoband Community Wikimedia, connecting members to community governance, program applications, and support infrastructure.</p>
                 <?php if ($social): ?>
                     <div class="sf-social">
-                        <?php foreach ($social as [$name, $href]): ?>
-                            <a href="<?= $e($href) ?>" rel="noopener"><?= $e($name) ?></a>
+                        <?php foreach ($social as [$name, $href]): $ico = engage_social_icon($name); ?>
+                            <?php if ($ico !== ''): ?>
+                                <a class="ico" href="<?= $e($href) ?>" rel="noopener" aria-label="DCW on <?= $e($name) ?>" title="<?= $e($name) ?>"><?= $ico ?></a>
+                            <?php else: ?>
+                                <a href="<?= $e($href) ?>" rel="noopener"><?= $e($name) ?></a>
+                            <?php endif; ?>
                         <?php endforeach; ?>
                     </div>
                 <?php endif; ?>
