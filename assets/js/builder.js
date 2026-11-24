@@ -245,32 +245,40 @@ if (descriptionToolbar) {
 let sectionCounter = 0;
 let slugEdited = false;
 
+
 function createSection(sectionData = {}) {
     sectionCounter++;
+
     const section = document.createElement('section');
     section.className = 'form-section-card';
     section.dataset.sectionId = sectionData.id || ('section_' + sectionCounter);
+
     section.innerHTML = `
-        <div class="row section-card-header">
-            <strong>Section ${sectionCounter}</strong>
-            <button type="button" class="btn-danger remove-section-btn">Remove section</button>
+        <div class="section-metadata">
+            <div class="row section-card-header">
+                <strong>Section ${sectionCounter}</strong>
+                <button type="button" class="btn-danger remove-section-btn">Remove section</button>
+            </div>
+
+            <label for="section_title_${sectionCounter}">Section title</label>
+            <div class="label-toolbar" style="display:flex; gap:4px; margin-bottom:4px;">
+                <button type="button" class="btn-outline btn-sm label-fmt-btn" data-wrap="'''" title="Bold" style="font-weight:700; padding:2px 8px;">B</button>
+                <button type="button" class="btn-outline btn-sm label-fmt-btn" data-wrap="''" title="Italic" style="font-style:italic; padding:2px 8px;">I</button>
+                <button type="button" class="btn-outline btn-sm label-fmt-link" title="Link" style="padding:2px 8px;">Link</button>
+            </div>
+
+            <input type="text" id="section_title_${sectionCounter}" class="section-title" placeholder="e.g. Personal Details" value="${String(sectionData.title || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')}">
+
+            <label for="section_description_${sectionCounter}">Section introduction (optional)</label>
+            <textarea id="section_description_${sectionCounter}" class="section-description" rows="2" placeholder="Briefly explain this section to applicants">${String(sectionData.description || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</textarea>
         </div>
-        <label for="section_title_${sectionCounter}">Section title</label>
-        <div class="label-toolbar" style="display:flex; gap:4px; margin-bottom:4px;">
-            <button type="button" class="btn-outline btn-sm label-fmt-btn" data-wrap="'''" title="Bold" style="font-weight:700; padding:2px 8px;">B</button>
-            <button type="button" class="btn-outline btn-sm label-fmt-btn" data-wrap="''" title="Italic" style="font-style:italic; padding:2px 8px;">I</button>
-            <button type="button" class="btn-outline btn-sm label-fmt-link" title="Link" style="padding:2px 8px;">Link</button>
-        </div>
-        <input type="text" id="section_title_${sectionCounter}" class="section-title" placeholder="e.g. Personal Details" value="${String(sectionData.title || '').replace(/&/g, '&amp;').replace(/\"/g, '&quot;').replace(/</g, '&lt;')}">
-        <label for="section_description_${sectionCounter}">Section introduction (optional)</label>
-        <textarea id="section_description_${sectionCounter}" class="section-description" rows="2" placeholder="Briefly explain this section to applicants">${String(sectionData.description || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</textarea>
+
         <div class="section-fields"></div>
         <button type="button" class="btn-outline btn-sm add-section-field">+ Add Question to Section</button>
     `;
-    sectionsContainer.appendChild(section);    sectionsContainer.appendChild(section);
 
-    // Section introduction gets the same toolbar as the form description. It is cloned from that one, so the
-    // buttons are defined in a single place (views/admin/builder.php), then wired to this section's textarea.
+    sectionsContainer.appendChild(section);
+
     const introToolbarSource = document.getElementById('description_toolbar');
     if (introToolbarSource) {
         const introTextarea = section.querySelector('.section-description');
@@ -280,12 +288,16 @@ function createSection(sectionData = {}) {
         introTextarea.parentNode.insertBefore(introToolbar, introTextarea);
         wireWikiToolbar(introToolbar, introTextarea);
     }
+
     const fieldContainer = section.querySelector('.section-fields');
+
     if (Array.isArray(sectionData.fields) && sectionData.fields.length) {
         sectionData.fields.forEach(field => createFieldCard(field, fieldContainer));
     }
+
     return section;
 }
+
 
 sectionsContainer.addEventListener('click', function (e) {
     const add = e.target.closest('.add-section-field');
@@ -333,12 +345,45 @@ if (typeof existingSchema !== 'undefined' && existingSchema) {
 }
 
 const addSectionBtn = document.getElementById('add_section_btn');
-if (addSectionBtn) {
-    addSectionBtn.addEventListener('click', () => {
-        const section = createSection({title: '', description: ''});
-        section.querySelector('.section-title').focus();
-    });
+const addQuestionBtn = document.getElementById('add_question_btn');
+const useSectionsToggle = document.getElementById('use_sections');
+
+// Existing forms with saved sections default to ON.
+// New forms and legacy flat forms default to OFF.
+const hasSavedSections = typeof existingSchema !== 'undefined'
+    && existingSchema
+    && Array.isArray(existingSchema.sections)
+    && existingSchema.sections.length > 0;
+
+function syncSectionMode() {
+    const useSections = useSectionsToggle.checked;
+
+    sectionsContainer.classList.toggle('sections-disabled', !useSections);
+
+    addSectionBtn.style.display = useSections ? '' : 'none';
+    addQuestionBtn.style.display = useSections ? 'none' : '';
 }
+
+useSectionsToggle.checked = Boolean(hasSavedSections);
+useSectionsToggle.addEventListener('change', syncSectionMode);
+
+// Add a question to the end of the flat question list.
+addQuestionBtn.addEventListener('click', () => {
+    const sections = sectionsContainer.querySelectorAll('.form-section-card');
+    const lastSection = sections[sections.length - 1];
+
+    if (!lastSection) return;
+
+    createFieldCard(null, lastSection.querySelector('.section-fields'));
+});
+
+// Add a new section.
+addSectionBtn.addEventListener('click', () => {
+    const section = createSection({title: '', description: ''});
+    section.querySelector('.section-title').focus();
+});
+
+syncSectionMode();
 
 // Auto-generate URL Slug from Title
 const formTypeInput = document.getElementById('form_type');
@@ -363,66 +408,97 @@ if (formTitleInput) {
 // the same schema shape the backend stores — shared by the real save
 // (submit handler below) and the Preview button (see #47), so there's only
 // one place that knows how to read a field card off the DOM.
+
 function buildSchemaFromForm() {
     const title = document.getElementById('form_title').value;
     const description = document.getElementById('form_description').value;
     const bannerImage = document.getElementById('banner_image').value;
+    const useSections = useSectionsToggle.checked;
 
-    const schema = {title, description, banner_image: bannerImage, sections: []};
+    const schema = {
+        title,
+        description,
+        banner_image: bannerImage
+    };
 
     const cards = Array.from(document.querySelectorAll('.field-card'));
 
-    // Keys that are off limits for a brand-new field: every key loaded from the
-    // saved schema (even if its question was trashed since) plus every key
-    // currently on a card, in any section. Keeps new keys unique and never reuses a saved one.
+    // Preserve every previously saved field name, including trashed fields.
     const used = new Set(savedFieldNames);
-    cards.forEach(c => { if (c.dataset.fieldName) used.add(c.dataset.fieldName); });
+    cards.forEach(card => {
+        if (card.dataset.fieldName) {
+            used.add(card.dataset.fieldName);
+        }
+    });
 
-    // Only used for a field that has never been saved. Built from the label once,
-    // then pinned to the card so later label edits (and preview-then-save) can't change it.
     const makeName = function (label) {
         const base = label.toLowerCase()
             .replace(/[^a-z0-9]/g, '_')
             .replace(/_+/g, '_')
             .replace(/^_|_$/g, '') || 'field';
+
         let candidate = base;
         let n = 2;
+
         while (used.has(candidate)) {
             candidate = base + '_' + n++;
         }
+
         used.add(candidate);
         return candidate;
     };
 
-    document.querySelectorAll('.form-section-card').forEach((section, sectionIndex) => {
-        const sectionData = {
-            id: section.dataset.sectionId || ('section_' + (sectionIndex + 1)),
-            title: section.querySelector('.section-title').value.trim(),
-            description: section.querySelector('.section-description').value.trim(),
-            fields: []
-        };
-        section.querySelectorAll('.field-card').forEach(card => {
-            const label = card.querySelector('.field-label').value;
-            const type = card.querySelector('.field-type').value;
-            const isRequired = card.querySelector('.field-required').checked;
+    // Read a question without changing its existing configuration.
+    const buildFieldData = function (card) {
+        const label = card.querySelector('.field-label').value;
+        const type = card.querySelector('.field-type').value;
+        const isRequired = card.querySelector('.field-required').checked;
 
-            // Existing fields keep their saved key no matter how the label changes.
-            let name = card.dataset.fieldName;
-            if (!name) {
-                name = makeName(label);
-                card.dataset.fieldName = name;
-            }
+        let name = card.dataset.fieldName;
 
-            const fieldData = {name, label, type, required: isRequired};
-            if (type === 'select' || type === 'checkbox_group') {
-                fieldData.options = card.querySelector('.field-options').value.split(',').map(opt => opt.trim()).filter(opt => opt.length > 0);
-            }
-            sectionData.fields.push(fieldData);
+        if (!name) {
+            name = makeName(label);
+            card.dataset.fieldName = name;
+        }
+
+        const fieldData = {name, label, type, required: isRequired};
+
+        if (type === 'select' || type === 'checkbox_group') {
+            fieldData.options = card.querySelector('.field-options').value
+                .split(',')
+                .map(option => option.trim())
+                .filter(option => option.length > 0);
+        }
+
+        return fieldData;
+    };
+
+    if (useSections) {
+        schema.sections = [];
+
+        document.querySelectorAll('.form-section-card').forEach((section, sectionIndex) => {
+            const sectionData = {
+                id: section.dataset.sectionId || ('section_' + (sectionIndex + 1)),
+                title: section.querySelector('.section-title').value.trim(),
+                description: section.querySelector('.section-description').value.trim(),
+                fields: []
+            };
+
+            section.querySelectorAll('.field-card').forEach(card => {
+                sectionData.fields.push(buildFieldData(card));
+            });
+
+            schema.sections.push(sectionData);
         });
-        schema.sections.push(sectionData);
-    });
+    } else {
+        // A flat schema deliberately has no "sections" key.
+        // The existing FormModel handles this format.
+        schema.fields = cards.map(buildFieldData);
+    }
+
     return schema;
 }
+
 
 // Compile JSON on submit
 if (builderForm) {
@@ -435,15 +511,25 @@ if (builderForm) {
 
 // Preview button — opens the real public-form template in a new tab against
 // the builder's current, unsaved schema (see #47).
+// Preview button — opens the real public-form template in a new tab
+// against the builder's current, unsaved schema.
 const previewFormBtn = document.getElementById('preview_form_btn');
 const previewForm = document.getElementById('previewForm');
+
 if (previewFormBtn && previewForm) {
     previewFormBtn.addEventListener('click', function () {
         const schema = buildSchemaFromForm();
-        if (!schema.sections.some(section => section.fields.length)) {
+
+        // Check for questions in either section-based or flat schema.
+        const hasQuestions = schema.sections
+            ? schema.sections.some(section => section.fields.length > 0)
+            : Array.isArray(schema.fields) && schema.fields.length > 0;
+
+        if (!hasQuestions) {
             window.alert('Add at least one question before previewing.');
             return;
         }
+
         document.getElementById('preview_schema_json_input').value = JSON.stringify(schema);
         previewForm.submit();
     });
