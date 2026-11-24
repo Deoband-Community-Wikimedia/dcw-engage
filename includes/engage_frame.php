@@ -166,7 +166,7 @@ function engage_forbidden(string $message, string $backHref = '/admin/dashboard'
  *   ['sep' => true]                                                      a divider
  *   ['heading' => 'About DCW']                                           a small heading
  *   ['post' => '/admin/logout', 'label' => 'Sign out']                   a POST button (staff sign out)
- * $c: 'home','programs','events' (member menu on the home page), 'join' (guest on small phones).
+ * $c: 'home','programs','events','videos' (member menu on the home page), 'join' (guest on small phones).
  * THIS is the one place to edit a menu's contents.
  */
 function engage_nav_items(string $aud, array $c = []): array {
@@ -177,6 +177,7 @@ function engage_nav_items(string $aud, array $c = []): array {
         if (!empty($c['home'])) {
             if (!empty($c['programs'])) $items[] = $link('Programs', '#programs');
             if (!empty($c['events']))   $items[] = $link('Events', '#events');
+            if (!empty($c['videos']))   $items[] = $link('Videos', '#videos');
         } else {
             $items[] = $link('Home', '/');
         }
@@ -299,7 +300,7 @@ function engage_nav(array $o = []): string {
 
 // ---- Wrappers: existing pages keep calling these ----------------------------------------------------
 
-/** Member menu. $o: 'current', 'home', 'programs', 'events'. */
+/** Member menu. $o: 'current', 'home', 'programs', 'events', 'videos'. */
 function engage_member_menu(array $member, array $o = []): string {
     return engage_nav(['aud' => 'member', 'member' => $member] + $o);
 }
