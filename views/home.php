@@ -459,7 +459,7 @@ $onBand = false; // headings no longer sit on the blue band
         <?php if (!empty($events)): ?>
             <?php $evTitleClass = 'section-title' . (empty($cards) && empty($programs) && empty($feedbackCards) && $onBand ? ' first' : ''); ?>
             <section class="events" id="events" aria-label="Upcoming Events">
-                <h2 class="<?= $evTitleClass ?>">Happening soon<span class="st-sub">Come meet fellow Wikimedians at our next events</span></h2>
+                <h2 class="<?= $evTitleClass ?>">Happening around<span class="st-sub">Join and participate in our events</span></h2>
                 <div class="grid<?= count($events) === 1 ? ' one' : '' ?>">
                     <?php foreach ($events as $ev) echo $eventCard($ev); ?>
                 </div>
