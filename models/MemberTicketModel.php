@@ -175,6 +175,26 @@ class MemberTicketModel
         return $s->fetchAll(PDO::FETCH_ASSOC);
     }
 
+    /**
+     * How many conversations are waiting for DCW Support: not closed, and the member wrote last
+     * (new ones, and ones the member has answered). Conversations where DCW replied and the
+     * member has not answered yet are not counted, because the next move is theirs.
+     *
+     * Scoped exactly like listForStaff(): without $isOwner, conversations about staff are never
+     * counted, so the number cannot hint at tickets DCW Support is not allowed to read.
+     * One COUNT query; the dashboard uses it for the "member conversations" badge.
+     */
+    public function countAwaitingStaff(bool $isOwner): int
+    {
+        $in = implode(',', array_fill(0, count(self::CLOSED), '?'));
+        $sql = "SELECT COUNT(*) FROM member_tickets
+                WHERE status NOT IN ($in) AND last_sender = 'member'"
+             . ($isOwner ? '' : ' AND about_staff = 0');
+        $s = $this->db->prepare($sql);
+        $s->execute(self::CLOSED);
+        return (int) $s->fetchColumn();
+    }
+
     public function getForStaff(int $id, bool $isOwner)
     {
         $s = $this->db->prepare('SELECT ' . self::STAFF_COLS . ' FROM member_tickets WHERE id = ?' . ($isOwner ? '' : ' AND about_staff = 0'));
