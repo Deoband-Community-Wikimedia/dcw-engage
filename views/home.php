@@ -363,6 +363,7 @@ if ($signedInMember) {
 }
 
 engage_header([
+    'page'        => 'home',   // body class pg-home: scopes the home page heading styles in engage.css
     'title'       => 'Deoband Community Wikimedia',
     'heading'     => $heroHeading,
     'lead'        => $heroLead,
@@ -413,12 +414,12 @@ $onBand = false; // headings no longer sit on the blue band
         <?php if (!empty($programs)): ?>
             <?php $titleClass = 'section-title' . (empty($cards) && $onBand ? ' first' : ''); ?>
             <?php if (!$beside): ?>
-                <h2 id="programs" class="<?= $titleClass ?>">Open programs</h2>
+                <h2 id="programs" class="<?= $titleClass ?>">Your next opportunity<span class="st-sub">Programs open for applications right now</span></h2>
             <?php endif; ?>
             <div class="grid<?= $beside ? ' grid--beside n' . count($programs) : $fewCardsClass(count($programs)) ?>">
                 <?php if ($beside): ?>
                     <?php /* Inside the grid, so it centres over the program cards only, not over the reflection. */ ?>
-                    <h2 id="programs" class="<?= $titleClass ?> beside-title">Open programs</h2>
+                    <h2 id="programs" class="<?= $titleClass ?> beside-title">Your next opportunity<span class="st-sub">Programs open for applications right now</span></h2>
                 <?php endif; ?>
                 <?php foreach ($programs as $p): ?>
                     <a class="prog" href="<?= htmlspecialchars($p['href']) ?>" style="--tone: <?= htmlspecialchars($p['tone']) ?>;">
@@ -439,7 +440,7 @@ $onBand = false; // headings no longer sit on the blue band
         <?php /* Feedback forms: their own section, "Give feedback" wording, never under "Open programs". */ ?>
         <?php if (!empty($feedbackCards)): ?>
             <?php $fbTitleClass = 'section-title' . (empty($cards) && empty($programs) && ($reflectionCard === '' || $reflectionRow) && $onBand ? ' first' : ''); ?>
-            <h2 id="feedback" class="<?= $fbTitleClass ?>">Share your feedback</h2>
+            <h2 id="feedback" class="<?= $fbTitleClass ?>">Help shape DCW<span class="st-sub">Your voice guides what we do next</span></h2>
             <div class="grid<?= $fewCardsClass(count($feedbackCards)) ?>">
                 <?php foreach ($feedbackCards as $p): ?>
                     <a class="prog" href="<?= htmlspecialchars($p['href']) ?>" style="--tone: <?= htmlspecialchars($p['tone']) ?>;">
@@ -458,14 +459,14 @@ $onBand = false; // headings no longer sit on the blue band
         <?php if (!empty($events)): ?>
             <?php $evTitleClass = 'section-title' . (empty($cards) && empty($programs) && empty($feedbackCards) && $onBand ? ' first' : ''); ?>
             <section class="events" id="events" aria-label="Upcoming Events">
-                <h2 class="<?= $evTitleClass ?>">Upcoming Events</h2>
+                <h2 class="<?= $evTitleClass ?>">Happening soon<span class="st-sub">Come meet fellow Wikimedians at our next events</span></h2>
                 <div class="grid<?= count($events) === 1 ? ' one' : '' ?>">
                     <?php foreach ($events as $ev) echo $eventCard($ev); ?>
                 </div>
             </section>
             <?php if ($reflectionRow): ?>
                 <section class="community" id="community" aria-label="From our community">
-                    <h2 class="section-title">From our community</h2>
+                    <h2 class="section-title">In their own words<span class="st-sub">Reflections from the DCW community</span></h2>
                     <div class="grid"><?= $reflectionCard ?></div>
                 </section>
             <?php endif; ?>
@@ -474,7 +475,7 @@ $onBand = false; // headings no longer sit on the blue band
         <?php /* Latest videos: newest one large, two smaller. Shown to everyone; left out if YouTube gave fewer than three. */ ?>
         <?php if (!empty($videos)): ?>
             <section class="vids" id="videos" aria-label="Latest videos">
-                <h2 class="section-title">Latest videos</h2>
+                <h2 class="section-title">Watch DCW in action<span class="st-sub">Fresh recordings from our YouTube channel</span></h2>
                 <div class="vids-grid">
                     <?php foreach ($videos as $k => $v) echo $videoCard($v, $k === 0); ?>
                 </div>
@@ -488,7 +489,7 @@ $onBand = false; // headings no longer sit on the blue band
         <?php if (count($stripMembers) >= 3): ?>
             <?php $cmTitleClass = 'section-title' . (empty($cards) && empty($programs) && empty($feedbackCards) && empty($events) && $reflectionCard === '' && $onBand ? ' first' : ''); ?>
             <section class="cm" id="members" aria-label="Meet our members">
-                <h2 class="<?= $cmTitleClass ?>">Meet our members</h2>
+                <h2 class="<?= $cmTitleClass ?>">The people behind DCW</h2>
                 <div class="cm-card">
                     <ul class="cm-list">
                         <?php foreach ($stripMembers as $m): ?>
@@ -544,7 +545,7 @@ $onBand = false; // headings no longer sit on the blue band
 
         <?php if (!empty($gallery)): ?>
             <section class="gallery" aria-label="Our community in photos">
-                <h2>Our community in photos</h2>
+                <h2>Moments from our community</h2>
                 <div class="marquee" id="galMarquee" style="--gal-dur: <?= (int) $galleryDuration ?>s;">
                     <div class="track">
                         <?php foreach ([false, true] as $isDup): ?>
@@ -572,7 +573,7 @@ $onBand = false; // headings no longer sit on the blue band
 <?php $followLinks = engage_social_links(); ?>
 <?php if (!empty($followLinks)): ?>
         <section class="follow" id="follow" aria-label="Follow DCW">
-            <h2>Follow DCW</h2>
+            <h2>Stay in the loop</h2>
             <div class="follow-card">
                 <p class="follow-lead">See Wikimedians at work, event recaps and the people behind them.</p>
                 <ul class="follow-list">
