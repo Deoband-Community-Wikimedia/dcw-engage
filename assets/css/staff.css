@@ -458,3 +458,10 @@ details.edit fieldset.group { background: #fff; margin-bottom: 0; }
 @media (max-width: 560px) {
     .sect { padding: 18px 16px; }
 }
+
+/* Builder: "show this section only when" control (#241). */
+.section-condition { margin-top: 16px; padding-top: 14px; border-top: 1px dashed var(--border); }
+.section-condition .cond-field { max-width: 100%; margin-bottom: 8px; }
+.section-condition .cond-lead { font-size: 13px; font-weight: 600; margin: 4px 0; }
+.section-condition .cond-option { display: flex; align-items: center; gap: 6px; font-weight: 400; margin: 2px 0; cursor: pointer; }
+.section-condition .cond-option input { margin: 0; width: auto; }

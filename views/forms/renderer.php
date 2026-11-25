@@ -425,6 +425,8 @@ if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $postData = $_POST;
         unset($postData['csrf_token']);
+        // Answers to questions in sections hidden by the applicant's choices are never saved.
+        $postData = FormModel::stripHiddenAnswers($schema, $postData);
 
         // The name comes from verification (or the member record), never from the request.
         if ($nameFieldKey !== null) {
@@ -498,7 +500,8 @@ if (empty($previewSchema) && $_SERVER['REQUEST_METHOD'] === 'POST') {
             require_once __DIR__ . '/../../models/FileUploader.php';
             $fileUploader = new FileUploader();
 
-            foreach ($schema['fields'] as $field) {
+            // Uploads for questions in hidden sections are ignored, like their other answers.
+            foreach (FormModel::visibleFields($schema, $_POST) as $field) {
                 $name = $field['name'];
                 if (($field['type'] ?? '') === 'file' && !empty($_FILES[$name]['name'])) {
                     try {
@@ -790,6 +793,7 @@ engage_header([
                 </div>
 
                 <?php foreach ($schemaSections as $section): ?>
+                    <?php if (isset($section['show_if'])): ?><div class="cond-section" <?= FormModel::showIfAttrs($section) ?>><?php endif; ?>
                     <?php if (trim($section['title']) !== '' || trim($section['description']) !== ''): ?>
                         <section class="form-section">
                             <?php if (trim($section['title']) !== ''): ?><h2><?= MiniWikiText::inline(htmlspecialchars($section['title'], ENT_QUOTES, 'UTF-8')) ?></h2><?php endif; ?>
@@ -889,6 +893,7 @@ engage_header([
                         <?php endif; ?>
                     </div>
                     <?php endforeach; ?>
+                    <?php if (isset($section['show_if'])): ?></div><?php endif; ?>
                 <?php endforeach; ?>
 
                 <div class="btnrow">
@@ -902,6 +907,7 @@ engage_header([
     <?php endif; ?>
 </div>
 
+<script src="/assets/js/conditional-sections.js?v=<?= filemtime(__DIR__ . '/../../assets/js/conditional-sections.js') ?>"></script>
 <script>
     document.querySelectorAll('.dropzone-input').forEach(input => {
         const fieldId = input.id;

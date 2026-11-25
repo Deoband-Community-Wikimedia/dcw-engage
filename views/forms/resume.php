@@ -90,6 +90,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked) {
         $postData = $_POST;
         unset($postData['csrf_token']);
         unset($postData['email']);   // not an answer; the verified address stays as it is
+        // Answers to questions in sections hidden by the applicant's choices are never saved.
+        $postData = FormModel::stripHiddenAnswers($schema, $postData);
 
         // Keep the verified name in the answers as well.
         if ($nameFieldKey !== null) {
@@ -103,7 +105,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked) {
         // NOTE: loop variable is deliberately $fieldName, not $name. Reusing
         // $name here used to overwrite the applicant's name with the last
         // field's internal name on every edit made through the resume portal.
-        foreach ($schema['fields'] as $field) {
+        foreach (FormModel::visibleFields($schema, $_POST) as $field) {
             $fieldName = $field['name'];
             if (($field['type'] ?? '') === 'file') {
                 if (!empty($_FILES[$fieldName]['name'])) {
@@ -228,6 +230,7 @@ engage_header([
         </fieldset>
 
         <?php foreach ($schemaSections as $section): ?>
+            <?php if (isset($section['show_if'])): ?><div class="cond-section" <?= FormModel::showIfAttrs($section) ?>><?php endif; ?>
             <?php if (trim($section['title']) !== '' || trim($section['description']) !== ''): ?>
                 <section class="form-section">
                     <?php if (trim($section['title']) !== ''): ?><h2><?= $label_html($section['title']) ?></h2><?php endif; ?>
@@ -345,6 +348,7 @@ engage_header([
                 <?php endif; ?>
             </div>
             <?php endforeach; ?>
+            <?php if (isset($section['show_if'])): ?></div><?php endif; ?>
         <?php endforeach; ?>
 
         <?php if (!$isLocked && $wasDraft): ?>
@@ -359,6 +363,7 @@ engage_header([
 </div>
 
 <?php if (!$isLocked): ?>
+<script src="/assets/js/conditional-sections.js?v=<?= filemtime(__DIR__ . '/../../assets/js/conditional-sections.js') ?>"></script>
 <script>
     // Drag-and-drop wiring for every file field on the page.
     document.querySelectorAll('.dropzone-input').forEach(function (input) {

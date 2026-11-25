@@ -304,12 +304,17 @@ class FormModel {
             $sections = [];
             foreach ($schema['sections'] as $index => $section) {
                 if (!is_array($section)) continue;
-                $sections[] = [
+                $normalized = [
                     'id' => (string) ($section['id'] ?? ('section_' . ($index + 1))),
                     'title' => (string) ($section['title'] ?? ''),
                     'description' => (string) ($section['description'] ?? ''),
                     'fields' => is_array($section['fields'] ?? null) ? $section['fields'] : [],
                 ];
+                $showIf = self::normalizeShowIf($section['show_if'] ?? null);
+                if ($showIf !== null) {
+                    $normalized['show_if'] = $showIf;
+                }
+                $sections[] = $normalized;
             }
             return $sections;
         }
@@ -345,10 +350,133 @@ class FormModel {
         return $fields;
     }
 
+    /**
+     * A section's "show only when" rule: ['field' => <dropdown question name>, 'values' => [<answers>]].
+     * Returns null when there is no usable rule (so the section is always shown).
+     */
+    public static function normalizeShowIf($showIf): ?array {
+        if (!is_array($showIf)) return null;
+        $field = trim((string) ($showIf['field'] ?? ''));
+        $values = [];
+        foreach ((array) ($showIf['values'] ?? []) as $v) {
+            if (is_string($v) && trim($v) !== '') $values[] = trim($v);
+        }
+        $values = array_values(array_unique($values));
+        return ($field === '' || !$values) ? null : ['field' => $field, 'values' => $values];
+    }
+
+    /**
+     * Checks (and tidies) every section's "show only when" rule on a schema about to be saved.
+     * Returns an error message for the organizer, or null when the rules are fine.
+     *
+     * A rule must point at a dropdown question that exists, sits in a different section and is itself
+     * always shown (no chains: a conditional section cannot depend on another conditional one), and
+     * every answer it lists must be one of that dropdown's options. A half-filled rule is dropped, so
+     * the section is simply always shown. Feedback forms do not support rules at all.
+     */
+    public static function applyShowIfRules(array &$schema, string $kind): ?string {
+        if (!isset($schema['sections']) || !is_array($schema['sections'])) {
+            return null;
+        }
+        foreach ($schema['sections'] as $i => $section) {
+            if (!is_array($section)) continue;
+            $rule = $kind === 'feedback' ? null : self::normalizeShowIf($section['show_if'] ?? null);
+            if ($rule === null) {
+                unset($schema['sections'][$i]['show_if']);
+            } else {
+                $schema['sections'][$i]['show_if'] = $rule;
+            }
+        }
+
+        // Where each question lives, so a rule can be checked against it.
+        $home = [];
+        foreach ($schema['sections'] as $i => $section) {
+            foreach ((is_array($section) ? ($section['fields'] ?? []) : []) as $field) {
+                if (is_array($field) && isset($field['name'])) $home[(string) $field['name']] = [$i, $field];
+            }
+        }
+
+        foreach ($schema['sections'] as $i => $section) {
+            $rule = is_array($section) ? ($section['show_if'] ?? null) : null;
+            if ($rule === null) continue;
+            $title = trim((string) ($section['title'] ?? '')) !== '' ? '"' . trim((string) $section['title']) . '"' : 'A section';
+            if (!isset($home[$rule['field']])) {
+                return "$title is set to show only for an answer to a question that no longer exists.";
+            }
+            [$controllerSection, $controller] = $home[$rule['field']];
+            if ($controllerSection === $i) {
+                return "$title cannot depend on a question inside itself.";
+            }
+            if (($controller['type'] ?? '') !== 'select') {
+                return "$title can only depend on a dropdown question.";
+            }
+            if (isset($schema['sections'][$controllerSection]['show_if'])) {
+                return "$title depends on a question in another conditional section. Choose a question in a section that is always shown.";
+            }
+            $options = array_map('trim', array_map('strval', (array) ($controller['options'] ?? [])));
+            foreach ($rule['values'] as $v) {
+                if (!in_array($v, $options, true)) {
+                    return "$title lists the answer \"$v\", which is not one of the dropdown's options.";
+                }
+            }
+        }
+        return null;
+    }
+
+    /** data-* attributes (already escaped) that tell conditional-sections.js when to show a section. */
+    public static function showIfAttrs(array $section): string {
+        $rule = $section['show_if'] ?? null;
+        if (!is_array($rule)) return '';
+        return 'data-show-if-field="' . htmlspecialchars($rule['field'], ENT_QUOTES, 'UTF-8') . '" '
+             . 'data-show-if-values="' . htmlspecialchars(json_encode($rule['values'], JSON_UNESCAPED_UNICODE), ENT_QUOTES, 'UTF-8') . '"';
+    }
+
+    /** Is this section shown for these answers? A section with no rule is always shown. */
+    public static function sectionIsVisible(array $section, array $postData): bool {
+        $rule = $section['show_if'] ?? null;
+        if (!is_array($rule)) return true;
+        $answer = $postData[$rule['field']] ?? null;
+        return is_string($answer) && in_array(trim($answer), $rule['values'], true);
+    }
+
+    /** The questions the applicant can actually see for these answers (hidden sections left out). */
+    public static function visibleFields(array $schema, array $postData): array {
+        $fields = [];
+        foreach (self::schemaSections($schema) as $section) {
+            if (!self::sectionIsVisible($section, $postData)) continue;
+            foreach ($section['fields'] as $field) {
+                if (is_array($field)) $fields[] = $field;
+            }
+        }
+        return $fields;
+    }
+
+    /** Names of the questions that sit in a section hidden for these answers. */
+    public static function hiddenFieldNames(array $schema, array $postData): array {
+        $hidden = [];
+        foreach (self::schemaSections($schema) as $section) {
+            if (self::sectionIsVisible($section, $postData)) continue;
+            foreach ($section['fields'] as $field) {
+                if (is_array($field) && isset($field['name'])) $hidden[] = (string) $field['name'];
+            }
+        }
+        return $hidden;
+    }
+
+    /** Drops the answers given to questions in hidden sections, so they are never saved. */
+    public static function stripHiddenAnswers(array $schema, array $postData): array {
+        foreach (self::hiddenFieldNames($schema, $postData) as $name) {
+            unset($postData[$name]);
+        }
+        return $postData;
+    }
+
     public function validateSubmission($schema, $postData, $skipRequired = false) {
         $errors = [];
 
-        foreach (self::schemaFields(is_array($schema) ? $schema : []) as $field) {
+        // Only questions in sections the applicant can see are checked; a hidden section's
+        // required questions never block a submission.
+        foreach (self::visibleFields(is_array($schema) ? $schema : [], is_array($postData) ? $postData : []) as $field) {
             $name = $field['name'];
             $isRequired = $field['required'] ?? false;
             $type = $field['type'] ?? 'text';

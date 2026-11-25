@@ -153,6 +153,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif ($kind === 'feedback' && in_array('file', array_column(FormModel::schemaFields($decodedSchema), 'type'), true)) {
             // Feedback responses are stored without any upload handling, so a file question could never work.
             $error = "Feedback forms cannot include file upload questions.";
+        } elseif (($showIfError = FormModel::applyShowIfRules($decodedSchema, $kind)) !== null) {
+            // Sections that only show for certain answers: checked and tidied here, not trusted from builder.js.
+            $error = htmlspecialchars($showIfError);
         } else {
             // "Link only" is set here, on the server, from the checkbox, rather than by builder.js.
             // That way the flag is always exactly what the checkbox says, and a builder that only
