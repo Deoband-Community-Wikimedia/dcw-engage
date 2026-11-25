@@ -662,9 +662,14 @@ engage_header([
         <div class="alert ok">
             <h3><?= $isDraftPost ? 'Draft saved successfully!' : 'Application received!' ?></h3>
             <?= htmlspecialchars($success) ?>
+            <?php if (!$isDraftPost && !empty($schema['success_message'])): ?>
+                <?php /* Organizer-written message (wikitext, escaped by MiniWikiText), replaces the default "no further action" line. */ ?>
+                <div class="success-message"><?= MiniWikiText::render($schema['success_message']) ?></div>
+            <?php else: ?>
             <p><?= $isDraftPost
                 ? 'We have emailed you a secure link enabling you to return and complete this application at your convenience.'
                 : 'We have emailed you a confirmation receipt. No further action is required at this time.' ?></p>
+            <?php endif; ?>
         </div>
     <?php else: ?>
 

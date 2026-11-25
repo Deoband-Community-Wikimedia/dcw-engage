@@ -26,6 +26,7 @@ $existingFormType = '';
 $existingNotifyEmails = '';
 $existingDeadlineInput = '';   // the saved deadline, in IST, in datetime-local format
 $existingUnlisted = false;     // "link only": live, but not listed on the home page
+$existingSuccessMessage = '';  // wikitext shown after a final submission instead of the default text
 // New form: ?kind=feedback (or scholarship, swag) preselects the type. Fixed once the form exists.
 $existingKind = in_array($_GET['kind'] ?? '', BUILDER_KINDS, true) ? (string) $_GET['kind'] : 'application';
 if (isset($_GET['edit'])) {
@@ -42,6 +43,7 @@ if (isset($_GET['edit'])) {
     $existingNotifyEmails = $form['notify_emails'] ?? '';
     $existingDeadlineInput = FormModel::utcToIstInput($form['deadline_at'] ?? null);
     $existingUnlisted = !empty($form['schema']['unlisted']);
+    $existingSuccessMessage = (string) ($form['schema']['success_message'] ?? '');
     $k = FormModel::kindOf($form);
     $existingKind = $k === 'membership' ? 'application' : $k;   // membership is never stored as a kind
 }
@@ -50,6 +52,7 @@ if (isset($_GET['edit'])) {
 $deadlineValue = $existingDeadlineInput;
 // Same for the "link only" checkbox.
 $unlistedValue = $existingUnlisted;
+$successMessageValue = $existingSuccessMessage;
 // And for the form type.
 $kindValue = $existingKind;
 
@@ -65,6 +68,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $deadlineValue = $deadlineRaw;
     $unlistedChecked = !empty($_POST['unlisted']);
     $unlistedValue = $unlistedChecked;
+    // Normalise line endings; trimmed so a box holding only spaces counts as empty.
+    $successMessageRaw = trim(str_replace("\r\n", "\n", (string) ($_POST['success_message'] ?? '')));
+    $successMessageValue = $successMessageRaw;
 
     // Editing an existing form is identified by its stable form_id,
     // not by matching form_type — matching on form_type meant that
@@ -143,6 +149,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $error = "Notification email '" . htmlspecialchars($badEmail) . "' is not a valid address.";
     } elseif ($deadlineError !== null) {
         $error = htmlspecialchars($deadlineError);
+    } elseif (mb_strlen($successMessageRaw) > 5000) {
+        $error = "The message shown after submitting is too long (5000 characters at most).";
     } else {
         // Validate JSON
         $decodedSchema = json_decode($schemaJson, true);
@@ -161,6 +169,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $decodedSchema['unlisted'] = true;
             } else {
                 unset($decodedSchema['unlisted']);
+            }
+
+            // The after-submission message is set here too, from its own box, for the same reason.
+            // An empty box (or a feedback form, which has no application receipt to customise)
+            // removes the key, so the built-in text is used.
+            if ($successMessageRaw !== '' && $kind !== 'feedback') {
+                $decodedSchema['success_message'] = $successMessageRaw;
+            } else {
+                unset($decodedSchema['success_message']);
             }
 
             // Same for the form type: "kind" is written here, not by builder.js.
@@ -309,6 +326,17 @@ engage_header([
                 style="margin-bottom: 0;">
             <span class="hint">The form closes automatically at this time (IST, India Standard Time). Leave blank for no
                 deadline. You can extend it later from the form's manager page.</span>
+
+            <div id="success_message_wrap" style="margin-top: 20px;">
+                <label for="success_message">Message after submitting (Optional)</label>
+                <div id="success_message_toolbar" style="display:flex; gap:6px; margin-bottom:6px; flex-wrap:wrap;"></div>
+                <textarea name="success_message" id="success_message" maxlength="5000"
+                    placeholder="e.g. Thank you for applying! Your next step is to join the orientation call on..."
+                    style="width: 100%; padding: 12px; margin-bottom: 5px; border: 1.5px solid var(--border); border-radius: 10px; font-family: 'Inter', sans-serif; font-size: 14px; min-height: 90px; resize: vertical;"><?= htmlspecialchars($successMessageValue) ?></textarea>
+                <span class="hint">Shown to applicants after they submit, in place of &ldquo;No further action is required
+                    at this time&rdquo;. Same formatting as the description. Leave blank to keep the default. The
+                    confirmation email is not changed, and saving a draft keeps its own message.</span>
+            </div>
 
             <label style="margin-top: 20px; display:flex; align-items:center; gap:8px; cursor:pointer;">
                 <input type="checkbox" name="unlisted" id="unlisted" value="1" <?= $unlistedValue ? 'checked' : '' ?>
