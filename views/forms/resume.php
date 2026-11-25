@@ -196,6 +196,9 @@ engage_header([
 
     <?php if ($success): ?>
         <div class="alert ok"><strong>Success:</strong> <?= $e($success) ?></div>
+        <?php if (!$wasDraft && !empty($schema['success_message'])): ?>
+            <div class="alert ok success-message"><?= MiniWikiText::render($schema['success_message']) ?></div>
+        <?php endif; ?>
     <?php endif; ?>
 
     <?php if (!empty($errors['system']) || $hiddenErrors): ?>

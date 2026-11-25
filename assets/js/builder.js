@@ -227,6 +227,25 @@ function wireWikiToolbar(toolbar, textarea) {
     });
 }
 
+// After-submission message box: same toolbar as the description, built from its buttons.
+// Hidden for feedback forms, which have no application receipt to customise.
+(function () {
+    const src = document.getElementById('description_toolbar');
+    const bar = document.getElementById('success_message_toolbar');
+    const box = document.getElementById('success_message');
+    if (src && bar && box) {
+        Array.from(src.children).forEach(function (btn) { bar.appendChild(btn.cloneNode(true)); });
+        wireWikiToolbar(bar, box);
+    }
+    const kindSel = document.getElementById('form_kind');
+    const wrap = document.getElementById('success_message_wrap');
+    if (kindSel && wrap) {
+        const sync = function () { wrap.style.display = kindSel.value === 'feedback' ? 'none' : ''; };
+        kindSel.addEventListener('change', sync);
+        sync();
+    }
+})();
+
 const descriptionToolbar = document.getElementById('description_toolbar');
 if (descriptionToolbar) {
     const descriptionTextarea = document.getElementById('form_description');
