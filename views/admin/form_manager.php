@@ -265,15 +265,26 @@ if (isset($_GET['action']) && $_GET['action'] === 'export') {
         http_response_code(403);
         die("Membership responses are not exported from here.");
     }
+    // Optional roster export: only applications with an allowed status (e.g. ?status=Accepted)
+    $exportStatus = $_GET['status'] ?? '';
+    if ($exportStatus !== '' && in_array($exportStatus, $allowedStatuses, true)) {
+        $applications = array_values(array_filter($applications, function ($a) use ($exportStatus) {
+            return $a['status'] === $exportStatus;
+        }));
+    } else {
+        $exportStatus = '';
+    }
+    $exportSuffix = $exportStatus === '' ? '_Export.csv' : '_' . preg_replace('/[^a-zA-Z0-9]+/', '_', $exportStatus) . '_Export.csv';
+
     header('Content-Type: text/csv; charset=utf-8');
-    header('Content-Disposition: attachment; filename="' . preg_replace('/[^a-zA-Z0-9]+/', '_', $form['title']) . '_Export.csv"');
+    header('Content-Disposition: attachment; filename="' . preg_replace('/[^a-zA-Z0-9]+/', '_', $form['title']) . $exportSuffix . '"');
 
     $output = fopen('php://output', 'w');
 
     // Dynamic headers based on Schema + default ones.
     // "Applicant name" comes from the applications table (the name given when the email was verified),
     // so it is present even on forms that no longer have a name question of their own.
-    $headers = ['Tracking ID', 'Applicant name', 'Status', 'Date Submitted'];
+    $headers = ['Tracking ID', 'Applicant name', 'Email', 'Status', 'Date Submitted'];
     $fields = [];
     foreach (FormModel::schemaFields($form['schema']) as $f) {
         $headers[] = $f['label'] ?? $f['name'];
@@ -285,6 +296,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'export') {
         $row = [
             $app['tracking_id'] ?? 'N/A',
             $app['applicant_name'] ?? '',
+            $app['email'] ?? '',
             $app['status'],
             date('Y-m-d H:i', strtotime($app['created_at']))
         ];
@@ -395,6 +407,7 @@ engage_header([
         <?php if (!$isMembershipForm): ?>
             <a href="/admin/application-review?form=<?= urlencode($form['form_type']) ?>" class="btn-ghost">Application review</a>
             <a href="?id=<?= $fid ?>&action=export" class="btn-ghost">Export CSV</a>
+            <a href="?id=<?= $fid ?>&action=export&status=Accepted" class="btn-ghost" title="Roster of accepted applicants, with email addresses">Export accepted</a>
         <?php endif; ?>
         <?php if ($canEditSchema): ?>
             <a href="/admin/builder?edit=<?= $fid ?>" class="btn-ghost">Edit schema</a>
