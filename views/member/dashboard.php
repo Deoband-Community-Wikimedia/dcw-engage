@@ -30,6 +30,8 @@ require_once __DIR__ . '/../../includes/points_ui.php';
  *
  * One Member ID can cover several memberships (the DCW Generic Community plus any clubs).
  * The identity is shown once, with the greeting; each membership is a slim row under it.
+ * An active, non-struck-off membership also gets a "WhatsApp group" button when its chapter has a
+ * group link (MemberModel::whatsappLinkFor()). Expired members lose it until they renew.
  *
  * Certificates: only the latest few are shown here. The full list, with search and paging,
  * is /member/certificates.
@@ -143,12 +145,17 @@ $memberships = [];
 try { $memberships = (new MemberModel())->membershipsFor((string) $member['member_id']); } catch (Throwable $e) { app_log_ignored('dashboard.php:133', $e); /* use the session row */ }
 if (!$memberships) $memberships = [$member];
 
+// A struck-off member loses the WhatsApp group link (same rule as redeeming goodies).
+$dashStruck = false;
+try { $dashStruck = (new MemberStrikeModel())->isStruck((string) $member['member_id']); } catch (Throwable $e) { app_log_ignored('dashboard.php:wa-strike', $e); }
+
 $strips = [];
 $memberActive = false;
 foreach ($memberships as $m) {
     $state = dash_member_state($m, $utc, $ist);
     $key = trim((string) ($m['chapter'] ?? ''));
     $state['name'] = MemberModel::CHAPTER_NAMES[$key] ?? $key;
+    $state['whatsapp'] = ($state['active'] && !$dashStruck) ? MemberModel::whatsappLinkFor($key) : null;
     $strips[] = $state;
     if ($state['active']) $memberActive = true;
 }
@@ -169,8 +176,7 @@ if ($pointsBalance !== null) {
     try {
         $pm  = new PointsModel();
         $mid = (string) $member['member_id'];
-        $gdCan = true;
-        try { if ((new MemberStrikeModel())->isStruck($mid)) $gdCan = false; } catch (Throwable $e) { app_log_ignored('dashboard.php:gd-strike', $e); }
+        $gdCan = !$dashStruck;
         $gd = [
             'goal'    => PointsModel::nextGoal($pm->goodies(true), $pointsBalance, $gdCan),
             'recent'  => array_slice($pm->ledgerDetailed($mid, 50), 0, 3),
@@ -405,6 +411,7 @@ cert_rows_css();   // icons, buttons and certificate rows shared with /member/ce
                     <span class="st"><?= htmlspecialchars($s['label']) ?></span>
                     <span class="v"><?= htmlspecialchars($s['line']) ?></span>
                     <?php if ($s['renew']): ?><a class="d-btn line" href="/membership">Renew</a><?php endif; ?>
+                    <?php if (!empty($s['whatsapp'])): ?><a class="d-btn line" href="<?= htmlspecialchars($s['whatsapp']) ?>" target="_blank" rel="noopener noreferrer">WhatsApp group</a><?php endif; ?>
                 </li>
             <?php endforeach; ?>
         </ul>

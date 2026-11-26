@@ -49,5 +49,21 @@ return [
         'field_encryption_key'    => 'replace-with-a-long-random-string',
         'otp_secret'              => 'replace-with-a-long-random-string',
         'feedback_retention_months' => 12
+    ],
+ 
+    'card' => [
+       'signer_name'    => 'XYZ',
+       'signer_title'   => 'Designation',
+       'signature_file' => 'svg file path',
+   ],
+    // Public WhatsApp group invite link per chapter, shared with new members in their approval email
+    // and shown on their dashboard. Joining is optional: members are never added automatically.
+    // Leave a value as '' to send no link for that chapter. A value must start with
+    // https://chat.whatsapp.com/ or it is ignored (and a warning is logged).
+    'whatsapp' => [
+        'generic'       => '',   // DCW Generic Community
+        'amu'           => '',   // Wiki Club AMU
+        'jamia'         => '',   // Wiki Club Jamia
+        'photographers' => '',   // DCW Photographers Club
     ]
 ];

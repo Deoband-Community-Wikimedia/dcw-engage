@@ -20,6 +20,10 @@
 // The approval email also tells the member what they can do in DCW Engage (dashboard, profile,
 // membership card, support): see dashboardBlock().
 //
+// WhatsApp: a new member's approval email also carries the chapter's public WhatsApp group invite
+// link, when one is set in config.php ('whatsapp' block, read by MemberModel::whatsappLinkFor()).
+// Joining is optional and nobody is added automatically. Pure renewals do not get it again.
+//
 // "Forgot your Member ID?": sendMemberIdReminder() emails the ID to the address on file.
 //
 // Join-form verification: sendExistingAccount() carries the one-time verification CODE (OTP),
@@ -122,6 +126,27 @@ class MembershipMailer {
     }
 
     /**
+     * Optional "Join our WhatsApp group" block for the approval email. Returns [html, text];
+     * both are empty when the chapter has no valid invite link in config.php.
+     * Joining is the member's choice: the wording says nobody is added automatically.
+     */
+    private static function whatsappBlock($chapter) {
+        $url = MemberModel::whatsappLinkFor($chapter);
+        if ($url === null) return ['', ''];
+        $org     = self::org($chapter);
+        $safe    = htmlspecialchars($url, ENT_QUOTES, 'UTF-8');
+        $safeOrg = htmlspecialchars($org, ENT_QUOTES, 'UTF-8');
+        $html = "<h2 style='font-size:18px; margin:28px 0 8px; color:#106b9a;'>Join our WhatsApp group</h2>"
+              . "<p>Members of <strong>$safeOrg</strong> connect and receive updates on our WhatsApp group. Joining is completely optional, and you will not be added automatically. If you wish to join, please click the button below.</p>"
+              . "<div class='btn-wrapper'><a href='$safe' class='btn'>Join the WhatsApp group</a></div>"
+              . "<p style='font-size:14px;'>If the button does not work, kindly copy and paste the link below into your browser:<br>"
+              . "<a href='$safe' style='color:#106b9a; word-break:break-all;'>$safe</a></p>"
+              . "<p style='font-size:14px; color:#64748b;'>This invite link is strictly for members. Kindly do not share it outside.</p>";
+        $text = "\n\nJOIN OUR WHATSAPP GROUP\nMembers of $org connect and receive updates on our WhatsApp group. Joining is completely optional, and you will not be added automatically. If you wish to join, please use the link below:\n$url\n\nThis invite link is strictly for members. Kindly do not share it outside.";
+        return [$html, $text];
+    }
+
+    /**
      * Decision for the applicant. $decision: 'approved' | 'rejected'.
      * Approved: $memberId and $detail (expiry, 'Y-m-d H:i:s') are shown; only the day is displayed.
      * Rejected: $detail is the reason the coordinator wrote.
@@ -184,6 +209,10 @@ class MembershipMailer {
             // What the member can do once signed in (dashboard, profile, membership card, support).
             [$dashHtml, $dashText] = self::dashboardBlock();
 
+            // WhatsApp group invite: new members only. A pure renewal already received it when they
+            // joined; a club joined through the renewal form arrives here with $renewal = false.
+            [$waHtml, $waText] = $renewal ? ['', ''] : self::whatsappBlock($chapter);
+
             $inner = "
                 <p>Hello <strong>$n</strong>,</p>
                 <p>" . sprintf($thanks, "<strong>$safeOrg</strong>") . ". $good</p>
@@ -193,10 +222,11 @@ class MembershipMailer {
                 <p>$keep</p>
                 " . ($passwordToken ? "<p style='background:#fffbeb; border:1px solid #fcd34d; border-radius:6px; padding:12px 16px;'><strong>Important:</strong> Please set your password using the section below to finish activating your account.</p>" : '') . "
                 $pwHtml
+                $waHtml
                 $dashHtml
                 " . self::signHtml($chapter);
             $alt = "Hello $name,\n\n" . sprintf($thanks, $org) . ". $good\n\nMember ID: $memberId"
-                 . ($until ? "\nValid until: $until" : '') . "\n\n$keep" . ($passwordToken ? "\n\nIMPORTANT: Please set your password using the section below to finish activating your account." : '') . $pwText . $dashText . "\n\n" . self::signText($chapter);
+                 . ($until ? "\nValid until: $until" : '') . "\n\n$keep" . ($passwordToken ? "\n\nIMPORTANT: Please set your password using the section below to finish activating your account." : '') . $pwText . $waText . $dashText . "\n\n" . self::signText($chapter);
         } else {
             $subject = $renewal
                 ? "Update regarding your $org membership renewal"
