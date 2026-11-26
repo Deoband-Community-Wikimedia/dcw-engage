@@ -125,6 +125,32 @@ class MemberModel {
         return $chapter === null || $chapter === 'generic';
     }
 
+    /**
+     * Public WhatsApp group invite link for a chapter, from config.php ('whatsapp' block), or null.
+     * Null when the chapter is unknown, nothing is set, or the value is not a chat.whatsapp.com link
+     * (a typo must never put an arbitrary URL in an official email; a warning is logged instead).
+     * This is the only place that knows where the links live.
+     */
+    public static function whatsappLinkFor(?string $chapter): ?string {
+        static $links = null;
+        if ($links === null) {
+            $links = [];
+            $file = __DIR__ . '/../includes/config.php';
+            if (is_file($file)) {
+                $config = require $file;
+                if (is_array($config['whatsapp'] ?? null)) $links = $config['whatsapp'];
+            }
+        }
+        if ($chapter === null || !in_array($chapter, self::CHAPTERS, true)) return null;
+        $url = trim((string) ($links[$chapter] ?? ''));
+        if ($url === '') return null;
+        if (!preg_match('#^https://chat\.whatsapp\.com/[A-Za-z0-9]+/?(\?[A-Za-z0-9=&%._-]*)?$#', $url)) {
+            if (function_exists('app_log')) app_log("WhatsApp link for chapter '$chapter' in config.php is not a chat.whatsapp.com invite link; ignored.");
+            return null;
+        }
+        return $url;
+    }
+
     /** Chapter key hinted at by a member ID's first letter ('A48213977' -> 'amu'), or null if it doesn't fit the format. */
     public static function chapterFromMemberId(string $memberId): ?string {
         if (!preg_match('/^([A-Z])\d{' . self::MEMBER_ID_DIGITS . '}$/', $memberId, $m)) return null;
