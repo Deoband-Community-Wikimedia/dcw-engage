@@ -28,12 +28,15 @@ require_once __DIR__ . '/../includes/crypto.php';
  * applicant; staff-only remarks live in internal_notes (InternalNoteModel).
  *
  * Send-back-as-draft: a reviewer may return a claim with a question
- * (requestInfo(): Submitted/Under Review -> Info Requested). On /track the
- * applicant then sees the question plus their own editable claim
+ * (requestInfo(): Submitted/Under Review -> Info Requested). The applicant
+ * then sees the question plus their own editable claim
  * (getDraftForApplicant()), corrects it, adds a note and resubmits in one
- * step (resubmitDraft(): Info Requested -> Submitted). Payment details,
- * expense categories and receipt files are never shown or changed from
- * there. While Info Requested, a claim can only be rejected or discarded;
+ * step (resubmitDraft(): Info Requested -> Submitted). The applicant may
+ * change the event name/date and, for the expenses, the category,
+ * description, amount and receipt, and may add or remove expenses.
+ * Payment details are never shown or changed from there, and receipt
+ * PATHS are never handed to the applicant (only whether a receipt is on
+ * file). While Info Requested, a claim can only be rejected or discarded;
  * it cannot be approved until it comes back. If the applicant does not
  * reply within INFO_EXPIRY_DAYS days, autoCloseStaleInfoRequests() (run
  * daily by bin/expire_info_requests.php) closes it as unsuccessful.
@@ -63,8 +66,11 @@ class ReimbursementModel {
     public const MIN_MESSAGE_LENGTH = 5;
     public const MAX_MESSAGE_LENGTH = 1000;
 
-    /** Cap for an expense description edited from /track. */
+    /** Cap for an expense description edited from /member/request. */
     public const MAX_ITEM_DESCRIPTION_LENGTH = 500;
+
+    /** Most expense lines one claim can have when it is edited and resubmitted. */
+    public const MAX_ITEMS = 20;
 
     /** Longest reason a reviewer or finance may give for changing an amount. */
     public const MAX_AMOUNT_NOTE_LENGTH = 500;
@@ -798,10 +804,12 @@ class ReimbursementModel {
     }
 
     /**
-     * The applicant's own editable claim, for the draft form on /track. Only
+     * The applicant's own editable claim, for the draft form on /member/request. Only
      * returned while 'Info Requested' and the tracking ID + email pair
-     * matches. Event name/date and each expense's category, description and
-     * amount. No payment method, UPI/bank fields or receipt paths.
+     * matches. Event name/date and each expense's category, description,
+     * amount, and whether a receipt is on file (has_receipt). The receipt
+     * PATH is never returned, and neither are the payment method or any
+     * UPI/bank fields.
      */
     public function getDraftForApplicant($trackingId, $email) {
         $stmt = $this->db->prepare(
@@ -816,15 +824,22 @@ class ReimbursementModel {
         }
 
         $items = $this->db->prepare(
-            "SELECT id, category, description, amount_paise
+            "SELECT id, category, description, amount_paise,
+                    (receipt_path IS NOT NULL AND receipt_path <> '') AS has_receipt
              FROM reimbursement_line_items WHERE request_id = :rid ORDER BY id ASC"
         );
         $items->execute(['rid' => (int) $req['id']]);
 
+        $rows = $items->fetchAll();
+        foreach ($rows as &$row) {
+            $row['has_receipt'] = (bool) $row['has_receipt'];
+        }
+        unset($row);
+
         return [
             'event_name' => $req['event_name'],
             'event_date' => $req['event_date'],
-            'items'      => $items->fetchAll(),
+            'items'      => $rows,
         ];
     }
 
@@ -855,23 +870,43 @@ class ReimbursementModel {
     }
 
     /**
-     * Applicant corrects the claim and answers the reviewer, via /track.
-     * Saves the event name/date and each expense's description and amount,
-     * recomputes the total HERE, stores the note (with a line listing what
-     * changed, visible to the reviewer) and moves Info Requested -> Submitted,
-     * all in one transaction. Returns false if the pair doesn't match or the
-     * request is no longer waiting on the applicant.
+     * Applicant corrects the claim and answers the reviewer, via /member/request.
+     * Saves the event name/date and the full list of expenses, recomputes the
+     * total HERE, stores the note (with a line listing what changed, visible to
+     * the reviewer) and moves Info Requested -> Submitted, all in one
+     * transaction.
      *
-     * Not editable here: payment method/details, expense categories, receipt
-     * files and the number of expenses. If the new total would exceed the UPI
-     * cap on a UPI claim, it is refused (the payment method can't be changed
-     * from this page).
+     * The applicant may change each expense's category, description, amount and
+     * receipt, add new expenses, and drop existing ones. Not editable here:
+     * payment method/details. If the new total would exceed the UPI cap on a
+     * UPI claim, it is refused (the payment method can't be changed from this
+     * page).
      *
-     * @param array $items id => ['description' => string, 'amount_paise' => int]
-     *                     (every existing expense must be present)
+     * $items is the complete list of expenses the claim should have after
+     * this call, in display order. Each entry:
+     *   'id'             int     an existing expense's id, or 0 for a new one
+     *   'category'       string
+     *   'description'    string
+     *   'amount_paise'   int
+     *   'receipt_path'   string  path of a NEWLY uploaded receipt, or '' to leave the receipt alone
+     *   'remove_receipt' bool    drop the current receipt (ignored when a new one is given)
+     * An existing expense that is not listed is deleted. Ids that do not belong
+     * to this request are refused.
+     *
+     * $allowedCategories: the categories currently offered by the form. A new
+     * or changed category must be one of them; an unchanged old category is
+     * always kept as it was. Pass [] to skip the check.
+     *
+     * Files: this method only stores paths. The caller deletes its freshly
+     * uploaded files when this returns false or throws, and deletes the files
+     * listed in the returned 'obsolete_receipts' (receipts that were replaced,
+     * removed, or belonged to a deleted expense) after a successful call.
+     *
+     * @return array|false ['obsolete_receipts' => string[]] on success;
+     *                     false if the pair doesn't match or the request is no longer waiting on the applicant
      * @throws \InvalidArgumentException on any validation failure
      */
-    public function resubmitDraft($trackingId, $email, $eventName, $eventDate, array $items, $note) {
+    public function resubmitDraft($trackingId, $email, $eventName, $eventDate, array $items, $note, array $allowedCategories = []) {
         $note = $this->cleanMessage($note);
 
         $eventName = self::normalizeEventName($eventName);
@@ -880,6 +915,12 @@ class ReimbursementModel {
         }
         if (mb_strlen($eventName) > 255) {
             throw new \InvalidArgumentException('Event name is too long (255 characters max).');
+        }
+        if (count($items) === 0) {
+            throw new \InvalidArgumentException('At least one expense is required.');
+        }
+        if (count($items) > self::MAX_ITEMS) {
+            throw new \InvalidArgumentException('A claim can have at most ' . self::MAX_ITEMS . ' expenses.');
         }
 
         $this->db->beginTransaction();
@@ -913,22 +954,53 @@ class ReimbursementModel {
             }
 
             $cur = $this->db->prepare(
-                "SELECT id, description, amount_paise FROM reimbursement_line_items
+                "SELECT id, category, description, amount_paise, receipt_path
+                 FROM reimbursement_line_items
                  WHERE request_id = :rid ORDER BY id ASC FOR UPDATE"
             );
             $cur->execute(['rid' => (int) $req['id']]);
-            $existing = $cur->fetchAll();
+            $existing = [];
+            foreach ($cur->fetchAll() as $row) {
+                $existing[(int) $row['id']] = $row;
+            }
 
-            $changes = [];
+            $changes  = [];
             if ($eventName !== $req['event_name']) { $changes[] = 'Event name'; }
             if ($eventDate !== $req['event_date']) { $changes[] = 'Event date'; }
 
-            $total = 0;
-            $updates = [];
-            foreach ($existing as $n => $row) {
-                $in = $items[(int) $row['id']] ?? null;
-                $desc = trim((string) ($in['description'] ?? ''));
-                $amount = (int) ($in['amount_paise'] ?? 0);
+            $total    = 0;
+            $seen     = [];
+            $updates  = [];   // existing expenses to rewrite
+            $inserts  = [];   // new expenses
+            $obsolete = [];   // receipt files nobody points at after this
+
+            $position = 0;
+            foreach ($items as $in) {
+                $position++;
+                $label = 'Expense ' . $position;
+                $id    = (int) ($in['id'] ?? 0);
+                $old   = null;
+                if ($id > 0) {
+                    if (!isset($existing[$id]) || isset($seen[$id])) {
+                        throw new \InvalidArgumentException('Something is wrong with one of the expenses. Please reload the page and try again.');
+                    }
+                    $seen[$id] = true;
+                    $old = $existing[$id];
+                }
+
+                $category = trim((string) ($in['category'] ?? ''));
+                $desc     = trim((string) ($in['description'] ?? ''));
+                $amount   = (int) ($in['amount_paise'] ?? 0);
+                $newPath  = trim((string) ($in['receipt_path'] ?? ''));
+                $remove   = !empty($in['remove_receipt']);
+
+                if ($category === '') {
+                    throw new \InvalidArgumentException("$label needs a category.");
+                }
+                $categoryKept = $old !== null && $category === $old['category'];
+                if ($allowedCategories && !$categoryKept && !in_array($category, $allowedCategories, true)) {
+                    throw new \InvalidArgumentException("Please choose a valid category for $label.");
+                }
                 if ($desc === '') {
                     throw new \InvalidArgumentException('Every expense needs a description.');
                 }
@@ -938,10 +1010,39 @@ class ReimbursementModel {
                 if ($amount <= 0) {
                     throw new \InvalidArgumentException('Every expense amount must be greater than zero.');
                 }
-                if ($desc !== $row['description']) { $changes[] = 'Expense ' . ($n + 1) . ' description'; }
-                if ($amount !== (int) $row['amount_paise']) { $changes[] = 'Expense ' . ($n + 1) . ' amount'; }
+
+                $oldReceipt = $old !== null ? (string) $old['receipt_path'] : '';
+                $receipt    = $oldReceipt;
+                if ($newPath !== '') {
+                    $receipt = $newPath;
+                    if ($oldReceipt !== '') { $obsolete[] = $oldReceipt; }
+                    $changes[] = $label . ($oldReceipt !== '' ? ' receipt replaced' : ' receipt added');
+                } elseif ($remove && $oldReceipt !== '') {
+                    $receipt = '';
+                    $obsolete[] = $oldReceipt;
+                    $changes[] = $label . ' receipt removed';
+                }
+
+                if ($old === null) {
+                    $changes[] = $label . ' added';
+                    $inserts[] = [$category, $desc, $amount, $receipt];
+                } else {
+                    if ($category !== $old['category'])           { $changes[] = $label . ' category'; }
+                    if ($desc !== $old['description'])            { $changes[] = $label . ' description'; }
+                    if ($amount !== (int) $old['amount_paise'])   { $changes[] = $label . ' amount'; }
+                    $updates[] = [$id, $category, $desc, $amount, $receipt];
+                }
                 $total += $amount;
-                $updates[] = [(int) $row['id'], $desc, $amount];
+            }
+
+            // Existing expenses the applicant dropped.
+            $deletes = [];
+            foreach ($existing as $id => $row) {
+                if (!isset($seen[$id])) {
+                    $deletes[] = $id;
+                    $changes[] = 'An expense was removed';
+                    if ((string) $row['receipt_path'] !== '') { $obsolete[] = (string) $row['receipt_path']; }
+                }
             }
 
             if ($req['payment_method'] === 'upi' && $total > self::UPI_MAX_PAISE) {
@@ -956,11 +1057,27 @@ class ReimbursementModel {
                            . ' → ₹' . number_format($total / 100, 2) . ')';
             }
 
+            if ($deletes) {
+                $del = $this->db->prepare("DELETE FROM reimbursement_line_items WHERE id = :id AND request_id = :rid");
+                foreach ($deletes as $itemId) {
+                    $del->execute(['id' => $itemId, 'rid' => (int) $req['id']]);
+                }
+            }
             $upItem = $this->db->prepare(
-                "UPDATE reimbursement_line_items SET description = :d, amount_paise = :a WHERE id = :id AND request_id = :rid"
+                "UPDATE reimbursement_line_items
+                 SET category = :c, description = :d, amount_paise = :a, receipt_path = :r
+                 WHERE id = :id AND request_id = :rid"
             );
-            foreach ($updates as [$itemId, $desc, $amount]) {
-                $upItem->execute(['d' => $desc, 'a' => $amount, 'id' => $itemId, 'rid' => (int) $req['id']]);
+            foreach ($updates as [$itemId, $category, $desc, $amount, $receipt]) {
+                $upItem->execute(['c' => $category, 'd' => $desc, 'a' => $amount, 'r' => $receipt,
+                                  'id' => $itemId, 'rid' => (int) $req['id']]);
+            }
+            $insItem = $this->db->prepare(
+                "INSERT INTO reimbursement_line_items (request_id, category, description, amount_paise, receipt_path)
+                 VALUES (:rid, :c, :d, :a, :r)"
+            );
+            foreach ($inserts as [$category, $desc, $amount, $receipt]) {
+                $insItem->execute(['rid' => (int) $req['id'], 'c' => $category, 'd' => $desc, 'a' => $amount, 'r' => $receipt]);
             }
 
             $upReq = $this->db->prepare(
@@ -980,7 +1097,7 @@ class ReimbursementModel {
             $this->insertMessage($req['id'], 'applicant', null, $body);
 
             $this->db->commit();
-            return true;
+            return ['obsolete_receipts' => array_values(array_unique($obsolete))];
         } catch (\Throwable $e) {
             if ($this->db->inTransaction()) {
                 $this->db->rollBack();
