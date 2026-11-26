@@ -3039,3 +3039,6 @@ body.pg-home .st-sub {
     body.pg-home .section-title, body.pg-home .gallery h2, body.pg-home .follow h2 { margin: 40px 0 18px; }
     body.pg-home .st-sub { font-size: 14.5px; }
 }
+
+/* Conditional sections (#241): hidden until the controlling dropdown has a matching answer. */
+.cond-section[hidden] { display: none; }

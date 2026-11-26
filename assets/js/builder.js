@@ -252,6 +252,8 @@ function createSection(sectionData = {}) {
     const section = document.createElement('section');
     section.className = 'form-section-card';
     section.dataset.sectionId = sectionData.id || ('section_' + sectionCounter);
+    // A saved "show only when" rule names a question by its saved key; it is matched to that question's card in refreshConditions().
+    section._cond = {cardId: '', values: [], pending: sectionData.show_if || null};
 
     section.innerHTML = `
         <div class="section-metadata">
@@ -271,6 +273,13 @@ function createSection(sectionData = {}) {
 
             <label for="section_description_${sectionCounter}">Section introduction (optional)</label>
             <textarea id="section_description_${sectionCounter}" class="section-description" rows="2" placeholder="Briefly explain this section to applicants">${String(sectionData.description || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</textarea>
+
+            <div class="section-condition">
+                <label>Show this section only when (optional)</label>
+                <select class="cond-field"><option value="">Always show this section</option></select>
+                <div class="cond-values"></div>
+                <span class="hint cond-hint">Pick a dropdown question from another section, then tick the answers that should reveal this section. Applicants who choose anything else never see it, and its questions are not required.</span>
+            </div>
         </div>
 
         <div class="section-fields"></div>
@@ -404,6 +413,124 @@ if (formTitleInput) {
     });
 }
 
+// --- Conditional sections (#241) ---
+// Each section can be limited to applicants who gave certain answers to a dropdown question that
+// lives in another, always-shown section. State is kept on the section element (section._cond);
+// buildSchemaFromForm() turns it into schema section.show_if.
+function plainLabel(text) {
+    return String(text || '').replace(/'{2,}/g, '').replace(/\[(https?:\/\/\S+)\s+([^\]]*)\]/g, '$2').trim();
+}
+
+function dropdownOptions(card) {
+    return card.querySelector('.field-options').value.split(',').map(o => o.trim()).filter(o => o.length > 0);
+}
+
+function refreshConditions() {
+    const sections = Array.from(document.querySelectorAll('.form-section-card'));
+    const kindSelect = document.getElementById('form_kind');
+    const feedback = kindSelect && kindSelect.value === 'feedback';
+
+    // A saved rule names its question by key: find that question's card now that every card exists.
+    sections.forEach(section => {
+        const cond = section._cond;
+        if (cond && cond.pending) {
+            const card = Array.from(document.querySelectorAll('.field-card'))
+                .find(c => c.dataset.fieldName === cond.pending.field);
+            if (card) {
+                cond.cardId = card.id;
+                cond.values = (cond.pending.values || []).slice();
+            }
+            cond.pending = null;
+        }
+    });
+
+    sections.forEach(section => {
+        const cond = section._cond;
+        const box = section.querySelector('.section-condition');
+        const select = section.querySelector('.cond-field');
+        const valuesBox = section.querySelector('.cond-values');
+        if (!cond || !box) return;
+        box.style.display = feedback ? 'none' : '';
+
+        // Dropdown questions in OTHER sections that are always shown (no chains of conditions).
+        const candidates = [];
+        sections.forEach(other => {
+            if (other === section || (other._cond && other._cond.cardId)) return;
+            other.querySelectorAll('.field-card').forEach(card => {
+                if (card.querySelector('.field-type').value === 'select') candidates.push(card);
+            });
+        });
+
+        if (cond.cardId && !candidates.some(c => c.id === cond.cardId)) {
+            cond.cardId = '';
+            cond.values = [];
+        }
+
+        select.innerHTML = '';
+        const always = document.createElement('option');
+        always.value = '';
+        always.textContent = 'Always show this section';
+        select.appendChild(always);
+        candidates.forEach(card => {
+            const o = document.createElement('option');
+            o.value = card.id;
+            o.textContent = plainLabel(card.querySelector('.field-label').value) || '(untitled question)';
+            select.appendChild(o);
+        });
+        select.value = cond.cardId;
+
+        valuesBox.innerHTML = '';
+        const controller = cond.cardId ? document.getElementById(cond.cardId) : null;
+        if (controller) {
+            const options = dropdownOptions(controller);
+            cond.values = cond.values.filter(v => options.includes(v));
+            const lead = document.createElement('div');
+            lead.className = 'cond-lead';
+            lead.textContent = 'is one of:';
+            valuesBox.appendChild(lead);
+            options.forEach(opt => {
+                const label = document.createElement('label');
+                label.className = 'cond-option';
+                const box2 = document.createElement('input');
+                box2.type = 'checkbox';
+                box2.checked = cond.values.includes(opt);
+                box2.addEventListener('change', () => {
+                    cond.values = box2.checked
+                        ? cond.values.concat([opt])
+                        : cond.values.filter(v => v !== opt);
+                });
+                label.appendChild(box2);
+                label.appendChild(document.createTextNode(' ' + opt));
+                valuesBox.appendChild(label);
+            });
+        }
+    });
+}
+
+sectionsContainer.addEventListener('change', function (e) {
+    const select = e.target.closest('.cond-field');
+    if (select) {
+        const section = select.closest('.form-section-card');
+        section._cond.cardId = select.value;
+        section._cond.values = [];
+        refreshConditions();
+        return;
+    }
+    if (e.target.closest('.section-condition')) return;
+    refreshConditions();
+});
+sectionsContainer.addEventListener('input', function (e) {
+    if (e.target.closest('.section-condition')) return;
+    if (e.target.matches('.field-label, .field-options')) refreshConditions();
+});
+// Questions and sections added or removed also change what a rule can point at.
+new MutationObserver(function (records) {
+    if (records.some(r => !(r.target.closest && r.target.closest('.section-condition')))) refreshConditions();
+}).observe(sectionsContainer, {childList: true, subtree: true});
+const condKindSelect = document.getElementById('form_kind');
+if (condKindSelect) condKindSelect.addEventListener('change', refreshConditions);
+refreshConditions();
+
 // Reads the builder's current state (title/description/banner/fields) into
 // the same schema shape the backend stores — shared by the real save
 // (submit handler below) and the Preview button (see #47), so there's only
@@ -490,6 +617,20 @@ function buildSchemaFromForm() {
 
             schema.sections.push(sectionData);
         });
+
+        // "Show only when" rules, resolved after every question has its saved key (a new question only
+        // gets one while the schema is being built). The server checks them again before saving.
+        const kindSelect = document.getElementById('form_kind');
+        if (!kindSelect || kindSelect.value !== 'feedback') {
+            const sectionEls = document.querySelectorAll('.form-section-card');
+            schema.sections.forEach((sectionData, i) => {
+                const cond = sectionEls[i] && sectionEls[i]._cond;
+                const controller = cond && cond.cardId ? document.getElementById(cond.cardId) : null;
+                if (controller && controller.dataset.fieldName && cond.values.length) {
+                    sectionData.show_if = {field: controller.dataset.fieldName, values: cond.values.slice()};
+                }
+            });
+        }
     } else {
         // A flat schema deliberately has no "sections" key.
         // The existing FormModel handles this format.
