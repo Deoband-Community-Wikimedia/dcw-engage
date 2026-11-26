@@ -652,6 +652,14 @@ engage_header([
                     <?php else: ?>
                         <p class="idline"><strong>On approval:</strong> a new Member ID is generated.</p>
                     <?php endif; ?>
+                    <?php
+                    // A pure renewal (already holds this chapter) gets no invite; everyone else does.
+                    $pureRenewal = MemberModel::isRenewal($app) && $chapterKey !== null && isset($held[strtolower((string) $app['email']) . '|' . $chapterKey]);
+                    if (!$pureRenewal && !$outcome['error']): ?>
+                        <p class="idline"><strong>WhatsApp:</strong> <?= MemberModel::whatsappLinkFor($chapterKey) !== null
+                            ? 'the group invite for ' . $h($chapterLabel($app)) . ' will be included in the email.'
+                            : 'no valid invite link is set for ' . $h($chapterLabel($app)) . ', so none will be sent.' ?></p>
+                    <?php endif; ?>
                 <?php endif; ?>
             </div>
 
