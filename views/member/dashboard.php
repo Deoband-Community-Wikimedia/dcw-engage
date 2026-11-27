@@ -56,6 +56,10 @@ require_once __DIR__ . '/../../includes/points_ui.php';
  * tracking lookup: applicants are never told it was discarded (see dash_app_status() in
  * includes/member_requests.php).
  *
+ * "My requests" (internet support and reimbursement) shows only open requests. Finished ones
+ * (Closed, Paid, Rejected: see DASH_REQ_DONE) fold away into a collapsed "Archive" inside the same
+ * panel. A request that still needs the member is never archived.
+ *
  * Profile: the identity card links to /member/profile and shows the Wikimedia username status. When
  * internet support is open, a member without a verified username is also nudged from "Requires your
  * attention". Everything else about who the member is lives on the profile page, not here.
@@ -72,6 +76,7 @@ $member = MemberSession::current();
 
 const DASH_CERT_PREVIEW = 5;   // how many certificates the dashboard shows
 const DASH_APP_PREVIEW  = 8;   // how many applications the dashboard shows
+const DASH_REQ_DONE     = ['Closed', 'Paid', 'Rejected'];   // finished requests, moved to the archive (exact status strings, see dash_status())
 
 $email        = strtolower((string) ($member['email'] ?? ''));
 $fullName     = trim((string) ($member['full_name'] ?? ''));
@@ -217,9 +222,10 @@ try {
 // ---- The member's own requests -----------------------------------------------------------------
 // Needs InternetSupportModel::listForMember() and ReimbursementModel::listForMember().
 // dash_status() / dash_date() / dash_money() live in includes/member_requests.php (shared with /member/request).
-// Applicants never see internal states: "Recharge Failed" and "Payment Failed" show as "Under review".
+// Applicants never see internal states: "Recharge Failed" and "Payment Failed" show as "In review".
 //
-// Each row carries three figures:
+// Each row carries these figures:
+//   status   the raw status string (used to decide whether the request is finished)
 //   amount   what the member requested
 //   approved what the reviewer approved (same as amount unless modified)
 //   paid     what finance actually disbursed / paid, or null until funds are transferred
@@ -228,6 +234,7 @@ try {
     foreach ((new InternetSupportModel())->listForMember($email) as $r) {
         [$label, $tone, $act] = dash_status('internet', (string) $r['status']);
         $requests[] = ['type' => 'Internet support', 'icon' => 'wifi', 'title' => $r['package_name'],
+            'status' => (string) $r['status'],
             'amount' => (int) $r['package_price_paise'],
             'approved' => (int) $r['approved_paise'],
             'paid' => $r['paid_paise'] !== null ? (int) $r['paid_paise'] : null,
@@ -240,6 +247,7 @@ try {
     foreach ((new ReimbursementModel())->listForMember($email) as $r) {
         [$label, $tone, $act] = dash_status('reimbursement', (string) $r['status']);
         $requests[] = ['type' => 'Reimbursement', 'icon' => 'card', 'title' => $r['event_name'],
+            'status' => (string) $r['status'],
             'amount' => (int) $r['total_amount_paise'],
             'approved' => (int) $r['approved_paise'],
             'paid' => $r['paid_paise'] !== null ? (int) $r['paid_paise'] : null,
@@ -249,9 +257,17 @@ try {
     }
 } catch (Throwable $e) { app_log_ignored('dashboard.php:209', $e); }
 usort($requests, fn($a, $b) => strcmp((string) $b['created'], (string) $a['created']));
-$totalRequests = count($requests);
-$requests = array_slice($requests, 0, 8);
 $needsAction = array_values(array_filter($requests, fn($r) => $r['act']));
+
+// Finished requests (Closed, Paid, Rejected) go to the archive. Anything that still needs the
+// member is never archived. Completion depends on the status alone: for internet support the money
+// is recharged before the receipt is checked, so "paid" does not mean "finished".
+$isDone = fn($r) => !$r['act'] && in_array($r['status'], DASH_REQ_DONE, true);
+$archivedRequests = array_values(array_filter($requests, $isDone));
+$requests         = array_values(array_filter($requests, fn($r) => !$isDone($r)));
+$totalRequests    = count($requests);          // open ones only
+$totalArchived    = count($archivedRequests);
+$requests         = array_slice($requests, 0, 8);
 
 // ---- The member's applications (any status): drafts that can be resumed first, then newest first ----
 // Needs ApplicationModel::listForMember(). A draft is "resumable" only when it is in $drafts (its form is
@@ -369,6 +385,34 @@ function dash_tile(array $icons, string $tone, string $icon, string $title, stri
         <?php if ($pill !== ''): ?><span class="pill"><?= htmlspecialchars($pill) ?></span>
         <?php else: ?><span class="arrow" aria-hidden="true">&rarr;</span><?php endif; ?>
     </<?= $tag ?>>
+    <?php
+}
+
+/** One request row, used for both the open list and the archive. */
+function dash_request_row(array $r, array $icons): void
+{
+    ?>
+    <div class="req<?= $r['act'] ? ' act' : '' ?>" style="--tone: <?= htmlspecialchars($r['tone']) ?>;">
+        <span class="tick"><svg viewBox="0 0 24 24" aria-hidden="true"><?= $icons[$r['icon']] ?></svg></span>
+        <div>
+            <h3><?= htmlspecialchars($r['title']) ?></h3>
+            <p class="meta">
+                <?= htmlspecialchars($r['type']) ?> &middot; Requested &#8377;<?= dash_money($r['amount']) ?>
+                <?php if ($r['paid'] === null && $r['approved'] !== $r['amount']): ?>
+                    &middot; Approved &#8377;<?= dash_money($r['approved']) ?>
+                <?php endif; ?>
+                <?php if ($r['paid'] !== null): ?>
+                    &middot; <strong><?= htmlspecialchars($r['paid_label']) ?> &#8377;<?= dash_money($r['paid']) ?></strong>
+                <?php endif; ?>
+                &middot; <?= htmlspecialchars(dash_date($r['created'])) ?>
+                &middot; <code><?= htmlspecialchars($r['tracking']) ?></code><button type="button" class="copy" data-copy="<?= htmlspecialchars($r['tracking']) ?>">Copy</button>
+            </p>
+        </div>
+        <div class="side">
+            <span class="pill"><?= htmlspecialchars($r['label']) ?></span>
+            <a href="<?= htmlspecialchars(member_request_url($r['tracking'])) ?>"><?= $r['act'] ? 'Take action' : 'View' ?> &rarr;</a>
+        </div>
+    </div>
     <?php
 }
 
@@ -608,42 +652,40 @@ cert_rows_css();   // icons, buttons and certificate rows shared with /member/ce
         <section class="panel" id="requests">
             <div class="panel-head">
                 <h2>My requests</h2>
-                <p>Open a request to reply to a reviewer or upload a receipt.</p>
+                <p>Open a request to reply to a reviewer or upload a receipt. Finished requests are kept in the archive.</p>
             </div>
-            <?php if (empty($requests)): ?>
+            <?php if (empty($requests) && $totalArchived === 0): ?>
                 <div class="d-empty">
                     <strong>No requests submitted yet</strong>
                     <p>Internet support and reimbursement requests submitted by you will be tracked here alongside their status updates.</p>
                     <a class="d-btn line" href="#support">View support options</a>
                 </div>
             <?php else: ?>
-                <div class="reqs">
-                    <?php foreach ($requests as $r): ?>
-                        <div class="req<?= $r['act'] ? ' act' : '' ?>" style="--tone: <?= htmlspecialchars($r['tone']) ?>;">
-                            <span class="tick"><svg viewBox="0 0 24 24" aria-hidden="true"><?= $icons[$r['icon']] ?></svg></span>
-                            <div>
-                                <h3><?= htmlspecialchars($r['title']) ?></h3>
-                                <p class="meta">
-                                    <?= htmlspecialchars($r['type']) ?> &middot; Requested &#8377;<?= dash_money($r['amount']) ?>
-                                    <?php if ($r['paid'] === null && $r['approved'] !== $r['amount']): ?>
-                                        &middot; Approved &#8377;<?= dash_money($r['approved']) ?>
-                                    <?php endif; ?>
-                                    <?php if ($r['paid'] !== null): ?>
-                                        &middot; <strong><?= htmlspecialchars($r['paid_label']) ?> &#8377;<?= dash_money($r['paid']) ?></strong>
-                                    <?php endif; ?>
-                                    &middot; <?= htmlspecialchars(dash_date($r['created'])) ?>
-                                    &middot; <code><?= htmlspecialchars($r['tracking']) ?></code><button type="button" class="copy" data-copy="<?= htmlspecialchars($r['tracking']) ?>">Copy</button>
-                                </p>
-                            </div>
-                            <div class="side">
-                                <span class="pill"><?= htmlspecialchars($r['label']) ?></span>
-                                <a href="<?= htmlspecialchars(member_request_url($r['tracking'])) ?>"><?= $r['act'] ? 'Take action' : 'View' ?> &rarr;</a>
-                            </div>
+                <?php if (empty($requests)): ?>
+                    <div class="d-empty">
+                        <strong>No open requests</strong>
+                        <p>Everything you have submitted is complete. Finished requests are in the archive below.</p>
+                        <a class="d-btn line" href="#support">View support options</a>
+                    </div>
+                <?php else: ?>
+                    <div class="reqs">
+                        <?php foreach ($requests as $r) dash_request_row($r, $icons); ?>
+                    </div>
+                    <?php if ($totalRequests > count($requests)): ?>
+                        <p class="d-more">Showing the latest <?= count($requests) ?> of <?= $totalRequests ?> open requests.</p>
+                    <?php endif; ?>
+                <?php endif; ?>
+
+                <?php if ($totalArchived > 0): ?>
+                    <details class="d-archive">
+                        <summary>Archive <span class="c-count"><?= $totalArchived ?></span></summary>
+                        <div class="reqs">
+                            <?php foreach (array_slice($archivedRequests, 0, 50) as $r) dash_request_row($r, $icons); ?>
                         </div>
-                    <?php endforeach; ?>
-                </div>
-                <?php if ($totalRequests > count($requests)): ?>
-                    <p class="d-more">Showing the latest <?= count($requests) ?> of <?= $totalRequests ?> requests.</p>
+                        <?php if ($totalArchived > 50): ?>
+                            <p class="d-more">Showing the latest 50 of <?= $totalArchived ?> archived requests.</p>
+                        <?php endif; ?>
+                    </details>
                 <?php endif; ?>
             <?php endif; ?>
         </section>
