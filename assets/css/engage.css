@@ -3039,3 +3039,11 @@ body.pg-home .st-sub {
     body.pg-home .section-title, body.pg-home .gallery h2, body.pg-home .follow h2 { margin: 40px 0 18px; }
     body.pg-home .st-sub { font-size: 14.5px; }
 }
+
+/* Dashboard: archive of finished requests inside "My requests" */
+.dash .d-archive { margin-top: 12px; border-top: 1px solid var(--line, #e5e7eb); padding-top: 8px; }
+.dash .d-archive > summary { cursor: pointer; font-weight: 600; color: var(--muted); padding: 6px 0; list-style: none; }
+.dash .d-archive > summary::-webkit-details-marker { display: none; }
+.dash .d-archive > summary::before { content: "▸ "; }
+.dash .d-archive[open] > summary::before { content: "▾ "; }
+.dash .d-archive .reqs { margin-top: 8px; opacity: .85; }
