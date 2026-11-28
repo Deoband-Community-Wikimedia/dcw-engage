@@ -102,7 +102,7 @@ class MembershipMailer {
     private static function dashboardLine($withUsernameTip = false, $afterSignIn = false) {
         $url  = CoreMail::appUrl() . '/member/dashboard';
         $safe = htmlspecialchars($url, ENT_QUOTES, 'UTF-8');
-        $has  = 'has your membership card, certificates, profile and other support options.';
+        $has  = 'has your membership card, certificates, and profile. It also offers other support options.';
         $tip  = 'Please add your Wikimedia username under';
 
         $html = $afterSignIn
