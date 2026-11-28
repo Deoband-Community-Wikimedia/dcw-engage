@@ -17,8 +17,8 @@
 // One email on approval: when a new member has no password yet, the "Set my password"
 // button is inside the confirmation email (see sendDecision's $passwordToken). A separate
 // password email is only sent for the "forgot password" flow (sendPasswordLink).
-// The approval email also tells the member what they can do in DCW Engage (dashboard, profile,
-// membership card, support): see dashboardBlock().
+// The approval email is deliberately short: confirmation, Member ID card, ONE button, a one-line
+// pointer to the DCW Engage dashboard (see dashboardLine()), and an optional WhatsApp line.
 //
 // WhatsApp: a new member's approval email also carries the chapter's public WhatsApp group invite
 // link, when one is set in config.php ('whatsapp' block, read by MemberModel::whatsappLinkFor()).
@@ -95,54 +95,42 @@ class MembershipMailer {
     }
 
     /**
-     * "What you can do in DCW Engage" block for the approval email: dashboard, profile,
-     * membership card and support. Returns [html, text].
+     * One-line pointer to the DCW Engage dashboard for the approval email. Returns [html, text].
+     * $withUsernameTip adds the "add your Wikimedia username" hint (used for brand-new members,
+     * who still have a profile to complete). $afterSignIn starts the sentence with "Once signed in".
      */
-    private static function dashboardBlock() {
-        $base  = CoreMail::appUrl();
-        $login = $base . '/member/login';
-        $safe  = htmlspecialchars($login, ENT_QUOTES, 'UTF-8');
-        // [title, path, description]. Each title links to its page (signed-out members are sent to sign in first).
-        $items = [
-            ['Dashboard', '/member/dashboard', 'Check your memberships along with their validity dates, certificates, requests, conversations, and any action items. You can also process your renewals directly from here.'],
-            ['My profile', '/member/profile', 'Update your Wikimedia username so the reviewers can verify it. This is required for internet support and will appear on your membership card once verified. You can also add a short bio and languages known.'],
-            ['Membership card', '/member/card', 'Download your membership card as a PDF to print or store on your mobile device. Anyone can scan the QR code to verify your active membership status. If misplaced, you can generate a replacement card from this page, which will automatically invalidate the older code.'],
-            ['Certificates', '/member/certificates', 'Access and download participation certificates issued for DCW events.'],
-            ['Support', '/member/dashboard#support', 'Raise requests for internet support or reimbursements when active, reach out to DCW Support, or report technical glitches.'],
-        ];
-        $html = "<h2 style='font-size:18px; margin:28px 0 8px; color:#106b9a;'>What you can do in DCW Engage</h2>"
-              . "<ul style='margin:0 0 12px; padding-left:20px; line-height:1.6;'>";
-        $text = "\n\nWHAT YOU CAN DO IN DCW ENGAGE\n";
-        foreach ($items as [$title, $path, $desc]) {
-            $url   = $base . $path;
-            $html .= "<li style='margin-bottom:8px;'><strong><a href='" . htmlspecialchars($url, ENT_QUOTES, 'UTF-8') . "' style='color:#106b9a;'>"
-                   . htmlspecialchars($title, ENT_QUOTES, 'UTF-8') . "</a>:</strong> "
-                   . htmlspecialchars($desc, ENT_QUOTES, 'UTF-8') . "</li>";
-            $text .= "- $title: $desc\n  $url\n";
+    private static function dashboardLine($withUsernameTip = false, $afterSignIn = false) {
+        $url  = CoreMail::appUrl() . '/member/dashboard';
+        $safe = htmlspecialchars($url, ENT_QUOTES, 'UTF-8');
+        $has  = 'has your membership card, certificates, profile and other support options.';
+        $tip  = 'Please add your Wikimedia username under';
+
+        $html = $afterSignIn
+            ? "<p>Once signed in, your <a href='$safe' style='color:#106b9a;'>DCW Engage dashboard</a> $has"
+            : "<p>Your <a href='$safe' style='color:#106b9a;'>DCW Engage dashboard</a> $has";
+        $text = ($afterSignIn ? "\n\nOnce signed in, your DCW Engage dashboard $has" : "\n\nYour DCW Engage dashboard $has");
+        if ($withUsernameTip) {
+            $html .= " $tip <em>My profile</em>, as it is required for internet support.";
+            $text .= " $tip My profile, as it is required for internet support.";
         }
-        $html .= "</ul><p>You can sign in at any time at <a href='$safe' style='color:#106b9a;'>$safe</a>.</p>";
-        $text .= "\nYou can sign in at any time at $login";
+        $html .= "</p>";
+        $text .= "\n$url";
         return [$html, $text];
     }
 
     /**
      * Optional "Join our WhatsApp group" block for the approval email. Returns [html, text];
      * both are empty when the chapter has no valid invite link in config.php.
-     * Joining is the member's choice: the wording says nobody is added automatically.
+     * Joining is the member's choice: the wording says it is optional.
      */
     private static function whatsappBlock($chapter) {
         $url = MemberModel::whatsappLinkFor($chapter);
         if ($url === null) return ['', ''];
-        $org     = self::org($chapter);
-        $safe    = htmlspecialchars($url, ENT_QUOTES, 'UTF-8');
-        $safeOrg = htmlspecialchars($org, ENT_QUOTES, 'UTF-8');
-        $html = "<h2 style='font-size:18px; margin:28px 0 8px; color:#106b9a;'>Join our WhatsApp group</h2>"
-              . "<p>Members of <strong>$safeOrg</strong> connect and receive updates on our WhatsApp group. Joining is completely optional, and you will not be added automatically. If you wish to join, please click the button below.</p>"
+        $safe = htmlspecialchars($url, ENT_QUOTES, 'UTF-8');
+        $html = "<p style='margin-top:24px;'><strong>Optional:</strong> connect with fellow members on WhatsApp.</p>"
               . "<div class='btn-wrapper'><a href='$safe' class='btn'>Join the WhatsApp group</a></div>"
-              . "<p style='font-size:14px;'>If the button does not work, kindly copy and paste the link below into your browser:<br>"
-              . "<a href='$safe' style='color:#106b9a; word-break:break-all;'>$safe</a></p>"
-              . "<p style='font-size:14px; color:#64748b;'>This invite link is strictly for members. Kindly do not share it outside.</p>";
-        $text = "\n\nJOIN OUR WHATSAPP GROUP\nMembers of $org connect and receive updates on our WhatsApp group. Joining is completely optional, and you will not be added automatically. If you wish to join, please use the link below:\n$url\n\nThis invite link is strictly for members. Kindly do not share it outside.";
+              . "<p style='font-size:14px; color:#64748b;'>Please do not share the invite link outside the community.</p>";
+        $text = "\n\nOPTIONAL: connect with fellow members on WhatsApp:\n$url\nPlease do not share the invite link outside the community.";
         return [$html, $text];
     }
 
@@ -156,7 +144,7 @@ class MembershipMailer {
      * $passwordToken (approved only): raw one-time token from MemberAuthModel. When given, a
      * "Set my password" button is added to this same email, so the member gets ONE email.
      * $sharedId (approved only): true when this is a NEW club membership under an ID the person
-     * already had, so the email explains that one ID covers all their memberships.
+     * already had, so the email says it was linked to their existing ID.
      */
     public static function sendDecision($email, $name, $decision, $memberId = null, $detail = '', $chapter = null, $renewal = false, $passwordToken = null, $sharedId = false) {
         $n = htmlspecialchars((string) $name, ENT_QUOTES, 'UTF-8');
@@ -164,7 +152,8 @@ class MembershipMailer {
         $safeOrg = htmlspecialchars($org, ENT_QUOTES, 'UTF-8');
         $hasDetail = ($detail !== '' && $detail !== null);
 
-        // Opening line, as plain text with the club name left to be escaped by each version.
+        // Opening line for the rejection email, as plain text with the club name left to be
+        // escaped by each version.
         $thanks = $renewal
             ? 'Thank you for renewing your membership with %s'
             : 'Thank you for your interest in joining %s';
@@ -175,58 +164,63 @@ class MembershipMailer {
             $subject = $renewal
                 ? "Your $org membership renewal is confirmed"
                 : "Welcome to $org: your membership is confirmed";
-            $good = $renewal
-                ? "We are pleased to confirm that your renewal has been approved. Thank you for continuing your association with us."
-                : "We are pleased to confirm that your application has been approved. Welcome aboard our open knowledge community!";
-            $keep = $renewal
-                ? "Your Member ID remains the same. Please keep it handy to access your dashboard and for future renewals."
-                : ($sharedId
-                    ? "This membership has been linked to your existing Member ID. You can now conveniently access and manage all your memberships using this single ID."
-                    : "Please note down your Member ID securely. You will need it to sign in to DCW Engage and access your membership benefits.");
 
-            // Password section. New members (token given) are told to set a password and get the
-            // button; renewing members who already have one are told their login still works.
-            $pwHtml = '';
-            $pwText = '';
+            // 1. Confirmation, two lines at most. [html, text]
+            if ($renewal) {
+                $good     = "Your <strong>$safeOrg</strong> membership renewal has been approved. Thank you for continuing with us!";
+                $goodText = "Your $org membership renewal has been approved. Thank you for continuing with us!";
+            } elseif ($sharedId) {
+                $good     = "Welcome to <strong>$safeOrg</strong>! Your membership has been approved and linked to your existing Member ID.";
+                $goodText = "Welcome to $org! Your membership has been approved and linked to your existing Member ID.";
+            } else {
+                $good     = "Welcome to <strong>$safeOrg</strong>! Your membership has been approved.";
+                $goodText = "Welcome to $org! Your membership has been approved.";
+            }
+
+            // 2. Member ID card.
+            $unchanged     = $renewal ? " <em>(unchanged)</em>" : '';
+            $unchangedText = $renewal ? " (unchanged)" : '';
+
+            // 3. ONE call to action. New members (token given) set a password; everyone else signs in.
             if ($passwordToken) {
                 $url = CoreMail::appUrl() . '/member/set-password/' . $passwordToken;
                 $safeUrl = htmlspecialchars($url, ENT_QUOTES, 'UTF-8');
-                $pwHtml = "
-                <h2 style='font-size:18px; margin:28px 0 8px; color:#106b9a;'>Next step: set your password</h2>
-                <p>To access DCW Engage, please set your account password using the button below. Once done, you can sign in with your Member ID <strong>$id</strong> to check your membership details, download your digital cards, and access community resources.</p>
+                $ctaHtml = "
+                <p><strong>Set your password to activate your account, then sign in with your Member ID.</strong></p>
                 <div class='btn-wrapper'><a href='$safeUrl' class='btn'>Set my password</a></div>
-                <p style='font-size:14px;'>If the button does not work, copy and paste this link into your browser:<br>
-                   <a href='$safeUrl' style='color:#106b9a; word-break:break-all;'>$safeUrl</a></p>
-                <p style='font-size:14px; color:#64748b;'>This link is meant exclusively for you, can be used only once, and will expire shortly. Please set your password promptly and do not share this email with anyone.</p>";
-                $pwText = "\n\nNEXT STEP: SET YOUR PASSWORD\nTo access DCW Engage, please set your account password using the link below. Once done, you can sign in with your Member ID $memberId to view your membership details and access community resources:\n$url\n\nThis link is meant exclusively for you, can be used only once, and will expire shortly. Please set your password promptly and do not share this email with anyone.";
+                <p style='font-size:14px; color:#64748b;'>Button not working? Use this link: <a href='$safeUrl' style='color:#106b9a; word-break:break-all;'>$safeUrl</a><br>
+                   This link is meant for you only, can be used once, and will expire shortly.</p>";
+                $ctaText = "\n\nSet your password to activate your account, then sign in with your Member ID:\n$url\nThis link is meant for you only, can be used once, and will expire shortly.";
             } else {
-                // No fresh link (renewing member, a club joined under an existing ID, or a link
-                // could not be created): still advise.
-                $pwHtml = "<p><strong>Sign in:</strong> You can log in to DCW Engage using your Member ID <strong>$id</strong> and your existing password. If you haven't set a password yet or need to reset it, simply click on \"Forgot password\" on the sign-in page.</p>";
-                $pwText = "\n\nSIGN IN: You can log in to DCW Engage using your Member ID $memberId and your existing password. If you haven't set a password yet or need to reset it, simply click on \"Forgot password\" on the sign-in page.";
+                $login = CoreMail::appUrl() . '/member/login';
+                $safeLogin = htmlspecialchars($login, ENT_QUOTES, 'UTF-8');
+                $ctaHtml = "
+                <p>Sign in using your Member ID and existing password.</p>
+                <div class='btn-wrapper'><a href='$safeLogin' class='btn'>Go to sign in</a></div>
+                <p style='font-size:14px; color:#64748b;'>Forgot your password? Click \"Forgot password\" on the sign-in page.</p>";
+                $ctaText = "\n\nSign in using your Member ID and existing password:\n$login\nForgot your password? Click \"Forgot password\" on the sign-in page.";
             }
 
-            // What the member can do once signed in (dashboard, profile, membership card, support).
-            [$dashHtml, $dashText] = self::dashboardBlock();
+            // 4. One-line dashboard pointer. The username tip is for brand-new members only.
+            [$dashHtml, $dashText] = self::dashboardLine((bool) $passwordToken, (bool) $passwordToken);
 
-            // WhatsApp group invite: new members only. A pure renewal already received it when they
+            // 5. WhatsApp group invite: new members only. A pure renewal already received it when they
             // joined; a club joined through the renewal form arrives here with $renewal = false.
             [$waHtml, $waText] = $renewal ? ['', ''] : self::whatsappBlock($chapter);
 
             $inner = "
                 <p>Hello <strong>$n</strong>,</p>
-                <p>" . sprintf($thanks, "<strong>$safeOrg</strong>") . ". $good</p>
+                <p>$good</p>
                 <div style='background:#f1f7fb; border-left:4px solid #106b9a; padding:14px 18px; margin:0 0 20px; line-height:1.7;'>
-                    <strong>Member ID:</strong> <span style='font-family:Menlo,Consolas,monospace; letter-spacing:1px;'>$id</span>" . ($until ? "<br><strong>Valid until:</strong> $until" : '') . "
+                    <strong>Member ID:</strong> <span style='font-family:Menlo,Consolas,monospace; letter-spacing:1px;'>$id</span>$unchanged" . ($until ? "<br><strong>Valid until:</strong> $until" : '') . "
                 </div>
-                <p>$keep</p>
-                " . ($passwordToken ? "<p style='background:#fffbeb; border:1px solid #fcd34d; border-radius:6px; padding:12px 16px;'><strong>Important:</strong> Please set your password using the section below to finish activating your account.</p>" : '') . "
-                $pwHtml
-                $waHtml
+                $ctaHtml
                 $dashHtml
+                $waHtml
                 " . self::signHtml($chapter);
-            $alt = "Hello $name,\n\n" . sprintf($thanks, $org) . ". $good\n\nMember ID: $memberId"
-                 . ($until ? "\nValid until: $until" : '') . "\n\n$keep" . ($passwordToken ? "\n\nIMPORTANT: Please set your password using the section below to finish activating your account." : '') . $pwText . $waText . $dashText . "\n\n" . self::signText($chapter);
+            $alt = "Hello $name,\n\n$goodText\n\nMember ID: $memberId$unchangedText"
+                 . ($until ? "\nValid until: $until" : '')
+                 . $ctaText . $dashText . $waText . "\n\n" . self::signText($chapter);
         } else {
             $subject = $renewal
                 ? "Update regarding your $org membership renewal"
